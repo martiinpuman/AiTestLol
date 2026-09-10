@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurora ERP — Home</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
+  .kpi-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-4); display: flex; flex-direction: column; gap: 6px; }
+  .kpi-card .label { font-size: 12px; color: var(--color-text-muted); }
+  .kpi-card .value { font-size: var(--font-size-display); font-weight: 700; }
+  .kpi-card .delta { font-size: 12px; }
+  .kpi-card .delta.up { color: var(--color-success); }
+  .kpi-card .delta.down { color: var(--color-danger); }
+  .two-col { display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-4); align-items: start; }
+  .list-simple { display: flex; flex-direction: column; }
+  .list-simple .row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--color-border); font-size: 13px; }
+  .list-simple .row:last-child { border-bottom: none; }
+  .list-simple .row .meta { color: var(--color-text-muted); font-size: 12px; }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3) var(--space-4); border-bottom: 1px solid var(--color-border); }
+  .panel-header h2 { font-size: var(--font-size-heading-sm); font-weight: 600; }
+  .panel-body { padding: var(--space-4); }
+  @media (max-width: 1199px) { .kpi-row { grid-template-columns: repeat(2, 1fr); } .two-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="shell" id="shell">
+
+  <!-- TOP BAR -->
+  <header class="topbar">
+    <button class="icon-btn" title="Toggle navigation" aria-label="Toggle navigation" onclick="toggleRail()">☰</button>
+    <div class="brand"><span class="mark">A</span> Aurora ERP</div>
+
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('company-popover', event)" aria-haspopup="true">
+        <span class="company-badge" style="--badge-color:#2454CC">NT</span>
+        <span class="tenant-name">Nordwind Group</span>
+        <span class="sep">▸</span>
+        <span class="company-name">Nordwind Trading AB</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="company-popover" hidden>
+        <div class="group-label">Nordwind Group</div>
+        <div class="popover-item active">
+          <span class="company-badge" style="--badge-color:#2454CC">NT</span>
+          <div><div>Nordwind Trading AB</div><div class="meta">Sweden · Trading &amp; wholesale</div></div>
+        </div>
+        <div class="popover-item" onclick="requestCompanySwitch('Nordwind Manufacturing GmbH', true)">
+          <span class="company-badge" style="--badge-color:#8A5200">NM</span>
+          <div><div>Nordwind Manufacturing GmbH</div><div class="meta">Germany · Light manufacturing</div></div>
+        </div>
+        <hr>
+        <div class="group-label">Meridian Holdings <span class="meta">(guest access)</span></div>
+        <div class="popover-item" onclick="requestCompanySwitch('Meridian Wholesale Ltd', true)">
+          <span class="company-badge" style="--badge-color:#146C2E">MW</span>
+          <div><div>Meridian Wholesale Ltd</div><div class="meta">United Kingdom · Trading &amp; wholesale</div></div>
+        </div>
+        <hr>
+        <div class="popover-item" style="color:var(--color-accent)">+ Add another company</div>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="search-box">
+      <span>🔍</span>
+      <input placeholder="Search this company… (customers, orders, items)" onfocus="openModal('cmdk-modal'); this.blur();">
+    </div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('cmdk-modal')">Commands <span class="kbd">⌘K</span></button>
+    <div class="switcher">
+      <button class="icon-btn" title="Notifications" aria-label="Notifications" onclick="togglePopover('notif-popover', event)">🔔</button>
+      <div class="popover" id="notif-popover" hidden style="right:0;left:auto;min-width:300px;">
+        <div class="group-label">Notifications</div>
+        <div class="popover-item"><div><div>Approval requested — PO-1187 needs your sign-off</div><div class="meta">Nordwind Trading AB · 12 min ago</div></div></div>
+        <div class="popover-item"><div><div>Bulk export finished: 3,412 rows</div><div class="meta">2 hours ago</div></div></div>
+        <div class="popover-item"><div><div>Period Aug 2026 closes in 2 days</div><div class="meta">Nordwind Manufacturing GmbH · Today</div></div></div>
+      </div>
+    </div>
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('user-popover', event)">
+        <span class="company-badge" style="--badge-color:#57616C">MP</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="user-popover" hidden style="right:0;left:auto;min-width:220px;">
+        <div class="popover-item"><div><div>Martin Pu</div><div class="meta">martinp@nordwind.example</div></div></div>
+        <hr>
+        <div class="popover-item">Preferences</div>
+        <div class="popover-item">Grid density: <strong style="margin-left:4px">Compact</strong></div>
+        <div class="popover-item">Keyboard shortcuts</div>
+        <hr>
+        <div class="popover-item">Sign out</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- NAV RAIL -->
+  <nav class="nav-rail">
+    <div class="nav-section-label">Recent</div>
+    <div class="recent-item" onclick="location.href='list.html'">
+      <span class="title">SO-2041 — Contoso Wholesale</span>
+      <span class="co">Nordwind Trading AB</span>
+    </div>
+    <div class="recent-item" onclick="location.href='detail.html'">
+      <span class="title">SO-2038 — Atlas Components Inc</span>
+      <span class="co">Nordwind Trading AB</span>
+    </div>
+    <div class="recent-item">
+      <span class="title">Item — Steel Bracket 40mm</span>
+      <span class="co">Nordwind Trading AB</span>
+    </div>
+
+    <div class="nav-section-label">Modules</div>
+    <a class="nav-item active" href="shell.html"><span class="ic">⌂</span><span class="label">Home</span></a>
+    <a class="nav-item" href="list.html"><span class="ic">🧾</span><span class="label">Sales</span></a>
+    <a class="nav-item"><span class="ic">📦</span><span class="label">Purchasing</span></a>
+    <a class="nav-item"><span class="ic">🏭</span><span class="label">Inventory</span></a>
+    <a class="nav-item"><span class="ic">⚙</span><span class="label">Manufacturing</span></a>
+    <a class="nav-item"><span class="ic">💰</span><span class="label">Finance</span></a>
+    <a class="nav-item"><span class="ic">👤</span><span class="label">Master data</span></a>
+    <a class="nav-item"><span class="ic">🔧</span><span class="label">Settings</span></a>
+  </nav>
+
+  <!-- MAIN -->
+  <main class="main">
+    <div class="page">
+      <div class="page-header">
+        <h1>Good afternoon, Martin</h1>
+        <div class="theme-toggle" aria-label="Theme">
+          <button data-mode="light" onclick="setTheme('light')">Light</button>
+          <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+          <button data-mode="system" onclick="setTheme('system')">System</button>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi-card"><span class="label">Open sales orders</span><span class="value tnum">128</span><span class="delta up">▲ 6 vs last week</span></div>
+        <div class="kpi-card"><span class="label">Overdue invoices</span><span class="value tnum">$42,180</span><span class="delta down">▲ 3 new overdue</span></div>
+        <div class="kpi-card"><span class="label">Stock below reorder point</span><span class="value tnum">14 SKUs</span><span class="delta">unchanged</span></div>
+        <div class="kpi-card"><span class="label">Approvals waiting on you</span><span class="value tnum">3</span><span class="delta">2 purchase orders, 1 credit note</span></div>
+      </div>
+
+      <div class="two-col">
+        <div class="panel">
+          <div class="panel-header">
+            <h2>Recent sales orders — Nordwind Trading AB</h2>
+            <a href="list.html" style="font-size:12px;text-decoration:none;">View all →</a>
+          </div>
+          <div class="panel-body list-simple">
+            <div class="row"><span>SO-2041 — Contoso Wholesale</span><span class="badge badge-info">Draft</span></div>
+            <div class="row"><span>SO-2040 — BrightPly Manufacturing</span><span class="badge badge-success">Confirmed</span></div>
+            <div class="row"><span>SO-2039 — Solheim Timber &amp; Steel</span><span class="badge badge-warning">On hold</span></div>
+            <div class="row"><span>SO-2038 — Atlas Components Inc</span><span class="badge badge-success">Confirmed</span></div>
+            <div class="row"><span>SO-2037 — Kesler Fasteners GmbH</span><span class="badge badge-danger">Cancelled</span></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h2>Setup progress</h2></div>
+          <div class="panel-body">
+            <div class="stepper" style="flex-direction:column; align-items:flex-start; gap:var(--space-2);">
+              <div class="step done"><span class="dot">✓</span><span class="label">Company profile</span></div>
+              <div class="step done"><span class="dot">✓</span><span class="label">Chart of accounts (SE Country Package)</span></div>
+              <div class="step current"><span class="dot">3</span><span class="label">Tax codes review</span></div>
+              <div class="step"><span class="dot">4</span><span class="label">Invite team members</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- CONNECTION BANNER -->
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<!-- DEMO-ONLY CONTROLS (not part of the product; for reviewing the shell) -->
+<div class="demo-controls">
+  <div class="title">Prototype controls</div>
+  <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+
+<!-- Company switch confirmation dialog -->
+<div class="modal-overlay" id="switch-confirm-modal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true">
+    <h2>Switch company?</h2>
+    <p>You have unsaved changes in this session. Switching to <strong id="switch-target-name">—</strong> will discard them. This cannot be undone.</p>
+    <div class="actions">
+      <button class="btn btn-ghost" onclick="closeModal('switch-confirm-modal')">Cancel</button>
+      <button class="btn btn-danger" onclick="closeModal('switch-confirm-modal'); showToast('success','Switched company. Discarded unsaved changes.')">Discard and switch</button>
+    </div>
+  </div>
+</div>
+
+<!-- Command palette -->
+<div class="modal-overlay" id="cmdk-modal" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true">
+    <input placeholder="Search records, or type a command…" autofocus>
+    <div class="results">
+      <div class="group-label">Actions</div>
+      <div class="result"><span>＋</span> Create sales order</div>
+      <div class="result"><span>＋</span> Create customer</div>
+      <div class="result"><span>⇄</span> Switch company</div>
+      <div class="group-label">Navigate to</div>
+      <div class="result" onclick="location.href='list.html'"><span>🧾</span> Sales Orders</div>
+      <div class="result"><span>📦</span> Purchase Orders</div>
+      <div class="group-label">Records</div>
+      <div class="result" onclick="location.href='detail.html'"><span>📄</span> SO-2038 — Atlas Components Inc <span class="co">Nordwind Trading AB</span></div>
+      <div class="result"><span>🏢</span> Contoso Wholesale (customer) <span class="co">Nordwind Trading AB</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
