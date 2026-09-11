@@ -49,13 +49,15 @@ mkdir -p -- "${BACKUP_DIR}"
 
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
-  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'
+  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'
 else
-  C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''
+  C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''; C_YELLOW=''
 fi
 
 CASES_RUN=0
 CASES_FAILED=0
+CASES_SKIPPED=0
+SKIPPED_CASES=()
 CASE_NAME=""
 CASE_LOG=""
 RUN_RC=0
@@ -126,6 +128,16 @@ fail_case() {
   fi
   CASES_FAILED=$(( CASES_FAILED + 1 ))
   return 1
+}
+
+# A case this machine cannot run says so and is tallied apart from the passes.
+# "16/16 behaved as specified" has to mean sixteen properties demonstrated -
+# not fifteen, plus one that was never checked and counted as though it had.
+skip_case() {
+  printf '    %sSKIP%s %s\n' "${C_YELLOW}" "${C_RESET}" "$*"
+  CASES_SKIPPED=$(( CASES_SKIPPED + 1 ))
+  SKIPPED_CASES+=("${CASE_NAME} - $*")
+  return 0
 }
 
 case_begin() {
@@ -315,7 +327,7 @@ PY
 case_offline() {
   case_begin "5.1 the whole gate runs with no network egress at all"
   if ! unshare -n true >/dev/null 2>&1; then
-    printf '    SKIP: this kernel or user cannot create a network namespace\n'
+    skip_case "this kernel or user cannot create a network namespace"
     return 0
   fi
   write_loopback_helper
@@ -557,6 +569,27 @@ CASES=(
   case_option_skips_are_declared
 )
 
+# Every case costs at least one gate run, so a developer working on one of
+# them can name the ones to run instead of paying for all of them:
+#   scripts/verify-selftest.sh case_unit_tests_vacuous case_summary_tree_guard
+# The cases that call verify.sh --stage assume a full run has already restored
+# and built the tree - the same assumption --stage itself documents - so a
+# subset that starts with one of those needs a full case, or verify.sh, first.
+if (( $# > 0 )); then
+  for wanted in "$@"; do
+    found=0
+    for case_fn in "${CASES[@]}"; do
+      [[ "${case_fn}" == "${wanted}" ]] && { found=1; break; }
+    done
+    if (( found == 0 )); then
+      printf 'verify-selftest: no case named "%s". Cases:\n' "${wanted}" >&2
+      printf '  %s\n' "${CASES[@]}" >&2
+      exit 2
+    fi
+  done
+  CASES=("$@")
+fi
+
 # case_end, not the case bodies, owns the restore: a case that fails an
 # assertion half way through must still hand the next one a clean tree.
 for case_fn in "${CASES[@]}"; do
@@ -564,15 +597,33 @@ for case_fn in "${CASES[@]}"; do
   case_end
 done
 
+# The tally counts what was demonstrated. A skipped case is neither a pass nor
+# a failure, and it is named, so a perfect score cannot hide an unchecked
+# property behind the total.
+print_skipped_cases() {
+  local entry
+  for entry in ${SKIPPED_CASES[@]+"${SKIPPED_CASES[@]}"}; do
+    printf '%s   skipped: %s%s\n' "${C_YELLOW}" "${entry}" "${C_RESET}"
+  done
+}
+
+CASES_PASSED=$(( CASES_RUN - CASES_FAILED - CASES_SKIPPED ))
+SKIPPED_SUFFIX=""
+if (( CASES_SKIPPED > 0 )); then
+  SKIPPED_SUFFIX=", ${CASES_SKIPPED} skipped"
+fi
+
 printf '\n'
 if (( CASES_FAILED == 0 )); then
-  printf '%s%s%d/%d cases behaved as specified.%s\n' \
-    "${C_BOLD}" "${C_GREEN}" "${CASES_RUN}" "${CASES_RUN}" "${C_RESET}"
+  printf '%s%s%d/%d cases behaved as specified%s.%s\n' \
+    "${C_BOLD}" "${C_GREEN}" "${CASES_PASSED}" "${CASES_RUN}" "${SKIPPED_SUFFIX}" "${C_RESET}"
+  print_skipped_cases
   printf '%sworking tree: back to the state the run started from.%s\n' \
     "${C_DIM}" "${C_RESET}"
   exit 0
 fi
 
-printf '%s%s%d of %d cases did not behave as specified.%s\n' \
-  "${C_BOLD}" "${C_RED}" "${CASES_FAILED}" "${CASES_RUN}" "${C_RESET}"
+printf '%s%s%d of %d cases did not behave as specified%s.%s\n' \
+  "${C_BOLD}" "${C_RED}" "${CASES_FAILED}" "${CASES_RUN}" "${SKIPPED_SUFFIX}" "${C_RESET}"
+print_skipped_cases
 exit 1
