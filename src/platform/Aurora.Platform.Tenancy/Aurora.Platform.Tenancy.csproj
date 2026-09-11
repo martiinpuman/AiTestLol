@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tier 1 - the Tenancy platform module (docs/architecture/modules.md 4, ADR-0007).
+
+    B-05 lands the catalog database here: the internal CatalogDbContext over schema `catalog`, its
+    entity types, its migrations, and AddCatalogDatabase() for the composition root. B-06 adds the
+    connection resolver, the scope factory and the tenant DbContext factory; B-07 the provisioning
+    saga; B-08 the migration runner. See README.md in this folder.
+
+    This is the only module allowed to build a connection string (modules.md 4), which is why it
+    references the Npgsql provider directly rather than through a separate Infrastructure project.
+
+    Everything here is internal except the DI extension. The two test assemblies below see the
+    internals so they can exercise the context and the entities without widening the public
+    surface - the public surface of a platform module is its Contracts assembly.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Platform.Tenancy</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!--
+      Design-time only: what `dotnet ef migrations add` needs to scaffold a migration against
+      CatalogDbContext. PrivateAssets=all keeps it out of every consumer's graph. The tool itself
+      is pinned in .config/dotnet-tools.json; run `dotnet tool restore` once.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.Platform.Tenancy.Contracts\Aurora.Platform.Tenancy.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aurora.Platform.Tenancy.UnitTests" />
+    <InternalsVisibleTo Include="Aurora.Platform.Tenancy.IntegrationTests" />
+  </ItemGroup>
+
+</Project>
