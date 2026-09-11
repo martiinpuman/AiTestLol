@@ -84,11 +84,16 @@ internal sealed class TenantDbContextWithAnInternalConstructor : TenantDbContext
     }
 }
 
-/// <summary>The catalog context: the one context ADR-0003 rule 3 registers conventionally.</summary>
+/// <summary>
+/// A context called <c>CatalogDbContext</c> - but not at the catalog's own full name.
+/// </summary>
 /// <remarks>
-/// <b>Deliberately compliant fixture (T1, T2).</b> Public constructor and a conventional
-/// registration, both of which the rules must ignore - so the allow-list is proven to be an
-/// allow-list rather than a blanket exemption.
+/// <b>Deliberately compliant fixture (T1, T2) when exempted by its full name, and a deliberately
+/// violating one otherwise.</b> Passed to the rules as the exemption, it proves the allow-list is
+/// an allow-list: public constructor and conventional registration, both ignored. Left to the
+/// production exemption - which names <c>Aurora.Platform.Tenancy.Catalog.CatalogDbContext</c> and
+/// not this type - it is the re-review's m-1 attack: a product-catalog context in some module that
+/// borrowed the name, which T1 and T2 must treat as the tenant context it is.
 /// </remarks>
 internal sealed class CatalogDbContext : DbContext
 {
@@ -98,8 +103,15 @@ internal sealed class CatalogDbContext : DbContext
     }
 }
 
-/// <summary>Registrations of tenant contexts in the DI container.</summary>
-/// <remarks><b>Deliberately violating fixture (T2),</b> with one compliant registration beside it.</remarks>
+/// <summary>Calls to the <c>AddDbContext</c> family, which ADR-0032 §4.1 confines to one assembly and one argument.</summary>
+/// <remarks>
+/// <b>Deliberately violating fixture (T2).</b> This class is compiled into
+/// <c>Aurora.Architecture.Tests</c>, so every call in it is outside <c>Aurora.Platform.Tenancy</c>
+/// and T2 reports all of them, whatever they register - the call site, not the argument, is what
+/// the rule judges. The tests relabel the class into the tenancy assembly to exercise the one
+/// permitted shape (<c>CatalogFixture.RegistrationsInsideTheTenancyAssembly</c>), where only
+/// <see cref="RegisterCatalog"/> falls silent.
+/// </remarks>
 internal static class ContainerRegistrations
 {
     /// <summary>The violation: a tenant context put in the container.</summary>
@@ -110,9 +122,30 @@ internal static class ContainerRegistrations
     public static void RegisterTenantContextFactory(IServiceCollection services) =>
         services.AddDbContextFactory<TenantDbContextWithAPublicConstructor>();
 
-    /// <summary>Compliant: the catalog is the one context that is registered.</summary>
+    /// <summary>
+    /// The catalog registration ADR-0003 rule 3 prescribes: the one <c>AddDbContext</c> call that is
+    /// permitted, and only from inside <c>Aurora.Platform.Tenancy</c>. Names the stand-in compiled
+    /// at B-05's exact full name (<c>Fixtures/StandIns</c>).
+    /// </summary>
     public static void RegisterCatalog(IServiceCollection services) =>
-        services.AddDbContext<CatalogDbContext>();
+        services.AddDbContext<global::Aurora.Platform.Tenancy.Catalog.CatalogDbContext>();
+
+    /// <summary>
+    /// ADR-0032 §4.1.2 (b): the helper B-06 must not write. Its body forwards a type parameter into
+    /// <c>AddDbContext</c>; a rule keyed on the argument sees <c>!!0</c> and nothing to match, a rule
+    /// keyed on the call site reports the body wherever it lives.
+    /// </summary>
+    public static IServiceCollection AddTenantDbContext<TContext>(this IServiceCollection services)
+        where TContext : DbContext =>
+        services.AddDbContext<TContext>();
+
+    /// <summary>
+    /// The helper's call site, where the concrete context finally appears. Its member name is not
+    /// <c>AddDbContext*</c>, so it is outside T2's population by design; ADR-0032 §4.1.1 assigns the
+    /// call site to T9.
+    /// </summary>
+    public static void RegisterThroughTheHelper(IServiceCollection services) =>
+        services.AddTenantDbContext<TenantDbContextWithAnInternalConstructor>();
 }
 
 /// <summary>A second door to a tenant <c>DbContext</c>, outside Aurora.Platform.Tenancy.</summary>

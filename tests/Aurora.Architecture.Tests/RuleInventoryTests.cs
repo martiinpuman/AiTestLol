@@ -79,8 +79,14 @@ public sealed class RuleInventoryTests
             "a tenant DbContext", "B-06 (B-05 brings CatalogDbContext, which is exempt)",
             static () => TenantDbContextConstructorRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
         (TenantDbContextRegistrationRule.Id, TenantDbContextRegistrationRule.Name,
-            "an AddDbContext* call naming a tenant context", "B-06",
+            "an AddDbContext* call", "B-05 (the catalog registration inside Aurora.Platform.Tenancy)",
             static () => TenantDbContextRegistrationRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
+        (CatalogContextIdentityRule.Id, CatalogContextIdentityRule.Name,
+            "a type deriving from DbContext", "B-05 (Aurora.Platform.Tenancy and its CatalogDbContext)",
+            static () => CatalogContextIdentityRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
+        (AllowListExistenceRule.Id, AllowListExistenceRule.Name,
+            "the allow-listed assembly Aurora.Platform.Tenancy", "B-05",
+            static () => AllowListExistenceRule.Check(FixtureAssembly.AllViolations.Select(static type => type.AssemblyName))),
         (ModuleDependencyRule.Id, ModuleDependencyRule.Name,
             "two business modules to reference each other", "the first module after B-15",
             static () =>
@@ -138,19 +144,36 @@ public sealed class RuleInventoryTests
     }
 
     [Fact]
-    public void No_tenant_DbContext_exists_yet_which_is_why_T1_and_T2_are_inert()
+    public void No_tenant_DbContext_exists_yet_which_is_why_T1_is_inert()
     {
         // Tenant contexts, not every DbContext: B-05's CatalogDbContext is exempt by design
-        // (ADR-0003 rule 3), so its arrival must not fail this test. B-06.3's first tenant context
-        // must.
+        // (ADR-0003 rule 3) as the exact pair TenancyNames.CatalogContext, so its arrival at that
+        // name and in that assembly must not fail this test. B-06.3's first tenant context must -
+        // and so must any other DbContext that merely borrows the catalog's name (re-review m-1).
         TypeIndex production = TypeIndex.Of(SolutionLayout.ProductionTypes);
 
         TenancyNames.TenantContextsIn(production)
             .Select(static type => type.FullName)
             .ShouldBeEmpty(
-                "a tenant DbContext now exists in production, so T1 and T2 are no longer inert. Move "
-                + "their rows from Inert to Live in this file with a floor, and raise the floors in "
+                "a tenant DbContext now exists in production, so T1 is no longer inert. Move its row "
+                + "from Inert to Live in this file with a floor, and raise the floor in "
                 + "TenancyRuleTests from 0.");
+    }
+
+    [Fact]
+    public void The_tenancy_assembly_does_not_exist_yet_which_is_why_T2_T13_and_T14_are_inert()
+    {
+        // T2's one permitted call site, T13's exempt pair and T14's one allow-listed assembly all
+        // live in Aurora.Platform.Tenancy, which B-05 creates. Until then T2 has no call to examine
+        // and T13 no context, and T14 - honestly - reports the allow-listed assembly as missing.
+        SolutionLayout.ProductionAssemblies
+            .Select(static assembly => assembly.Name)
+            .ShouldNotContain(
+                TenancyNames.TenancyAssemblyName,
+                "B-05 has landed Aurora.Platform.Tenancy, so T2, T13 and T14 have their subjects. Move "
+                + "their rows from Inert to Live with floors (T2: the catalog registration, 1; T13: the "
+                + "catalog context, 1; T14: the allow-list entries, 2), raise the matching floors in "
+                + "TenancyRuleTests from 0, and delete this test.");
     }
 
     [Fact]
@@ -220,6 +243,6 @@ public sealed class RuleInventoryTests
                 + $"fixture. It is not asleep, it is broken: {outcome.Describe()}");
         }
 
-        Inert.Length.ShouldBe(3, "three rules are inert today: T1, T2 and M1");
+        Inert.Length.ShouldBe(5, "five rules are inert today: T1, T2, T13, T14 and M1");
     }
 }

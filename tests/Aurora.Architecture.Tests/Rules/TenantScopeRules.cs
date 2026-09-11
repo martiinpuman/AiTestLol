@@ -17,8 +17,10 @@ namespace Aurora.Architecture.Tests.Rules;
 /// door, and nothing would make it apply the check.
 /// </para>
 /// <para>
-/// <b>What the mechanism inspects:</b> the implemented-interface list of every production type,
-/// matched on the simple names <c>ITenantDbContextFactory`1</c> and ADR-0027's DDL-path sibling
+/// <b>What the mechanism inspects:</b> the implemented-interface list of every production type
+/// whose assembly is not <c>Aurora.Platform.Tenancy</c> by <b>exact name</b> (a prefix let
+/// <c>Aurora.Platform.TenancyBypass</c> authorise itself - re-review m-2), matched on the simple
+/// names <c>ITenantDbContextFactory`1</c> and ADR-0027's DDL-path sibling
 /// <c>ITenantMigrationContextFactory`1</c> - the ADR says "the same fitness rule ... applies to it" -
 /// so the rule is live the moment B-06 declares either, in whichever namespace it chooses.
 /// </para>
@@ -36,6 +38,12 @@ internal static class TenantDbContextFactoryRule
     public const string Name =
         "ITenantDbContextFactory<> and ITenantMigrationContextFactory<> implemented only in Aurora.Platform.Tenancy";
 
+    /// <summary>The assemblies allowed to implement a factory: exactly one, by exact name (ADR-0007 §12.3).</summary>
+    public static readonly ImmutableHashSet<string> AllowedAssemblies =
+        ImmutableHashSet.Create(StringComparer.Ordinal, TenancyNames.TenancyAssemblyName);
+
+    public static bool IsAllowed(string assemblyName) => AllowedAssemblies.Contains(assemblyName);
+
     public static RuleOutcome Check(IEnumerable<ScannedType> types)
     {
         ScannedType[] subjects = [.. types];
@@ -46,13 +54,13 @@ internal static class TenantDbContextFactoryRule
             "types",
             subjects.Length,
             from type in subjects
-            where !type.AssemblyName.StartsWith(TenancyNames.TenancyAssemblyPrefix, StringComparison.Ordinal)
+            where !IsAllowed(type.AssemblyName)
             from implemented in type.InterfaceNames
             where TenancyNames.TenantContextFactorySimpleNames.Contains(TypeIndex.SimpleNameOf(implemented))
             select new RuleViolation(
                 type.FullName,
                 ViolationSite.TypeShape,
-                $"implements {implemented} outside {TenancyNames.TenancyAssemblyPrefix}; the factory is the "
+                $"implements {implemented} outside {TenancyNames.TenancyAssemblyName}; the factory is the "
                 + "only door to a tenant DbContext and the only place the ADR-0007 §4.3 identity check runs"));
     }
 }

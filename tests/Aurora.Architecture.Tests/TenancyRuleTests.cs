@@ -57,7 +57,22 @@ public sealed class TenancyRuleTests
             .Where(v => v.Subject.Contains(nameof(TenantDbContextWithAnInternalConstructor)))
             .ShouldBeEmpty(outcome.Describe());
 
-        outcome.SubjectsExamined.ShouldBe(3, "three fixture contexts are tenant contexts; CatalogDbContext is not");
+        outcome.SubjectsExamined.ShouldBe(
+            4,
+            "four fixture types derive from DbContext and none is the exempt (full name, assembly) "
+            + "pair, so all four are tenant contexts");
+    }
+
+    [Fact]
+    public void T1_fires_on_a_context_merely_named_CatalogDbContext_outside_the_catalog_namespace()
+    {
+        // The re-review's m-1 attack: an exemption matched by simple name let any CatalogDbContext
+        // anywhere escape T1, T2 and the inertness guard. The fixture catalog context is exactly
+        // that shape - the name, in the wrong namespace - and under the production exemption it
+        // must be reported like any other tenant context with a public constructor.
+        RuleOutcome outcome = TenantDbContextConstructorRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, nameof(CatalogDbContext), ViolationSite.Signature);
     }
 
     [Fact]
@@ -77,51 +92,98 @@ public sealed class TenancyRuleTests
     }
 
     [Fact]
-    public void T1_stays_silent_on_the_catalog_context_which_is_the_one_allowed_exception()
+    public void T1_stays_silent_on_the_catalog_context_as_the_exact_full_name_and_assembly_pair()
     {
-        RuleOutcome outcome = TenantDbContextConstructorRule.Check(Fixtures);
+        // The exemption path: the stand-in compiled at B-05's full name, relabelled into B-05's
+        // assembly - the one pair ADR-0032 §4.3 exempts - beside the four fixture contexts.
+        RuleOutcome outcome = TenantDbContextConstructorRule.Check(
+            TypeIndex.Of([.. FixtureAssembly.AllViolations, .. CatalogFixture.TheExemptPair()]));
 
         outcome.Violations
-            .Where(v => v.Subject.Contains(nameof(CatalogDbContext)))
+            .Where(v => v.Subject.Contains(TenancyNames.CatalogDbContext))
             .ShouldBeEmpty("the catalog is the one shared database and is registered conventionally");
+
+        outcome.SubjectsExamined.ShouldBe(4, "the exempt pair is not a tenant context; the four fixture contexts are");
     }
 
     [Fact]
-    public void The_only_context_exempt_from_the_tenancy_rules_is_the_catalog()
+    public void T1_fires_on_the_catalog_context_at_the_right_full_name_but_in_the_wrong_assembly()
     {
-        TenancyNames.NonTenantContextSimpleNames.ShouldBe(["CatalogDbContext"]);
+        // Half an identity is no identity: the stand-in as compiled has the exempt full name in
+        // this test assembly, and is a tenant context with a public constructor.
+        RuleOutcome outcome = TenantDbContextConstructorRule.Check(
+            TypeIndex.Of([.. FixtureAssembly.AllViolations, .. CatalogFixture.TheRightNameInTheWrongAssembly()]));
+
+        RuleAssert.Reports(outcome, TenancyNames.CatalogDbContext, ViolationSite.Signature);
+        outcome.SubjectsExamined.ShouldBe(5, "five contexts, none of them the exempt pair");
     }
 
-    // ---- T2: no AddDbContext registration of a tenant context -------------------------------
+    [Fact]
+    public void The_only_context_exempt_from_the_tenancy_rules_is_the_catalog_as_one_exact_pair()
+    {
+        TenancyNames.NonTenantContexts.ShouldBe(
+            [new NonTenantContext("Aurora.Platform.Tenancy.Catalog.CatalogDbContext", "Aurora.Platform.Tenancy")]);
+    }
+
+    // ---- T2: the AddDbContext family only in Aurora.Platform.Tenancy, only for the catalog ---
 
     [Fact]
-    public void T2_no_production_code_registers_a_tenant_DbContext()
+    public void T2_no_production_code_calls_the_AddDbContext_family()
     {
+        // Inert today: no AddDbContext* call exists in production. B-05 brings the catalog's, inside
+        // Aurora.Platform.Tenancy, and RuleInventoryTests holds the expiry.
         RuleAssert.Holds(TenantDbContextRegistrationRule.Check(Production), minimumSubjects: 0);
     }
 
     [Fact]
-    public void T2_fires_on_AddDbContext_and_on_AddDbContextFactory()
+    public void T2_fires_on_every_call_outside_the_tenancy_assembly_whatever_it_registers()
     {
+        // The fixture assembly is not Aurora.Platform.Tenancy, so the site is wrong for all four
+        // calls and all four are reported: two tenant contexts, the catalog itself at its exact
+        // full name (right argument, wrong site), and the helper's body.
         RuleOutcome outcome = TenantDbContextRegistrationRule.Check(Fixtures);
 
         RuleAssert.Reports(outcome, nameof(ContainerRegistrations.RegisterTenantContext), ViolationSite.MemberReference);
-        RuleAssert.Reports(
-            outcome,
-            nameof(ContainerRegistrations.RegisterTenantContextFactory),
-            ViolationSite.MemberReference);
+        RuleAssert.Reports(outcome, nameof(ContainerRegistrations.RegisterTenantContextFactory), ViolationSite.MemberReference);
+        RuleAssert.Reports(outcome, nameof(ContainerRegistrations.RegisterCatalog), ViolationSite.MemberReference);
+        outcome.SubjectsExamined.ShouldBe(4, "four AddDbContext* calls: three direct and the helper's body");
+        outcome.Violations.Length.ShouldBe(4, outcome.Describe());
     }
 
     [Fact]
-    public void T2_stays_silent_on_the_conventional_catalog_registration()
+    public void T2_fires_on_the_helper_body_whose_argument_is_a_type_parameter()
     {
+        // Re-review H-2, ADR-0032 §4.1.2 (b). Keyed on the argument, the old rule saw !!0, matched
+        // nothing, and still counted the call as examined; keyed on the site, the body is reported
+        // wherever it lives. The helper's *call site* is outside this population by design: its
+        // member name is not AddDbContext*, and ADR-0032 §4.1.1 assigns it to T9.
         RuleOutcome outcome = TenantDbContextRegistrationRule.Check(Fixtures);
+
+        RuleViolation helper = RuleAssert.Reports(
+            outcome,
+            nameof(ContainerRegistrations.AddTenantDbContext),
+            ViolationSite.MemberReference);
+
+        helper.Detail.ShouldContain("!!0", Case.Sensitive, "the report must show the argument the rule could not resolve");
+    }
+
+    [Fact]
+    public void T2_stays_silent_only_on_the_catalog_registration_and_only_inside_the_tenancy_assembly()
+    {
+        // The same four calls relabelled into Aurora.Platform.Tenancy: the site is right, so the
+        // argument is judged. The catalog at its exact full name passes; two tenant contexts and a
+        // type parameter do not.
+        RuleOutcome outcome = TenantDbContextRegistrationRule.Check(
+            TypeIndex.Of(CatalogFixture.RegistrationsInsideTheTenancyAssembly()));
 
         outcome.Violations
             .Where(v => v.Subject.Contains(nameof(ContainerRegistrations.RegisterCatalog)))
             .ShouldBeEmpty(outcome.Describe());
-
-        outcome.SubjectsExamined.ShouldBe(3, "the fixture makes three AddDbContext* calls, one of them legitimate");
+        RuleAssert.Reports(outcome, nameof(ContainerRegistrations.RegisterTenantContext), ViolationSite.MemberReference);
+        RuleAssert.Reports(outcome, nameof(ContainerRegistrations.RegisterTenantContextFactory), ViolationSite.MemberReference);
+        RuleAssert.Reports(outcome, nameof(ContainerRegistrations.AddTenantDbContext), ViolationSite.MemberReference);
+        outcome.SubjectsExamined.ShouldBe(4, "the same four calls, now at the permitted site");
+        outcome.Violations.Length.ShouldBe(3, outcome.Describe());
     }
 
     // ---- T3: ITenantDbContextFactory<> only in Aurora.Platform.Tenancy ----------------------
@@ -146,6 +208,39 @@ public sealed class TenancyRuleTests
         RuleOutcome outcome = TenantDbContextFactoryRule.Check(FixtureAssembly.AllViolations);
 
         RuleAssert.Reports(outcome, nameof(MigrationFactoryImplementedInTheWrongAssembly), ViolationSite.TypeShape);
+    }
+
+    [Fact]
+    public void T3_stays_silent_inside_the_tenancy_assembly_by_its_exact_name()
+    {
+        // The exemption path: the same implementation relabelled into the one permitted assembly.
+        RuleOutcome outcome = TenantDbContextFactoryRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(FactoryImplementedInTheWrongAssembly), TenancyNames.TenancyAssemblyName));
+
+        outcome.Violations.ShouldBeEmpty(outcome.Describe());
+        outcome.SubjectsExamined.ShouldBe(1);
+    }
+
+    [Fact]
+    public void T3_fires_inside_an_assembly_whose_name_merely_starts_with_the_tenancy_assembly()
+    {
+        // Re-review m-2, ADR-0032 §4.4: a prefix match let Aurora.Platform.TenancyBypass authorise
+        // itself by its name.
+        RuleOutcome outcome = TenantDbContextFactoryRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(FactoryImplementedInTheWrongAssembly), "Aurora.Platform.TenancyBypass"));
+
+        RuleAssert.Reports(outcome, nameof(FactoryImplementedInTheWrongAssembly), ViolationSite.TypeShape);
+    }
+
+    [Fact]
+    public void T3_allows_exactly_the_tenancy_assembly_and_no_name_that_merely_starts_with_it()
+    {
+        TenantDbContextFactoryRule.AllowedAssemblies.ShouldBe(["Aurora.Platform.Tenancy"]);
+        TenantDbContextFactoryRule.IsAllowed("Aurora.Platform.Tenancy").ShouldBeTrue();
+        TenantDbContextFactoryRule.IsAllowed("Aurora.Platform.TenancyBypass").ShouldBeFalse();
+        TenantDbContextFactoryRule.IsAllowed("Aurora.Platform.Tenancy.Contracts").ShouldBeFalse(
+            "the contracts assembly declares the factory interface and must not implement it");
+        TenantDbContextFactoryRule.IsAllowed("Aurora.Modules.Sales.Infrastructure").ShouldBeFalse();
     }
 
     // ---- T6: TenantDatabaseHandle confined to a named allow-list (ADR-0027 §1) ---------------
@@ -176,19 +271,122 @@ public sealed class TenancyRuleTests
         // passing the prefix that does match it. Without this the exemption path ships untested.
         RuleOutcome outcome = TenantDatabaseHandleRule.Check(
             FixtureAssembly.AllViolations,
-            ["Aurora.Architecture.Tests"]);
+            ImmutableHashSet.Create("Aurora.Architecture.Tests"));
 
         outcome.Violations.ShouldBeEmpty(outcome.Describe());
         outcome.SubjectsExamined.ShouldBe(0, "every fixture type is inside the allow-listed assembly");
     }
 
     [Fact]
-    public void T6_allows_only_the_tenancy_assembly_today()
+    public void T6_fires_inside_an_assembly_whose_name_merely_starts_with_the_tenancy_assembly()
     {
-        TenantDatabaseHandleRule.AllowedAssemblyPrefixes.ShouldBe(["Aurora.Platform.Tenancy"]);
+        // Re-review m-2, ADR-0032 §4.4: a prefix match let Aurora.Platform.TenancyBypass name the
+        // handle freely.
+        RuleOutcome outcome = TenantDatabaseHandleRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(ModuleReachingForTheDdlPath), "Aurora.Platform.TenancyBypass"));
+
+        RuleAssert.Reports(outcome, nameof(ModuleReachingForTheDdlPath), ViolationSite.Local, ViolationSite.MemberReference);
+    }
+
+    [Fact]
+    public void T6_allows_exactly_the_tenancy_assembly_and_no_name_that_merely_starts_with_it()
+    {
+        // Nothing is pre-entered - not B-07's saga, not B-08's runner, not the contracts assembly the
+        // handle will be declared in: the task that makes an assembly name the handle adds its exact
+        // name in its own diff (ADR-0032 §4.4).
+        TenantDatabaseHandleRule.AllowedAssemblies.ShouldBe(["Aurora.Platform.Tenancy"]);
         TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.Tenancy").ShouldBeTrue();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.TenancyBypass").ShouldBeFalse();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.TenancyTools").ShouldBeFalse();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.Tenancy.Contracts").ShouldBeFalse();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.Tenancy.Sales.Infrastructure").ShouldBeFalse();
         TenantDatabaseHandleRule.IsAllowed("Aurora.Modules.Sales.Application").ShouldBeFalse();
         TenantDatabaseHandleRule.IsAllowed("Aurora.Web").ShouldBeFalse();
+    }
+
+    // ---- T13: the catalog exemption is one exact pair (ADR-0032 §4.3) -----------------------
+
+    [Fact]
+    public void T13_nothing_in_production_derives_from_DbContext_yet()
+    {
+        // Inert today: B-05 brings both the assembly and the context. RuleInventoryTests holds the
+        // expiry.
+        RuleAssert.Holds(CatalogContextIdentityRule.Check(Production), minimumSubjects: 0);
+    }
+
+    [Fact]
+    public void T13_fires_on_a_look_alike_carrying_the_catalog_name_in_the_wrong_namespace()
+    {
+        // The re-review's m-1 fixture. Under simple-name matching it was exempt from everything;
+        // under the exact pair it is reported here and treated as a tenant context everywhere else.
+        RuleOutcome outcome = CatalogContextIdentityRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, typeof(CatalogDbContext).FullName!, ViolationSite.TypeShape);
+        outcome.SubjectsExamined.ShouldBe(4, "four fixture types derive from DbContext");
+    }
+
+    [Fact]
+    public void T13_fires_on_the_right_full_name_in_the_wrong_assembly()
+    {
+        RuleOutcome outcome = CatalogContextIdentityRule.Check(
+            TypeIndex.Of(CatalogFixture.TheRightNameInTheWrongAssembly()));
+
+        RuleAssert.Reports(outcome, TenancyNames.CatalogDbContext, ViolationSite.TypeShape);
+        outcome.SubjectsExamined.ShouldBe(1);
+    }
+
+    [Fact]
+    public void T13_stays_silent_on_the_exempt_pair()
+    {
+        RuleOutcome outcome = CatalogContextIdentityRule.Check(TypeIndex.Of(CatalogFixture.TheExemptPair()));
+
+        RuleAssert.Holds(outcome, minimumSubjects: 1);
+    }
+
+    [Fact]
+    public void T13_fires_when_the_tenancy_assembly_is_present_but_declares_no_catalog_context()
+    {
+        // What a rename looks like: the assembly is there, the pair is not, and without this clause
+        // every tenancy rule's exemption would exempt nothing without anyone noticing.
+        RuleOutcome outcome = CatalogContextIdentityRule.Check(
+            TypeIndex.Of(CatalogFixture.TheTenancyAssemblyWithoutTheCatalog()));
+
+        RuleAssert.Reports(outcome, TenancyNames.TenancyAssemblyName, ViolationSite.Population);
+        outcome.SubjectsExamined.ShouldBe(1, "the relabelled context is the one type deriving from DbContext");
+    }
+
+    // ---- T14: every allow-list entry names an assembly that exists (ADR-0032 §4.4) ----------
+
+    [Fact]
+    public void T14_reports_every_allow_list_entry_that_names_no_assembly_in_the_population()
+    {
+        // Inert today for the honest reason: the one allow-listed assembly arrives with B-05, so
+        // over production this rule reports it missing. Any population without it is the fixture.
+        RuleOutcome outcome = AllowListExistenceRule.Check(
+            FixtureAssembly.AllViolations.Select(static type => type.AssemblyName));
+
+        outcome.SubjectsExamined.ShouldBe(2, "T3's entry and T6's");
+        RuleAssert.Reports(outcome, "T3 allow-list: Aurora.Platform.Tenancy", ViolationSite.Population);
+        RuleAssert.Reports(outcome, "T6 allow-list: Aurora.Platform.Tenancy", ViolationSite.Population);
+    }
+
+    [Fact]
+    public void T14_stays_silent_when_every_entry_names_an_assembly_that_exists()
+    {
+        RuleOutcome outcome = AllowListExistenceRule.Check([TenancyNames.TenancyAssemblyName, "Aurora.Web"]);
+
+        RuleAssert.Holds(outcome, minimumSubjects: 2);
+    }
+
+    [Fact]
+    public void T14_gathers_its_entries_from_the_rules_that_carry_allow_lists()
+    {
+        // A rule that adds an allow-list without adding itself here is the omission this pins.
+        AllowListExistenceRule.Entries.ShouldBe(
+        [
+            ("T3", "Aurora.Platform.Tenancy"),
+            ("T6", "Aurora.Platform.Tenancy"),
+        ]);
     }
 
     // ---- T4: IHttpContextAccessor only in the tenant-resolution middleware ------------------

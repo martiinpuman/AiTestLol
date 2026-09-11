@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Linq;
 using Aurora.Architecture.Tests.Metadata;
+using Aurora.Architecture.Tests.Rules;
 
 namespace Aurora.Architecture.Tests.Fixtures;
 
@@ -42,6 +43,28 @@ internal static class FixtureAssembly
         .. Self.Types.Where(static type =>
             type.FullName.StartsWith(ViolationsNamespace + ".", StringComparison.Ordinal)),
     ];
+
+    /// <summary>
+    /// The catalog stand-in (<c>Fixtures/StandIns</c>), compiled at B-05's exact full name, as
+    /// compiled: in this test assembly, which is the wrong one. <c>CatalogFixture</c> relabels it.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">No type at that full name: the stand-in was moved or renamed.</exception>
+    public static ScannedType CatalogStandIn =>
+        Self.Types.SingleOrDefault(static type =>
+            string.Equals(type.FullName, TenancyNames.CatalogDbContext, StringComparison.Ordinal))
+        ?? throw new InvalidOperationException(
+            $"No stand-in at {TenancyNames.CatalogDbContext} in {Self.Path}. The catalog exemption "
+            + "is proven against a type compiled at that exact name, and there is none.");
+
+    /// <summary>One fixture type and its nested types, relabelled into another assembly.</summary>
+    /// <remarks>
+    /// The scanner's record - members, accessibility flags, instructions - is untouched; only
+    /// <c>AssemblyName</c> changes. This is how a single compiled fixture assembly exercises a rule
+    /// that keys on an exact assembly name (ADR-0032 §4.4): the name is the one field the fixture
+    /// cannot otherwise supply.
+    /// </remarks>
+    public static ImmutableArray<ScannedType> ViolationInAssembly(string typeName, string assemblyName) =>
+        [.. Violation(typeName).Select(type => type with { AssemblyName = assemblyName })];
 
     /// <summary>
     /// One fixture type and its nested types, by unqualified name.

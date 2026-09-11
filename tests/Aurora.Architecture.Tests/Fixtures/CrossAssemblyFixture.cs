@@ -47,7 +47,7 @@ internal static class CrossAssemblyFixture
         ScannedType tenancyBase = FixtureAssembly.Violation(nameof(TenantDbContextWithAnInternalConstructor)).Single() with
         {
             FullName = TenancyBaseFullName,
-            AssemblyName = TenancyNames.TenancyAssemblyPrefix,
+            AssemblyName = TenancyNames.TenancyAssemblyName,
             BaseTypeName = TenancyNames.DbContext,
         };
 
@@ -70,7 +70,7 @@ internal static class CrossAssemblyFixture
         ScannedType baseWithTheField = FixtureAssembly.Violation(nameof(SingletonCacheHoldingAScope)).Single() with
         {
             FullName = "Aurora.Platform.Tenancy.ScopeCacheBase",
-            AssemblyName = TenancyNames.TenancyAssemblyPrefix,
+            AssemblyName = TenancyNames.TenancyAssemblyName,
         };
 
         ScannedType derivedWithoutIt = FixtureAssembly.Violation(nameof(PeriodCloseTakingTimeAsAParameter)).Single() with

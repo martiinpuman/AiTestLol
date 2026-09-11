@@ -20,11 +20,11 @@ namespace Aurora.Architecture.Tests.Rules;
 /// violating fixture", and this is it.
 /// </para>
 /// <para>
-/// <b>What the mechanism inspects:</b> every type mention in every production assembly not on the
-/// allow-list, at every site <see cref="TypeReferences"/> reaches - so naming it in a signature, a
-/// local or an instruction all count, which is what "in any signature or body" in ADR-0027 §1 means.
-/// Matched by simple name, like the rest of the tenancy family, because B-06 has not chosen the
-/// namespace yet.
+/// <b>What the mechanism inspects:</b> every type mention in every production assembly whose exact
+/// name is not on the allow-list, at every site <see cref="TypeReferences"/> reaches - so naming
+/// it in a signature, a local or an instruction all count, which is what "in any signature or body"
+/// in ADR-0027 §1 means. The handle is matched by simple name, like the rest of the tenancy family,
+/// because B-06 has not chosen the namespace yet.
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> a handle obtained and used entirely inside an allow-listed assembly on
@@ -39,30 +39,28 @@ internal static class TenantDatabaseHandleRule
     public const string Name = "TenantDatabaseHandle named only by the assemblies on the allow-list";
 
     /// <summary>
-    /// The assemblies allowed to name it. ADR-0027 §1 names "Aurora.Platform.Tenancy, the
-    /// provisioning/migration runner and their test assemblies".
+    /// The assemblies allowed to name it, by exact name (ADR-0032 §4.4). ADR-0027 §1 names
+    /// "Aurora.Platform.Tenancy, the provisioning/migration runner and their test assemblies".
     /// </summary>
     /// <remarks>
-    /// Prefixes, not exact names, because B-07's saga and B-08's runner are scheduled into the
-    /// Platform/Tenancy tree (`docs/BACKLOG.md`) but have no project yet. <b>If either lands under a
-    /// different assembly name, add it here rather than widening the rule</b> - the point of an
-    /// allow-list is that extending it is a reviewable diff. Test assemblies need no entry: the
-    /// population is the projects under <c>src/</c>.
+    /// Exact names, not prefixes: a prefix let <c>Aurora.Platform.TenancyBypass</c> authorise itself
+    /// by its name (re-review m-2). Nothing is pre-entered - not B-07's saga, not B-08's runner, not
+    /// the contracts assembly ADR-0027 §1 declares the handle in - because a guessed name is an entry
+    /// nobody can verify. <b>The task that makes an assembly name the handle adds its exact name here
+    /// in its own diff</b>; T6 fires on it until someone does, which is the reviewable event an
+    /// allow-list exists to force, and T14 fails if an entry names an assembly that does not exist.
+    /// Test assemblies need no entry: the population is the projects under <c>src/</c>.
     /// </remarks>
-    public static readonly ImmutableArray<string> AllowedAssemblyPrefixes = ["Aurora.Platform.Tenancy"];
+    public static readonly ImmutableHashSet<string> AllowedAssemblies =
+        ImmutableHashSet.Create(StringComparer.Ordinal, TenancyNames.TenancyAssemblyName);
 
-    public static bool IsAllowed(string assemblyName) =>
-        AllowedAssemblyPrefixes.Any(prefix => assemblyName.StartsWith(prefix, StringComparison.Ordinal));
+    public static bool IsAllowed(string assemblyName) => AllowedAssemblies.Contains(assemblyName);
 
-    public static RuleOutcome Check(IEnumerable<ScannedType> types) => Check(types, AllowedAssemblyPrefixes);
+    public static RuleOutcome Check(IEnumerable<ScannedType> types) => Check(types, AllowedAssemblies);
 
-    public static RuleOutcome Check(IEnumerable<ScannedType> types, ImmutableArray<string> allowedPrefixes)
+    public static RuleOutcome Check(IEnumerable<ScannedType> types, ImmutableHashSet<string> allowedAssemblies)
     {
-        ScannedType[] subjects =
-        [
-            .. types.Where(type => !allowedPrefixes.Any(prefix =>
-                type.AssemblyName.StartsWith(prefix, StringComparison.Ordinal))),
-        ];
+        ScannedType[] subjects = [.. types.Where(type => !allowedAssemblies.Contains(type.AssemblyName))];
 
         return RuleOutcome.From(
             Id,

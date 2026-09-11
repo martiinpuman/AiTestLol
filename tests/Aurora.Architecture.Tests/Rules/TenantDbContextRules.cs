@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Aurora.Architecture.Tests.Metadata;
@@ -19,13 +18,16 @@ namespace Aurora.Architecture.Tests.Rules;
 /// </para>
 /// <para>
 /// <b>What the mechanism inspects:</b> the accessibility flag on every <c>.ctor</c> of every type
-/// whose base-type chain reaches <c>Microsoft.EntityFrameworkCore.DbContext</c>, excluding
-/// <c>CatalogDbContext</c>. <c>protected</c> and <c>protected internal</c> count as reachable from
-/// outside; <c>private protected</c> does not, because it is assembly-bounded like <c>internal</c>.
+/// whose base-type chain reaches <c>Microsoft.EntityFrameworkCore.DbContext</c>, excluding the
+/// catalog context as the exact (full name, assembly) pair <see cref="TenancyNames.CatalogContext"/>
+/// - a look-alike at any other name or in any other assembly is a subject. <c>protected</c> and
+/// <c>protected internal</c> count as reachable from outside; <c>private protected</c> does not,
+/// because it is assembly-bounded like <c>internal</c>.
 /// </para>
 /// <para>
-/// <b>What it cannot see:</b> a context reachable through a public factory method that is not the
-/// tenant factory. That is T3's job, not this rule's.
+/// <b>What it cannot see:</b> a context handed out by a member other than its constructor - a
+/// public factory method, a property, a field. ADR-0032 §4.2 assigns those to T10, T11 and T12,
+/// which are not in this project yet; until they land, that door is closed by nothing here.
 /// </para>
 /// </remarks>
 internal static class TenantDbContextConstructorRule
@@ -55,50 +57,66 @@ internal static class TenantDbContextConstructorRule
 }
 
 /// <summary>
-/// Fitness rule <b>T2</b> - no tenant <c>DbContext</c> is registered in the DI container
-/// (ADR-0007 §4.2, §12.3).
+/// Fitness rule <b>T2</b> - the <c>AddDbContext</c> family is called only in
+/// <c>Aurora.Platform.Tenancy</c>, and only for the catalog context (ADR-0007 §4.2 as amended by
+/// ADR-0032 §4.1.1).
 /// </summary>
 /// <remarks>
 /// <para>
 /// Layer 2 of the structural guarantee. Nothing registers a tenant context, so
 /// <c>GetRequiredService&lt;SalesDbContext&gt;()</c> throws at runtime rather than handing back a
-/// context bound to no tenant - or worse, to the wrong one.
+/// context bound to no tenant - or worse, to the wrong one. The one conventional registration is
+/// the catalog's (ADR-0003 rule 3), and it lives in the tenancy assembly.
+/// </para>
+/// <para>
+/// <b>What the rule keys on:</b> the call site's assembly and the argument's full name - never
+/// "is the argument a tenant context". The re-review (H-2) showed why: a helper
+/// <c>AddTenantDbContext&lt;TContext&gt;()</c> forwards a type parameter, so a rule asking whether
+/// the argument is a tenant context saw <c>!!0</c>, matched nothing, and still counted the call as
+/// examined. Judged by its site, the helper's body is a violation wherever it lives.
 /// </para>
 /// <para>
 /// <b>What the mechanism inspects:</b> every <c>call</c> in every production method body whose
 /// member name begins <c>AddDbContext</c> (so <c>AddDbContextPool</c> and
-/// <c>AddDbContextFactory</c> are included) or <c>AddPooledDbContextFactory</c>, and whose generic
-/// arguments name a tenant context.
+/// <c>AddDbContextFactory</c> are included) or <c>AddPooledDbContextFactory</c>. That name selects
+/// the <i>population</i>, which is the safe direction for a name to be load-bearing: a call that
+/// dodges the name is not silently exempt here, it is outside this rule's population and inside
+/// T9's (ADR-0032 §4.1.1), which keys on the container surface. A call is a violation when its
+/// site is any assembly other than <c>Aurora.Platform.Tenancy</c>, whatever its arguments; or when,
+/// inside that assembly, it has no generic argument or any generic argument other than exactly
+/// <c>Aurora.Platform.Tenancy.Catalog.CatalogDbContext</c> - a type parameter the rule cannot
+/// resolve included.
 /// </para>
 /// <para>
-/// <b>What it cannot see:</b> a registration that names the context type only at runtime - a
-/// non-generic <c>ServiceDescriptor</c> built from a <c>Type</c> value, or a factory lambda
-/// returning <c>new SalesDbContext(...)</c> registered against <c>object</c>. The second is caught
-/// by T1 instead, since constructing one needs an accessible constructor.
+/// <b>What it cannot see:</b> a registration through any other container API -
+/// <c>AddScoped&lt;SalesDbContext&gt;()</c>, a <c>ServiceDescriptor</c> built from a <c>Type</c>
+/// value, the helper's <i>call site</i>. Those are T9's population, and until T9 lands they are
+/// covered by nothing in this project.
 /// </para>
 /// </remarks>
 internal static class TenantDbContextRegistrationRule
 {
     public const string Id = "T2";
 
-    public const string Name = "No AddDbContext registration of a tenant DbContext";
+    public const string Name =
+        "AddDbContext family called only inside Aurora.Platform.Tenancy, and only for the catalog context";
 
+    /// <summary>
+    /// The population key. A member name, deliberately: it selects what is counted, never what is
+    /// exempt.
+    /// </summary>
     public static bool IsDbContextRegistration(string memberName) =>
         memberName.StartsWith("AddDbContext", StringComparison.Ordinal)
         || memberName.StartsWith("AddPooledDbContextFactory", StringComparison.Ordinal);
 
     public static RuleOutcome Check(TypeIndex index)
     {
-        ImmutableHashSet<string> tenantContexts =
+        (ScannedType Site, InstructionReference Call)[] registrations =
         [
-            .. TenancyNames.TenantContextsIn(index).Select(static context => context.FullName),
-        ];
-
-        InstructionReference[] registrations =
-        [
-            .. index.All
-                .SelectMany(TypeReferences.InstructionsIn)
-                .Where(static reference => IsDbContextRegistration(reference.Member.MemberName)),
+            .. from site in index.All
+               from call in TypeReferences.InstructionsIn(site)
+               where IsDbContextRegistration(call.Member.MemberName)
+               select (site, call),
         ];
 
         return RuleOutcome.From(
@@ -106,21 +124,41 @@ internal static class TenantDbContextRegistrationRule
             Name,
             "AddDbContext* calls",
             registrations.Length,
-            Violations(registrations, tenantContexts));
+            registrations
+                .Select(static registration => Judge(registration.Site, registration.Call))
+                .Where(static violation => violation is not null)
+                .Select(static violation => violation!));
     }
 
-    private static IEnumerable<RuleViolation> Violations(
-        IEnumerable<InstructionReference> registrations,
-        ImmutableHashSet<string> tenantContexts) =>
-        from registration in registrations
-        let named = registration.Member.GenericArguments
-            .SelectMany(static argument => argument.Names)
-            .Where(tenantContexts.Contains)
-            .ToArray()
-        where named.Length > 0
-        select new RuleViolation(
-            registration.Subject,
-            ViolationSite.MemberReference,
-            $"{registration.Member.MemberName} registers the tenant context(s) {string.Join(", ", named)}; "
-            + "only CatalogDbContext is registered conventionally (ADR-0007 §4.2)");
+    private static RuleViolation? Judge(ScannedType site, InstructionReference call)
+    {
+        string arguments = string.Join(", ", call.Member.GenericArguments.Select(static argument => argument.Display));
+
+        if (!string.Equals(site.AssemblyName, TenancyNames.TenancyAssemblyName, StringComparison.Ordinal))
+        {
+            return new RuleViolation(
+                call.Subject,
+                ViolationSite.MemberReference,
+                $"{call.Member.MemberName}<{arguments}> is called from {site.AssemblyName}; the AddDbContext "
+                + $"family is called only inside {TenancyNames.TenancyAssemblyName}, and only for the catalog "
+                + "context (ADR-0032 §4.1.1)");
+        }
+
+        bool onlyTheCatalog =
+            call.Member.GenericArguments.Length > 0
+            && call.Member.GenericArguments.All(IsExactlyTheCatalog);
+
+        return onlyTheCatalog
+            ? null
+            : new RuleViolation(
+                call.Subject,
+                ViolationSite.MemberReference,
+                $"{call.Member.MemberName}<{arguments}> inside {TenancyNames.TenancyAssemblyName} registers "
+                + $"something other than {TenancyNames.CatalogDbContext}; an argument the rule cannot resolve "
+                + "is something other (ADR-0032 §4.1.1)");
+    }
+
+    /// <summary>A plain named type has exactly one name; a type parameter has none, an instantiation several.</summary>
+    private static bool IsExactlyTheCatalog(TypeUse argument) =>
+        argument.Names.Count == 1 && argument.Names.Contains(TenancyNames.CatalogDbContext);
 }

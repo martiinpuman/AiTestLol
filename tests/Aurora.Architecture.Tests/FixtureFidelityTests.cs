@@ -47,6 +47,22 @@ public sealed class FixtureFidelityTests
     }
 
     [Fact]
+    public void The_catalog_stand_in_is_compiled_at_the_exact_full_name_the_exemption_names()
+    {
+        // ADR-0032 §4.3's exemption is a (full name, assembly) pair. The full-name half is compiled
+        // here so that a registration naming it and a base chain reaching it are real compiler
+        // output; CatalogFixture relabels the assembly half. If B-05 declares the catalog context at
+        // another name this test cannot see it - nothing here can see that assembly - but T1 fires
+        // on its public constructor and T13 on its assembly, and TenancyNames.CatalogDbContext is
+        // what gets corrected.
+        typeof(global::Aurora.Platform.Tenancy.Catalog.CatalogDbContext).FullName
+            .ShouldBe(Rules.TenancyNames.CatalogDbContext);
+        typeof(global::Aurora.Platform.Tenancy.Catalog.CatalogDbContext).Assembly
+            .ShouldBe(typeof(FixtureFidelityTests).Assembly);
+        typeof(global::Aurora.Platform.Tenancy.Catalog.CatalogDbContext).BaseType.ShouldBe(typeof(DbContext));
+    }
+
+    [Fact]
     public void The_tenancy_stand_ins_carry_the_simple_names_the_rules_match_on()
     {
         // TenantScope and ITenantDbContextFactory<> arrive with B-06. Until then the rules match on
