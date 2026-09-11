@@ -522,6 +522,8 @@ count_executed_tests() {
 # ---------------------------------------------------------------------------
 
 TREE_SNAPSHOT=""
+TREE_DRIFT=""
+TREE_GUARD_DONE=0
 
 snapshot_working_tree() {
   if git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
@@ -531,28 +533,60 @@ snapshot_working_tree() {
   fi
 }
 
+# The 5.1 promise that the gate never mutates what it measures. Compares the
+# tree against the snapshot taken before stage 0 and leaves the difference in
+# TREE_DRIFT; memoised, because both stage 11 and the exit handler ask.
+#
+# The exit handler is why this is not simply stage 11's body: fail-fast leaves
+# the stage loop, so a mutation made by stage 1 or 2 on a run that then fails
+# at stage 3 would never be compared at all - and that is the run on which a
+# developer, already reading a failure, is least likely to notice it.
+compare_working_tree() {
+  (( TREE_GUARD_DONE == 0 )) || return 0
+  TREE_GUARD_DONE=1
+
+  if [[ "${TREE_SNAPSHOT}" == "<not a git work tree>" ]]; then
+    return 0
+  fi
+
+  local after
+  after="$(git -C "${REPO_ROOT}" status --porcelain)" || return 0
+  if [[ "${after}" != "${TREE_SNAPSHOT}" ]]; then
+    TREE_DRIFT="$(diff <(printf '%s\n' "${TREE_SNAPSHOT}") <(printf '%s\n' "${after}") || true)"
+  fi
+  return 0
+}
+
+# Appended to the stage 11 log whether stage 11 reached the guard itself or the
+# exit handler had to reach it on stage 11's behalf: the summary points the
+# reader at that file either way, so it has to exist and explain itself.
+write_tree_drift_log() {
+  {
+    printf '\nverify: the working tree changed while the gate ran. A gate must not modify\n'
+    printf '        what it measures (solution-layout.md 5.1). Difference, before vs after:\n\n'
+    printf '%s\n' "${TREE_DRIFT}"
+  } >>"$1" 2>/dev/null || true
+}
+
 # The timing table is printed by the exit handler, so that it appears whatever
-# went wrong. What stage 11 *does* is enforce the 5.1 promise that the gate
-# never mutates the repository it is measuring: a future stage that reformats
-# source or regenerates a lock file fails here instead of being noticed weeks
-# later in someone's `git status`.
+# went wrong. What stage 11 *does* is report the working-tree guard: a future
+# stage that reformats source or regenerates a lock file fails here instead of
+# being noticed weeks later in someone's `git status`.
 stage_summary() {
+  compare_working_tree
+
   if [[ "${TREE_SNAPSHOT}" == "<not a git work tree>" ]]; then
     note "working-tree guard: skipped (not a git work tree)"
     return 0
   fi
 
-  local after
-  after="$(git -C "${REPO_ROOT}" status --porcelain)"
-  if [[ "${after}" == "${TREE_SNAPSHOT}" ]]; then
+  if [[ -z "${TREE_DRIFT}" ]]; then
     note "working-tree guard: no tracked or untracked file changed during the run"
     return 0
   fi
 
-  note "verify: the working tree changed while the gate ran. A gate must not modify"
-  note "        what it measures (solution-layout.md 5.1). Difference, before vs after:"
-  note ""
-  diff <(printf '%s\n' "${TREE_SNAPSHOT}") <(printf '%s\n' "${after}") >>"${STAGE_LOG}" 2>&1 || true
+  STAGE_NOTE[11]="working tree changed"
+  write_tree_drift_log "${STAGE_LOG}"
   return 1
 }
 
@@ -607,6 +641,14 @@ print_summary() {
     plain+=" Gate incomplete: stage(s) ${pending% } are not implemented yet."$'\n'
   fi
 
+  # Drift found on a run that already failed for another reason is reported,
+  # not promoted: the stage the developer has to fix stays the headline. When
+  # stage 11 is the failure, it has already said this in its own log.
+  if [[ -n "${TREE_DRIFT}" && "${FAILED_STAGE}" != "11" ]]; then
+    plain+=" Also: the working tree changed while the gate ran (solution-layout.md 5.1)."$'\n'
+    plain+="$(printf '%s\n' "${TREE_DRIFT}" | sed 's/^/       /')"$'\n'
+  fi
+
   if [[ "${exit_code}" -eq 0 ]]; then
     plain+=" RESULT: PASS"$'\n'
   elif [[ -n "${FAILED_STAGE}" ]]; then
@@ -627,9 +669,14 @@ print_summary() {
         printf '%s%s%s%s\n' "${C_BOLD}" "${C_GREEN}" "${line}" "${C_RESET}" ;;
       " RESULT: FAIL"*)
         printf '%s%s%s%s\n' "${C_BOLD}" "${C_RED}" "${line}" "${C_RESET}" ;;
-      *" PASS "*|*" FAIL "*|*" PENDING "*|*" SKIP "*)
-        result="$(awk '{print $2}' <<<"${line}")"
-        printf '%s%s%s\n' "$(result_colour "${result}")" "${line}" "${C_RESET}" ;;
+      # Which column holds the result cannot be found by field number: a stage
+      # name is one, two or three words ("Build", "Unit tests", "Format &
+      # style"). The patterns below have already identified it, so each branch
+      # names it rather than re-parsing the row.
+      *" PASS "*)    printf '%s%s%s\n' "$(result_colour PASS)"    "${line}" "${C_RESET}" ;;
+      *" FAIL "*)    printf '%s%s%s\n' "$(result_colour FAIL)"    "${line}" "${C_RESET}" ;;
+      *" PENDING "*) printf '%s%s%s\n' "$(result_colour PENDING)" "${line}" "${C_RESET}" ;;
+      *" SKIP "*)    printf '%s%s%s\n' "$(result_colour SKIP)"    "${line}" "${C_RESET}" ;;
       *)
         printf '%s\n' "${line}" ;;
     esac
@@ -641,6 +688,21 @@ on_exit() {
   set +e
   trap - EXIT
   if [[ "${SUMMARY_ARMED}" == "1" ]]; then
+    compare_working_tree
+    # Nothing else failed, yet the tree moved: stage 11 never got to run - the
+    # loop was cut short by --stage or by an interrupt - so the guard fails the
+    # run from here, and writes the log the summary is about to point at.
+    if [[ -n "${TREE_DRIFT}" && "${code}" -eq 0 ]]; then
+      local log="${VERIFY_DIR}/11-${STAGE_SLUG[11]}.log"
+      mkdir -p -- "${VERIFY_DIR}" 2>/dev/null
+      printf '=== stage 11: %s (working-tree guard, run from the exit handler) ===\n' \
+        "${STAGE_NAME[11]}" >>"${log}" 2>/dev/null
+      write_tree_drift_log "${log}"
+      STAGE_RESULT[11]="FAIL"
+      STAGE_NOTE[11]="working tree changed"
+      FAILED_STAGE=11
+      code=1
+    fi
     print_summary "${code}"
   fi
   exit "${code}"
