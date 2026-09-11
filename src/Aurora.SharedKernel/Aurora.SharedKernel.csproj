@@ -3,11 +3,12 @@
   <!--
     Tier 0 - kernel (docs/architecture/modules.md 3).
 
-    Money, Quantity, Percentage, DateRange, strongly-typed id primitives, Result/Error, IClock.
-    This assembly references nothing but the BCL, and an architecture fitness test asserts it.
-    Do not add a PackageReference or a ProjectReference here.
+    Money, Quantity, Percentage, DateRange, strongly-typed id primitives, Result/Error. See
+    README.md in this folder for what each type is and the decisions behind it.
 
-    Content arrives with task B-03.
+    This assembly references nothing but the BCL. Do not add a PackageReference or a
+    ProjectReference here: SharedKernelAssemblyTests asserts both that and the absence of any
+    double/float, and B-04 adds the solution-wide fitness rules L1 and F1 over the same ground.
   -->
 
   <PropertyGroup>

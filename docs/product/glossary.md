@@ -8,6 +8,8 @@ Terms are business definitions: what the word means to the person running the bu
 
 **Account Role** — A named financial job that an account in the chart of accounts can do (for example "the account that holds tax owed to the tax authority" or "the account that holds the value of goods on the shelf"). The core system always asks for an account by its role, never by its number, so that a New Zealand chart of accounts and a future country's chart of accounts can both answer the same question in their own way. A Country Package is what actually tells the system which real account fills each role.
 
+**Allocation** — The splitting of one amount across several lines: a whole-order discount spread over the items it applies to, a shipment's freight cost spread over the goods in it, one payment spread over the invoices it settles. The parts of an allocation always add back up to the original amount exactly — the system never loses a cent or invents one — and the leftover cents that a division cannot split evenly go to the lines with the largest fraction left over, earliest line first, so that splitting the same amount twice gives the same answer twice.
+
 **Audit Event** — A permanent, tamper-evident record of one thing that happened in the system: who did it, when, from where, to which record, and what changed. Every financial change and every security-relevant action (signing in, changing a role, installing a package) creates one. Audit events are never edited or deleted, even by mistake — a correction is always a new record, never a rewrite of history.
 
 **Backorder** — The part of an ordered quantity that a business has promised a customer but cannot deliver yet because there is not enough stock on hand. A backorder is not a failure state to hide; it is a normal, trackable condition that keeps the sales order line open until the rest of the goods ship.
@@ -40,6 +42,8 @@ Terms are business definitions: what the word means to the person running the bu
 
 **Provisioning** — The automated process that turns a new customer's request into a working, fully isolated Aurora ERP system: its own database, its own first Company, its own administrator account, and whichever Country Packages it asked for — usable within about a minute, without any manual setup step by Aurora staff.
 
+**Quantity** — A number of something together with the Unit of Measure it is counted in. Exactly like Money, a quantity in this product is never a bare number: 10 is not a quantity, 10 pieces is. Quantities counted in different units are never added together or compared, because ten pieces plus two kilograms is not twelve of anything; converting between units always needs the item's own conversion factor. A quantity may be negative — a return, a stock issue and a write-off are all normal business.
+
 **Reversal** — A new Journal Entry (or a full document reversal) that exactly cancels out a previous posting, used whenever a posted financial record turns out to be wrong. The original record is never edited or deleted; the reversal and the original both remain visible, so the full history of what was recorded — and why it changed — is always reconstructable.
 
 **Role** — A named set of Permissions that a tenant can assign to a person, optionally limited to one or more Companies (for example, "Bookkeeper" in Company A only). Some roles come built in (an "Owner" role that can do everything); a tenant may also define its own roles to match how it actually organizes work.
@@ -55,3 +59,5 @@ Terms are business definitions: what the word means to the person running the bu
 **Tax Registration** — A formal record that a Company is registered with a specific tax authority (for example, for GST or VAT), including the registration's own identifying number and the rules that follow from it. A company may hold more than one tax registration over time or across jurisdictions, even though most companies in Aurora ERP's first release have exactly one.
 
 **Tenant** — One paying customer of Aurora ERP: one subscription, one completely private and isolated system, one set of installed Country Packages. Everything a tenant does — every Company, every record, every user — lives inside that tenant's own system and is never visible to, or reachable from, any other tenant's system, under any circumstance.
+
+**Unit of Measure** — What a Quantity is counted in: pieces, kilograms, metres, litres, hours. Every item says which unit it is bought, held and sold in, and every quantity in the system carries its unit with it. Units are recorded using the international standard codes that electronic invoices require, so that a line sent to a customer's system means there what it meant here.
