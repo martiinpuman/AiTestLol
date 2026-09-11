@@ -42,16 +42,25 @@ Whoever adds one must, in the same commit, add its columns to `CatalogSchemaAllo
 the ADR-0007 §9.3 guard fails) and record what `aurora_app` may do to it in
 `CatalogSchemaAllowlist.AppRolePrivileges` — each grant with the task, saga step or module that
 issues it — granting exactly that in the migration that creates it. Nothing arrives by default: the
-catalog deliberately sets no `ALTER DEFAULT PRIVILEGES`, so a forgotten grant is a `42501` at first
-use and a forgotten record fails `CatalogPrivilegeTests`, which compares the record with the ACL
-PostgreSQL actually holds — `pg_class.relacl` and `pg_attribute.attacl`, for the role, for `PUBLIC`
-and for every role it inherits from — entry by entry, both ways. A column grant reads back as
-`UPDATE(column)`; a grant option, a grant that reaches the role through another role, and a privilege
-this code had never heard of (PostgreSQL 17's `MAINTAIN` was the one the security review used) are
-reported as themselves rather than missed. An append-only table — `operator_audit_event`,
-`erasure_replay_log` — records `SELECT, INSERT` and nothing else (ADR-0004 rule 5). A write privilege
-with no component to name is not granted. That is the intended friction: the two allowlist diffs are
-where a reviewer sees a new catalog table arrive, and what the request path may do to it.
+catalog sets no default privilege that grants — its one `ALTER DEFAULT PRIVILEGES` revokes, closing
+every function `aurora_migrator` creates to `PUBLIC`, because PostgreSQL's default for a function is
+the inverse of its default for a table — so a forgotten grant is a `42501` at first use and a
+forgotten record fails `CatalogPrivilegeTests`, which compares the record with the ACL PostgreSQL
+actually holds on every object in the schema — the schema itself (`pg_namespace.nspacl`), tables and
+sequences (`pg_class.relacl`), columns (`pg_attribute.attacl`), functions and procedures
+(`pg_proc.proacl`), types (`pg_type.typacl`), a `NULL` ACL read as the owner default it means — for
+the role, for `PUBLIC` and for every role it is a member of by any route, entry by entry, both ways.
+A column grant reads back as `UPDATE(column)`; a grant option, a grant that reaches the role through
+another role (inherited, or one `SET ROLE` away), a function left at PostgreSQL's `EXECUTE TO PUBLIC`,
+and a privilege this code had never heard of (PostgreSQL 17's `MAINTAIN` was the one the security
+review used) are reported as themselves rather than missed. A function, sequence or type is recorded
+in `CatalogSchemaAllowlist.AppRoleObjectPrivileges` the way a table is in `AppRolePrivileges` — `[]`
+for one the role may not touch, which is what ADR-0028 §2's trigger function will be: a trigger fires
+for `aurora_app` without `aurora_app` holding `EXECUTE` on it. An append-only table —
+`operator_audit_event`, `erasure_replay_log` — records `SELECT, INSERT` and nothing else (ADR-0004
+rule 5). A write privilege with no component to name is not granted. That is the intended friction:
+the allowlist diffs are where a reviewer sees a new catalog object arrive, and what the request path
+may do to it.
 
 ---
 
@@ -118,23 +127,35 @@ role the request path holds (`CatalogPrivilegeTests`, asserted by trying, as the
   alter the schema. But the routing decision does not live in the schema; it lives in rows — which
   tenant a host resolves to, which cluster and database a tenant resolves to, which host a cluster
   is — so what matters is which rows the role can write. It can read every registry table. It can
-  insert a tenant and a host (the provisioning saga, B-07.1 and B-07.4), move a tenant's `state`,
-  `core_schema_version`, `activated_at` and `last_activity_at` (B-06.2, B-06.3, B-07.4, B-08), and
-  insert and update `installed_package` (the installer, B-13.2). It cannot write `database_cluster`
-  at all; cannot update the columns a tenant or a host resolves by (`tenant.key`, `cluster_id`,
-  `database_name`, `residency_region`; `tenant_host.host`, `tenant_id`); and cannot delete or
-  truncate any catalog row, because nothing on the request path deletes one — §11.4 tombstones a
-  tenant, a subscription closes with `valid_to`, `DROP DATABASE` is `aurora_admin`'s. Those three
-  limits are what stop a request holding the role from rebinding another tenant's hostname, sending
-  one tenant's requests at another tenant's database, or repointing a cluster's `host` so the
-  resolver dials an attacker carrying the real cluster credentials — the three writes the security
-  re-review made with the grants B-05 first shipped, and the writes
-  `The_app_role_cannot_repoint_where_a_tenant_or_a_host_resolves` now makes as the role, against the
-  real migration, expecting `42501` for each. Every grant is recorded with the component that needs
-  it in `CatalogSchemaAllowlist.AppRolePrivileges`, the record is held to its own rules in stage 6
-  (`CatalogPrivilegeAllowlistTests`: no `DELETE`, no write on `database_cluster`, no `UPDATE` on a
-  routing column, a named writer on every grant), and the database is held to the record by
-  `CatalogPrivilegeTests`.
+  move a tenant's `state`, `core_schema_version` and `last_activity_at` (B-06.2, B-06.3, B-08), and
+  insert and update `installed_package` (the installer, B-13.2). It cannot create a tenant or a
+  host: `INSERT` writes every column of a new row, and a new row is a routing decision — with the
+  `INSERT` the first rework kept, the second security re-review created a tenant of its own that
+  resolved to another tenant's database, and a self-verified host for a tenant it did not own — so
+  `ReserveTenant` and `RegisterRouting` (B-07.1, B-07.4) run as the provisioning saga's own
+  principal, not this role. It cannot write `database_cluster` at all; cannot update the columns a
+  tenant or a host resolves by (`tenant.key`, `cluster_id`, `database_name`, `residency_region`;
+  `tenant_host.host`, `tenant_id`); cannot delete or truncate any catalog row, because nothing on
+  the request path deletes one — §11.4 tombstones a tenant, a subscription closes with `valid_to`,
+  `DROP DATABASE` is `aurora_admin`'s; and cannot call a function in `catalog` that no migration
+  opened to it by name. Those limits are what stop a request holding the role from rebinding another
+  tenant's hostname, sending one tenant's requests at another tenant's database, creating a routing
+  row of its own, or repointing a cluster's `host` so the resolver dials an attacker carrying the
+  real cluster credentials — the writes two security re-reviews made against earlier grants, and
+  the eleven writes `The_app_role_cannot_repoint_where_a_tenant_or_a_host_resolves` now makes as
+  the role, against the real migration, expecting `42501` for each. Belt and braces on the first
+  of them: `ux_tenant_cluster_id_database_name` makes one database on one cluster one tenant's,
+  whoever inserts. Every grant is recorded with the component that needs it in
+  `CatalogSchemaAllowlist.AppRolePrivileges` (tables) and `AppRoleObjectPrivileges` (the schema,
+  and any function, sequence or type that arrives); the record is held to its own rules in stage 6
+  (`CatalogPrivilegeAllowlistTests`: no `DELETE`, no write on `database_cluster`, no `INSERT` on a
+  table with routing columns and no `UPDATE` on a routing column, `USAGE` and nothing else on the
+  schema, a named writer on every grant); and the database is held to the record by
+  `CatalogPrivilegeTests`. A grant has a column axis and no row axis: `UPDATE(state)` reaches every
+  tenant's row, and `installed_package` is writable for any tenant id. No grant can narrow that; a
+  component that writes the catalog must name the tenant it acts for and check it against the
+  resolved scope, which is B-06.2's, B-08's and B-13's obligation and the reason a request-path
+  write to the catalog is the exception that needs a named component.
 - **Sideways** — on the test fixture's cluster, `aurora_app` can open the catalog and no other
   database that accepts connections (`template1` and the maintenance database included, enumerated
   from `pg_database` rather than named). **That is a property of the databases, not of the role.**
@@ -158,13 +179,16 @@ role the request path holds (`CatalogPrivilegeTests`, asserted by trying, as the
 
 ### What the request path does not write, and who decides
 
-Clusters are operator seed data, written as `aurora_migrator`. Subscriptions have no writer at all
-yet — no backlog row bills anyone. The §11.4 offboarding transitions (`suspended_at`,
-`deletion_due_at`, `deleted_at`, tombstoning a deleted tenant's routing columns) have no backlog row
-either. Whether such operator-grade writes get a fourth catalog role or grants to `aurora_app` with
-the writer named is the architect's open question from the B-05 security re-review. Until it is
-answered the request path holds none of them, and the task that lands them grants what it needs in
-its own migration, naming itself in `AppRolePrivileges`.
+Clusters are operator seed data, written as `aurora_migrator`. Tenants and hosts are created, and a
+tenant activated, by the provisioning saga (ADR-0007 §8 steps 1 and 8) — as a principal of its own,
+never as `aurora_app`, because the request path may not create a routing decision. Which principal
+that is — a fourth catalog role, or `aurora_admin`, which already holds the saga's `CREATE DATABASE`
+— is the architect's decision, narrowed by the second security re-review to exactly that question;
+B-07 grants it what it needs in a migration that names it. Subscriptions have no writer at all yet —
+no backlog row bills anyone. The §11.4 offboarding transitions (`suspended_at`, `deletion_due_at`,
+`deleted_at`, tombstoning a deleted tenant's routing columns) have no backlog row either and belong
+with the same decision. Until each is landed the request path holds none of them, and the task that
+lands one grants what it needs in its own migration, naming itself in the record.
 
 ### What B-06.2 and B-07 must add
 
