@@ -277,12 +277,17 @@ docker_is_needed() {
 # Stage 0 - Preflight
 # ---------------------------------------------------------------------------
 
-sdk_feature_band() {
-  local major minor patch
-  IFS=. read -r major minor patch <<<"$1"
-  patch="${patch%%-*}"
-  [[ "${major}" =~ ^[0-9]+$ && "${minor}" =~ ^[0-9]+$ && "${patch}" =~ ^[0-9]+$ ]] || return 1
-  printf '%s.%s.%sxx' "${major}" "${minor}" "$(( 10#${patch} / 100 ))"
+# global.json is a handful of flat string properties, so reading it with sed
+# is preferable to making the gate depend on jq being installed.
+json_string_value() {
+  sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$2" | head -n 1
+}
+
+sdk_major_minor() {
+  local major minor rest
+  IFS=. read -r major minor rest <<<"$1"
+  [[ "${major}" =~ ^[0-9]+$ && "${minor}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s.%s' "${major}" "${minor}"
 }
 
 stage_preflight() {
@@ -297,9 +302,10 @@ stage_preflight() {
     return 1
   fi
 
-  # Run from the repository root, so this resolves through global.json: a
-  # pinned-but-absent SDK fails here, with the SDK's own message, instead of
-  # somewhere deep inside stage 3.
+  # Run from the repository root, so this resolves through global.json. Under
+  # the pinned rollForward of latestPatch the SDK muxer is what enforces the
+  # pin, and a pinned-but-absent SDK fails right here with the SDK's own
+  # diagnostic instead of somewhere deep inside stage 3.
   local resolved
   if ! resolved="$(run_capture dotnet --version)"; then
     note "verify: 'dotnet --version' failed - global.json pins an SDK this machine does not have."
@@ -307,28 +313,34 @@ stage_preflight() {
   fi
   note "SDK on PATH:      ${resolved}"
 
-  local pinned
-  pinned="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${REPO_ROOT}/global.json" | head -n 1)"
+  local pinned roll
+  pinned="$(json_string_value version "${REPO_ROOT}/global.json")"
+  roll="$(json_string_value rollForward "${REPO_ROOT}/global.json")"
+  roll="${roll:-latestPatch}"
   if [[ -z "${pinned}" ]]; then
     note "verify: could not read the SDK version out of global.json."
     return 1
   fi
-  note "global.json pins: ${pinned} (rollForward: latestPatch)"
+  note "global.json pins: ${pinned} (rollForward: ${roll})"
 
-  # latestPatch rolls forward within a feature band and no further, so band
-  # equality is exactly the compatibility the pin promises.
-  local band_resolved band_pinned
-  band_resolved="$(sdk_feature_band "${resolved}")" \
+  # The muxer's own enforcement is only as narrow as rollForward makes it:
+  # widen that to latestFeature or latestMajor and it will happily build this
+  # repository on a newer runtime. ".NET 10 (LTS)" is a parameter the product
+  # owner locked (CLAUDE.md), so the major.minor is asserted here independently
+  # of how rollForward is currently set.
+  local mm_resolved mm_pinned
+  mm_resolved="$(sdk_major_minor "${resolved}")" \
     || { note "verify: cannot parse the SDK version '${resolved}'."; return 1; }
-  band_pinned="$(sdk_feature_band "${pinned}")" \
+  mm_pinned="$(sdk_major_minor "${pinned}")" \
     || { note "verify: cannot parse the global.json version '${pinned}'."; return 1; }
-  if [[ "${band_resolved}" != "${band_pinned}" ]]; then
+  if [[ "${mm_resolved}" != "${mm_pinned}" ]]; then
     note ""
-    note "verify: SDK feature band mismatch - running ${band_resolved}, global.json pins ${band_pinned}."
-    note "        rollForward is latestPatch, so only the patch level may differ."
+    note "verify: SDK version mismatch - building on ${mm_resolved}, global.json pins ${mm_pinned}."
+    note "        rollForward is '${roll}', which let the muxer cross that boundary."
+    note "        The .NET major version is a locked product parameter (CLAUDE.md)."
     return 1
   fi
-  note "feature band:     ${band_pinned} - match"
+  note "major.minor:      ${mm_pinned} - match"
 
   if docker_is_needed; then
     if run_cmd docker info; then
