@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-09-11) — the *existence* of Country Packages is **locked by the product owner**; the contract is the architect's design
 - **Deciders:** product owner (country-agnostic core), architect (contract)
 - **Supersedes:** —
-- **Superseded by:** —
+- **Superseded by:** **partially superseded by [ADR-0031](ADR-0031-country-package-contract-corrections.md) (2026-09-11)** — §3.1's "only core assembly" sentence, §7 row 10 (a bounded-range validity rule is added), §8.3 as it applies to `IStatutoryReportDefinition.VersionAsOf`, §9.3's description of what a package directory contains, and §10's ownership of `CountryPackageContractTests<TPackage>`. Every other clause of this ADR stands.
 - **Related:** ADR-0004 (PostgreSQL), ADR-0007 (tenancy), ADR-0018 (retention), ADR-0021 (money and rounding), ADR-0023 (tax registration)
 - **Primary input:** `../research/features/localization-packages.md` (ten recommended extension points, and the three failure classes every incumbent exhibits) and `../research/regulation/first-country-package.md` (New Zealand as the first reference package)
 
@@ -50,7 +50,7 @@ The core exposes a separate, deliberately slow-moving number: the **core contrac
 | Add a new extension point; add an optional member with a default implementation; add an enum member to a registry a package only reads | **MINOR** |
 | Documentation, clarification, no public-surface change | **PATCH** |
 
-`Aurora.Countries.Contracts` is the **only** core assembly a package may reference. An architecture fitness test asserts that no package assembly references `Aurora.*.Domain`, `Aurora.*.Infrastructure`, `Aurora.Web` or any module's internals.
+~~`Aurora.Countries.Contracts` is the **only** core assembly a package may reference. An architecture fitness test asserts that no package assembly references `Aurora.*.Domain`, `Aurora.*.Infrastructure`, `Aurora.Web` or any module's internals.~~ **Superseded by ADR-0031 §2:** a package may reference the contract assembly **and the tier-0 assemblies the contract is expressed in** — `Aurora.SharedKernel` and `Aurora.Documents.Canonical` — and no other `Aurora.*` assembly. The rule runs from package metadata before any package code executes (`PackageAssemblyReferenceRule`), not as a build-time fitness test, so it also covers a package this repository did not build.
 
 The contract assembly's public surface is guarded by an **approved-API snapshot test** (`PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt`, via `Microsoft.CodeAnalysis.PublicApiAnalyzers`). Any change to the public surface fails the build until a developer moves the line into the approved file — which is the moment the SemVer bump is decided, consciously, by a human. This is the mechanism that stops core-contract drift from happening silently, which is failure class #1.
 
@@ -82,7 +82,7 @@ Each package embeds `package.manifest.json` as an assembly resource:
 
 `coreContractRange` uses **NuGet version-range syntax** (`[2.0.0, 3.0.0)`), parsed by `NuGet.Versioning`. Chosen over inventing a range syntax because every .NET developer already reads it and the parser is a maintained, permissively licensed library.
 
-The manifest is read with `System.Reflection.MetadataLoadContext` — **metadata only, no code execution** — so the platform can validate compatibility, dependencies and signature *before* it ever runs a line of package code. A package's `ICountryPackage.Manifest` property must equal the embedded resource; a contract test enforces it, so the manifest cannot lie about the code.
+**(ADR-0031 §1 confirms this section against §9.3: the embedded resource is the only copy; the package directory carries the assembly and `package.sig`, and no sidecar manifest.)** The manifest is read with `System.Reflection.MetadataLoadContext` — **metadata only, no code execution** — so the platform can validate compatibility, dependencies and signature *before* it ever runs a line of package code. A package's `ICountryPackage.Manifest` property must equal the embedded resource; a contract test enforces it, so the manifest cannot lie about the code.
 
 ### 3.3 Discovery
 
@@ -253,7 +253,7 @@ Derived directly from `../research/features/localization-packages.md`. "Kind" re
 | 7 | Identifier validator | `IIdentifierValidator` for `CompanyRegistrationNumber`, `TaxId`, `BankAccount` | Code | Test vectors | Core value objects `OrganizationNumber`, `TaxIdentifier`, `BankAccountNumber` delegate to the registered validator for the relevant jurisdiction and are **unvalidatable without one** — a party in a jurisdiction with no package gets a documented "unverified" state, never a silent pass |
 | 8 | Locale pack | `ILocalePack` (resources, number/date/currency formats) | Data | `.resx`/`.po` resources, format overrides | **Shippable independently of fiscal logic** (`localeOnly: true` in the manifest) — the Business Central XLIFF lesson: translation and fiscal localization are separate concerns that are usually, wrongly, fused |
 | 9 | Retention and archiving policy | `IRetentionPolicy` | Data | `platform.retention_rule` rows per document type | Minimum retention, immutability, and whether GDPR erasure is **deferred** until retention lapses (ADR-0007 §11.5, ADR-0018). Flagged UNVERIFIED against a primary legal source by the researcher; the contract shape is safe regardless because it is pure declaration |
-| 10 | Core-contract compatibility declaration | `coreContractRange` in the manifest | Data | — | Enforced at install *and* at core upgrade (§5.2). This is the extension point that makes the other nine survivable over a decade |
+| 10 | Core-contract compatibility declaration | `coreContractRange` in the manifest | Data | — | Enforced at install *and* at core upgrade (§5.2). This is the extension point that makes the other nine survivable over a decade. **ADR-0031 §3 adds a validity rule: the range must be bounded at both ends, and an unbounded range makes the manifest invalid** |
 
 ---
 
@@ -277,7 +277,7 @@ The researcher found **no incumbent that cleanly supports adding a second countr
 **One legal entity with statutory obligations in more than one jurisdiction simultaneously** — the EU OSS / multi-VAT-registration case — is **out of scope for v1 behaviour**, and **in scope structurally from day one**:
 
 - `Company` has `ITaxRegistration` as a **1..N** relationship from the first migration (ADR-0023, and assumption A2 in `../architecture/overview.md` §6). The schema admits it.
-- Every tax resolution and every statutory report slot is keyed by `(company, taxRegistration, asOfDate)` in the contract signature, even though v1 only ever passes the single primary registration.
+- Every tax resolution and every statutory report slot is keyed by `(company, taxRegistration, asOfDate)` in the contract signature, even though v1 only ever passes the single primary registration. **ADR-0031 §4 settles what this binds: `IStatutoryReportDefinition.VersionAsOf` takes `(CompanyId, TaxRegistrationId, DateOnly)`. `ITaxCategoryMapping.DefaultCodeFor` is explicitly not decided there.**
 - v1 refuses, at activation, to fill the same slot twice for one company (§5.1, step 5), with an error that names the limitation rather than producing a silently wrong return.
 
 This is the **most reversible** option available: no schema migration is needed to enable it, no contract signature changes, and the work when it arrives is behaviour plus UI — not a data model rewrite. Building it now would mean designing a multi-jurisdiction tax determination engine against zero validated customer demand, which is how an SMB ERP acquires an enterprise-sized tax module nobody asked for.
@@ -307,7 +307,7 @@ This is the novelty in this ADR, and that is its written justification. Everythi
 
 ### 9.3 Signature verification
 
-- Each package directory contains the assembly, `package.manifest.json` and a **detached signature** over the SHA-256 of the assembly file plus the manifest bytes.
+- ~~Each package directory contains the assembly, `package.manifest.json` and a **detached signature**~~ **Superseded by ADR-0031 §1:** each package directory contains the assembly and `package.sig`, a **detached signature** over the SHA-256 of the assembly file followed by the manifest bytes exactly as embedded in that assembly. There is no sidecar manifest; the embedded resource is the only copy.
 - **ECDSA P-256 with SHA-256**, verified against a public key in the platform trust store, pinned by thumbprint in configuration. Chosen because it is entirely in the .NET base class library (`System.Security.Cryptography.ECDsa`) — **no third-party dependency, no licence question**. Authenticode is Windows-specific and we deploy Linux containers; strong naming is not a security feature and is explicitly not used for this.
 - Trust levels: `FirstParty` (Aurora's key), `Partner` (a key added by an operator, recorded in `catalog.operator_audit_event`), `Unsigned` (refused unless `Packages:AllowUnsigned=true`, which the host refuses to honour outside the Development environment — asserted by a configuration test, because a flag that only a comment prevents from reaching production will reach production).
 - Private keys are never in the repository. Signing happens in the release pipeline.
@@ -324,7 +324,7 @@ Loaded package code runs with full trust in-process: it can read any file the pr
 
 ## 10. Testing a package
 
-Every package inherits `CountryPackageContractTests<TPackage>` — the same "shared base class, enforced by a fitness test" approach as the tenant isolation contract (ADR-0007 §12):
+Every package inherits `CountryPackageContractTests<TPackage>` — the same "shared base class, enforced by a fitness test" approach as the tenant isolation contract (ADR-0007 §12). **The base class does not exist yet: ADR-0031 §5 gives it an owner (a new bootstrap row after B-13.2, in `tests/Aurora.Countries.TestKit`). Until that row lands, this table is a specification and nothing enforces it.**
 
 | Test | Asserts |
 |---|---|

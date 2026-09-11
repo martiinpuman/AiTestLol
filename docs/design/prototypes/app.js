@@ -89,7 +89,16 @@ function closeModal(id) {
 }
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape") {
+    // components.md #14: "Esc closes it UNLESS it represents an in-progress,
+    // already-committed action... a dialog can be dismissed while merely
+    // collecting input, never while a commit is actually in flight." A
+    // forced re-authentication dialog (see sign-in.html) is the same class
+    // of case — closing it would leave the user silently unauthenticated —
+    // so it opts out via data-modal-blocking="true" rather than being
+    // silently dismissable like the command palette or the company-switch
+    // confirmation.
     document.querySelectorAll(".modal-overlay:not([hidden])").forEach(function (m) {
+      if (m.dataset.modalBlocking === "true") return;
       m.setAttribute("hidden", "");
     });
   }

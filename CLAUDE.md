@@ -49,12 +49,12 @@ The core defines the extension points as contracts. The core must never contain 
 | docs/architecture/ | Overview, module map, health checks, dependencies.md | architect |
 | docs/decisions/ | ADR-####-title.md. Never deleted, only superseded. | architect |
 | docs/design/ | Design system, screen specs, prototypes/ | ui-designer |
-| docs/reviews/ | TASK-###.md review records | orchestrator saves senior-reviewer output |
+| docs/reviews/ | Historical review records up to iteration 5. **New reviews are posted on the task's GitHub pull request**, not here. | reviewers post to GitHub |
 | src/, tests/, scripts/ | Code | senior developers only |
 | scripts/verify.sh | The single quality gate: build, all tests, architecture tests, lint, format check | senior developers |
 
 ## Ownership
-Only senior developers change src/, tests/ and scripts/. Other roles write only in their own docs folder. If you need a change outside your area, ask for it in your summary to the orchestrator. Developers may also update docs/product/glossary.md and module README files.
+Only senior developers change src/, tests/ and scripts/ — except `scripts/hooks/`, `scripts/dev-*.sh`, `scripts/bootstrap-env.sh`, `scripts/project-health.sh`, `scripts/agent-progress.sh` and `.claude/`, which are orchestrator-owned automation (`docs/architecture/automation.md`). Other roles write only in their own docs folder. If you need a change outside your area, ask for it in your summary to the orchestrator. Developers may also update docs/product/glossary.md and module README files.
 
 ## Engineering standards
 - Clean Architecture: dependencies point inward. The domain layer has no references to frameworks, databases or UI. Enforced by automated architecture tests, not goodwill.
@@ -121,122 +121,50 @@ Peer review is required by the Definition of Done, but its depth is proportionat
 The tier is named in the task brief. When in doubt, go up a tier — and a reviewer may escalate a task
 it was given at a lower tier by saying so in the verdict.
 
-**How deep a review goes is also set by the tier.** Reviews are the single largest cost in this
-project's cycle time — on the two largest tasks so far, roughly half the total agent time went on the
-rejection round — so depth must be spent where it changes outcomes.
+How deep and how long a review runs is set by its tier too, and task sizing and branch stacking are
+the orchestrator's rules — all four live in `docs/ORCHESTRATION.md`, which reviewers and the
+orchestrator read and nobody else needs.
 
-| Tier | What the reviewer does |
-|---|---|
-| **Full** | Everything. Read the implementation against the ADR line by line, verify claims by running them, prove the tests bite by mutation, and attack the two or three properties the design actually rests on. This is what found the allocation blocker. |
-| **Standard** | Run the gate. Verify the **top three risks** you identify in the change, by executing them rather than reasoning about them. Read the rest for correctness without exhaustive proof. Say explicitly which three you chose and why. |
-| **Light** | Run the gate. Confirm the acceptance criteria are met. Check the change does not weaken an existing guarantee. Stop there. |
+### Reviewers post their review on the pull request
 
-At Standard and Light, a reviewer who finds something that smells like a Full-tier risk should
-escalate rather than quietly doing a Full review — say so in the verdict and let the orchestrator
-decide. Depth that nobody asked for is depth nobody budgeted for.
+Every task branch has a draft pull request into the integration branch. **The review goes
+there** — findings anchored to the lines they concern, and a submitted review carrying the
+verdict: `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` for findings that do not block. The
+product owner reads GitHub; a review in a repository file is one nobody acts on until an
+orchestrator relays it.
 
-### Reviewers write their own review file
+Reviewers return to the orchestrator only the verdict, one line per blocker and major, the
+gate result, and anything to route to another role — never the review text. It is on the PR,
+and a second copy is the one that drifts.
 
-A review is saved at `docs/reviews/<TASK-ID>.md` (or `<TASK-ID>-rereview.md`). **The reviewer writes
-that file itself**, with a heredoc, and returns to the orchestrator only:
+`docs/reviews/` holds the records written before this changed. It is history, not the
+destination. Because the repository is the team's only memory, the orchestrator records each
+merged task's verdict and its PR number in `docs/ITERATION_LOG.md`, so a session with no
+GitHub access can still find out why a branch was rejected and what fixed it.
 
-- the verdict,
-- a one-line summary of each blocker and major,
-- the gate result,
-- anything the orchestrator must route to another role.
-
-Do not return the full review text. It was being written once by the reviewer, read once by the
-orchestrator, and written again to the file — three times the tokens for one document, and the
-orchestrator's copy was the one that could drift from the file.
-
-Reviewers still change nothing else. Writing under `docs/reviews/` is the single exception to the
-read-only rule, and it exists so a review cannot be lost or garbled in transit. A reviewer that edits
-anything under `src/`, `tests/`, `scripts/`, `docs/architecture/` or `docs/decisions/` has broken the
-rule that a review may never quietly change the code it approves.
-
-### Length is part of the job
-
-A finding is worth what it changes, not what it weighs.
-
-| Tier | Target |
-|---|---|
-| **Full** | As long as the findings require. Evidence for a blocker is never cut. |
-| **Standard** | ~800 words. Verdict, the top three risks and how you executed them, findings. |
-| **Light** | ~300 words. Verdict, gate result, findings. |
-
-Two habits regardless of tier: state a finding once, in the place it belongs, and put the evidence
-that proves it next to it. A "Patterns noted" section earns its place only when the pattern is new —
-if it restates one already in this file's self-check list, cite it in a clause instead.
-
-## Task size is a hard limit, checked before dispatch
-
-`.claude/agents/project-manager.md` has always said a task must fit one session, **aiming under about
-400 changed lines**. It was not enforced, and the cost was immediate: B-12 shipped **9 004 lines across
-69 files** and B-04 **4 540**, so neither could report anything for the better part of an hour. A task
-that large cannot give feedback, cannot be reviewed carefully, and makes a rejection round
-catastrophically expensive.
-
-**The orchestrator checks size before dispatching, not after.** Read the acceptance-criteria row and
-count what it actually demands. If it implies more than roughly 400 lines, or more than about six
-acceptance criteria, or more than one subsystem — **send it to the project-manager to split first.**
-Dispatching an oversized task is an orchestrator error, not a developer one.
-
-Rules of thumb that catch it early: a row listing ten of anything is ten tasks or one task with a
-scope cap; a row whose verbs include both "define" and "host"/"load"/"execute" is two tasks; a row
-naming a contract *and* its implementation is two tasks.
-
-### Every brief carries a scope cap
-
-State the bounded deliverable, then this, explicitly:
-
-> Deliver exactly these. **If a further improvement, hardening or abstraction suggests itself, do not
-> build it — name it in your summary as a follow-up.** This brief is deliberately narrow.
-
-Briefs that read "also consider…" invite breadth and get it. Ask for what the task needs and nothing
-more; the reviewer and the next task will catch what is genuinely missing.
-
-### Hand back at the first complete slice
-
-Tell every developer:
-
-> When you have one complete, working, tested vertical slice — not the whole task — commit it and
-> report. Do not carry on to the next piece without handing back. A slice in review while you build
-> the next is worth more than a finished task nobody has seen.
-
-This converts one silent 50-minute run into two 25-minute runs with feedback in between, at no cost to
-quality. The gate still applies to each slice.
-
-## Starting a dependent task before its predecessor merges
-
-A dependent task used to wait for its predecessor to be reviewed **and** merged, which put a whole
-review's latency on the critical path. It may now start earlier, under conditions:
-
-**Allowed** when the dependent task is **Standard** or **Light** tier, and the predecessor's branch is
-**gate-green** — `./scripts/verify.sh` passes on it — even though its review is still open. Branch from
-the predecessor's `task/<ID>`, not from the integration branch, and say in the first commit message
-which branch you are stacked on.
-
-**Never** when either task is **Full** tier. Tenancy, money, the ledger, tax, auth and migrations wait
-for a merged predecessor. The whole point of a Full review is that the design may still change, and
-rebuilding on a design that moved is more expensive than the wait.
-
-**Whoever starts early owns the rebase.** When the predecessor merges, rebase onto the integration
-branch and re-run the gate before handing over. If the predecessor's review forces a change that
-invalidates your work, that is the cost of starting early — say so plainly rather than patching around
-it.
-
-The orchestrator decides and names this in the brief. Absent an explicit instruction, wait for the
-merge.
+Reviewers still change nothing else. Posting a review is the only write a reviewer makes.
 
 ## Definition of Done (per task)
 1. All acceptance criteria in the spec are met and covered by tests.
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
 3. Tenant isolation and authorization tests exist for any new data access or endpoint.
-4. Approved by a senior-reviewer who is not the author (recorded in docs/reviews/TASK-###.md).
+4. Approved by a senior-reviewer who is not the author, recorded as a submitted review on the task's pull request.
+5. **The orchestrator merges on that verdict.** The product owner is hands-off by standing
+   instruction and does not review or accept pull requests; no branch waits on a human. What a
+   merge does require is a passing verdict from an agent that did not author the branch — and
+   at Full tier, after a rework, from a *second* reviewer. GitHub refuses to record an approval
+   from the account that authored the branch, so a reviewer may have to submit `COMMENT` with
+   `VERDICT: APPROVE` as its first line; that is a real approval and the orchestrator merges on
+   it. An unreviewed branch is never merged, and neither is one whose only review is by its
+   author.
 5. Docs affected by the change are updated.
 
 ## Local toolchain
-The .NET SDK lives at `/usr/share/dotnet`. Any script or agent that runs `dotnet` must first source `scripts/dev-env.sh`, which puts it on PATH and starts the Docker daemon if it is not already running. Integration tests use Testcontainers against `postgres:17-alpine`.
+The .NET SDK lives at `/usr/share/dotnet`. Any script or agent that runs `dotnet` must first source `scripts/dev-env.sh` **in the same shell call** — shell state does not persist between tool calls. Integration tests use Testcontainers against `postgres:17-alpine`.
+
+While iterating, run tests with `bash scripts/dev-test.sh` rather than `dotnet test`: it prints the executed counts and the failures and discards the rest (89% less output). `scripts/verify.sh` is still what decides whether a branch may merge.
+
+Two hooks watch every agent. A `Bash` command that force-pushes, pushes to the wrong branch, deletes an ADR, stages a `.env` or runs `dotnet` without `dev-env.sh` is **blocked** with the reason. A file you write that compares a country to a string literal in core, reads the ambient clock, declares a `float`/`double` in `src/`, leaves a `TODO` with no backlog id, or contains a credential-shaped literal is **reported back to you** — fix it in the same turn. The rules and their proofs are in `docs/architecture/automation.md`.
 
 ## Hard limits for every agent
 Never: deploy anything, create cloud resources, spend money, sign up for services, use real customer or personal data, commit secrets, force-push, or delete docs/decisions/. New third-party dependencies need a permissive license (MIT, Apache-2.0, BSD) and an entry in docs/architecture/dependencies.md; watch for libraries that have moved to commercial licensing.

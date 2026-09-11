@@ -2,7 +2,7 @@
 
 **Phase:** build · **Milestone:** M1 walking skeleton (B-01 … B-15)
 **Integration branch:** `claude/multi-tenant-saas-erp-pv2nap` · draft PR #1 tracks it
-**Last iteration:** 4 (2026-09-11)
+**Last iteration:** 5 (2026-09-11)
 
 ## Product in one line
 A multi-tenant SaaS ERP for SMBs with a country-agnostic core, where every jurisdiction-specific rule ships as an installable **Country Package**.
@@ -30,13 +30,25 @@ xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework maj
 - Research (9 files), design system with a computed WCAG audit and HTML prototypes, roadmap,
   glossary, SPEC-001/002, 29-task backlog.
 
-## In flight (four developers)
-| Task | What | Model | Notes |
-|---|---|---|---|
-| **B-05** | Catalog database, `CatalogDbContext`, the tenant registry | opus | Resuming 24 recovered commits. 3 build errors to close: `CatalogDbContext` is `internal` and the test fixture exposes it publicly — a deliberate decision, not a quick fix |
-| **B-04** | Solution-wide architecture fitness rules | opus | Every rule must be proven to fail; some are inert until B-06 brings `TenantScope` |
-| **B-12** | Country Package contracts + hosting | opus | The extension model's first real test |
-| **B-02-FU** | Quality-gate follow-ups (m-6, n-7, n-8, n-6) | fable | Two were flagged "before B-11 starts" |
+## In flight (six agents; every review so far has rejected)
+- **B-04 fitness rules** — rework 2. Second reviewer confirmed both majors fixed, then executed four
+  High bypasses. The worst: a production `.csproj` under any directory named `Fixtures/` vanished from
+  the scanned population, invisible to every rule including all six tenancy rules, suite green at 42/42.
+  It had been deferred as minor n-6 in the first review.
+- **B-05 catalog privileges** — rework 2. First rework held against all eight original attacks; the
+  second reviewer then took the tenant over with `INSERT` alone (no unique index on
+  `catalog.tenant.database_name`), and bypassed the new ACL oracle with a `SECURITY DEFINER` function,
+  because a function's default ACL is `EXECUTE TO PUBLIC` and the oracle does not read `pg_proc`.
+- **B-12 Country Package contracts** — rework 1, seven findings across a peer and a security review.
+- **ADR-0029 identity** — CHANGES_REQUESTED, **2 blockers, 9 high**, reviewed as a *design* before any
+  row was dispatched. Both blockers cross-tenant, both in territory no document owned: a membership
+  cache key with no tenant in it, and find-or-create on a platform-wide user record. Architect amending.
+- **ARCH-CORRECTIONS** (ADR-0030 fitness mechanism, ADR-0031 package contracts, ADR-0028 Amendment 1)
+  — in review.
+- **ARCH-TENANT-DOORS** — the architect deciding what B-04's T1–T6 may forbid, which B-06 needs.
+
+**Design work merged:** three screen specs and working HTML prototypes (sign-in, first-run landing,
+companies list), localized, WCAG-audited against existing token pairs.
 
 ## Known risks
 1. **Usage limits kill agents mid-task, repeatedly** (five times so far). Mitigation works: developers

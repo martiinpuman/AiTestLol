@@ -16,11 +16,15 @@ Terms are business definitions: what the word means to the person running the bu
 
 **Company** — One legal entity that does business: the thing that has its own name, its own tax registrations, its own chart of accounts, and its own set of financial statements. A single customer of Aurora ERP (a Tenant) may contain more than one Company — for example a group with a trading business in one country and a manufacturing business in another.
 
+**Core Contract Version** — The version number of the agreement between the core product and Country Packages: what a package is allowed to ask of the system, and what the system promises to keep working. Every package states the range of core contract versions it was built against, and the system refuses to install or upgrade a package outside that range rather than discovering the mismatch later as a wrong number on a tax return. It moves slowly and deliberately, and is not the product's own version number.
+
 **Country Package** — An installable, versioned add-on that teaches Aurora ERP how to do business correctly in one country or region: which taxes apply and at what rate, what the standard chart of accounts looks like, how a statutory tax return is laid out, how to send an electronic invoice, how to validate a company registration number, and how long records must be kept. The core product contains none of this knowledge itself; a tenant adds exactly the packages it needs.
 
 **Credit Note** — A document that reduces what a customer owes, issued after an invoice because goods were returned, an order was overcharged, or a delivery fell short. A credit note always points back to the invoice it corrects and can correct just part of one line — it is never the original invoice edited to look different after the fact.
 
 **Delivery** — The record of goods that were actually picked, packed and shipped to a customer, separate from both the sales order that requested them and the invoice that bills for them. A single order is often delivered in several partial shipments, and a single delivery is often billed on its own schedule rather than the moment it ships — Delivery and Invoice are always two different documents for this reason.
+
+**Extension Point** — One named job that the core product knows it cannot do by itself and hands to a Country Package: supplying a chart of accounts, answering what tax applies on a date, laying out a statutory return, mapping an electronic invoice, reading a bank statement, validating a registration number, and so on. There are ten. The core defines what each one is asked and what a usable answer looks like; the package decides the answer for its own country.
 
 **Invoice** — The document that bills a customer (a Sales Invoice) or records what a vendor billed the business (a Vendor Invoice) for goods or services. Once an invoice is posted, its amounts are fixed; any later correction happens through a Credit Note, a Debit Note, or a full reversal — never by editing the posted invoice.
 
@@ -33,6 +37,8 @@ Terms are business definitions: what the word means to the person running the bu
 **Money** — An amount together with the currency it is denominated in. There is no such thing as a bare number representing an amount of money in this product; every amount always carries its currency, and amounts in different currencies are never added together directly.
 
 **Outbox** — The guarantee that when something important happens inside the system (an invoice is posted, a company is created), every other part of the system that needs to know eventually finds out — even if a server crashes at the worst possible moment, and even if delivery is a little delayed. Nothing that matters is ever silently lost, and nothing is ever reported as having happened when it did not actually commit.
+
+**Package Manifest** — What a Country Package says about itself before any of it runs: which country it speaks for, which version it is, which core contract versions it works with, what it contributes, and which other packages it needs or cannot live alongside. The system reads the manifest, checks it, and verifies the package's signature before running a single line of the package's own code.
 
 **Period Close** — The point at which an accounting period (typically a month) is reviewed, reconciled, and then locked so that no further ordinary transactions can be posted into it. After a period is closed, a mistake found later is corrected in the current open period by a Reversal that refers back to the original — the closed period itself is never reopened and rewritten.
 
@@ -57,10 +63,13 @@ Terms are business definitions: what the word means to the person running the bu
 **Stock** — The quantity of a physical Item that a business actually holds, at a given location, at a given moment — together with what that quantity is worth in money. Every time stock physically moves (goods come in, goods ship out, a count finds a discrepancy), both the quantity and its financial value change together, and that value change is what flows into the general ledger as the cost of the goods sold.
 
 **Subscription** — What a Tenant is entitled to for a stretch of time: which plan they are on and how many people may use the system. A tenant has a history of subscriptions rather than one line that gets edited, so a question about what the customer was paying for last March can still be answered; an upgrade ends the current subscription and starts the next one the following day, and a tenant never holds two subscriptions covering the same day.
+**Tax Code** — A jurisdiction's own name for one tax treatment — the everyday standard-rate code, a zero-rated export, an exemption. The core system never interprets a tax code: it carries the code on a document line and asks the installed Country Package what that code meant on the document's Tax Point Date. Two countries may use the same letters for different things and nothing breaks, because the answer always comes from the package.
 
 **Tax Point Date** — The specific date used to decide which tax rule and which tax rate apply to a transaction. Because tax rates change over time, printing an invoice from two years ago must always reproduce the rate that applied on that invoice's own tax point date — never today's rate.
 
 **Tax Registration** — A formal record that a Company is registered with a specific tax authority (for example, for GST or VAT), including the registration's own identifying number and the rules that follow from it. A company may hold more than one tax registration over time or across jurisdictions, even though most companies in Aurora ERP's first release have exactly one.
+
+**Statutory Report** — A return or filing that a jurisdiction requires a Company to submit — a periodic GST or VAT return, an annual accounts filing, a cross-border sales listing. A Country Package supplies the layout: which boxes the return has and what each box adds up, always stated in terms the core understands (Account Roles and tax categories) rather than in terms of the database. The core fills the boxes from the ledger; the package renders the file the authority accepts. Two installed packages may not both supply the same return for the same Company — that is refused when the second is activated, rather than producing a figure that is wrong in both countries.
 
 **Tenant** — One paying customer of Aurora ERP: one subscription, one completely private and isolated system, one set of installed Country Packages. Everything a tenant does — every Company, every record, every user — lives inside that tenant's own system and is never visible to, or reachable from, any other tenant's system, under any circumstance.
 
