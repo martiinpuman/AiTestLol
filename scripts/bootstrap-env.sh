@@ -29,13 +29,29 @@ export DOTNET_ROOT="$DOTNET_DIR"
 export PATH="$PATH:$DOTNET_DIR"
 
 # --- Docker daemon (Testcontainers needs it) --------------------------------
+start_docker() {
+  (sudo -n dockerd >/tmp/dockerd.log 2>&1 &)
+  for _ in $(seq 1 40); do docker info >/dev/null 2>&1 && return 0; sleep 1; done
+  return 1
+}
+
 if docker info >/dev/null 2>&1; then
   log "Docker already running"
 else
   log "starting Docker daemon..."
-  (sudo -n dockerd >/tmp/dockerd.log 2>&1 &)
-  for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
-  docker info >/dev/null 2>&1 && log "Docker is up" || log "WARNING: Docker did not start"
+  if start_docker; then
+    log "Docker is up"
+  else
+    # A stale pid/socket from a reclaimed container is the usual cause.
+    log "first attempt failed; clearing stale state and retrying..."
+    sudo -n rm -f /var/run/docker.pid /var/run/docker.sock 2>/dev/null
+    if start_docker; then
+      log "Docker is up (after retry)"
+    else
+      log "WARNING: Docker did not start; integration tests will fail. See /tmp/dockerd.log"
+      tail -5 /tmp/dockerd.log >&2 2>/dev/null
+    fi
+  fi
 fi
 
 # --- PostgreSQL test image --------------------------------------------------
