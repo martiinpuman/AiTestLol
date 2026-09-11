@@ -22,7 +22,7 @@ than after it.
 | Type | What it does |
 |---|---|
 | `PackageMetadataReader` | Reads the manifest and the referenced assemblies without executing anything |
-| `PackageAssemblyReferenceRule` | The allowlist of `Aurora.*` assemblies a package may reference |
+| `PackageAssemblyReferenceRule` | The allowlist of `Aurora.*` assemblies a package may reference, matched case-insensitively as the loader binds names |
 | `PackageSignature`, `PackageSignatureVerifier`, `TrustedPackageKey` | ECDSA P-256 over SHA-256(assembly) ‖ manifest bytes, against thumbprint-pinned keys |
 | `CoreContractGate` | Refuses an out-of-range or open-ended `coreContractRange`, naming both versions |
 | `CountryPackageLoadContext` | One collectible ALC per (package, version) |

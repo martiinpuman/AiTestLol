@@ -68,7 +68,10 @@ internal sealed class CountryPackageLoadContext : AssemblyLoadContext
             return null;
         }
 
-        if (name.StartsWith(PackageAssemblyReferenceRule.AuroraPrefix, StringComparison.Ordinal))
+        // Case-insensitive, like the runtime's own binding: an ordinal check let
+        // "AURORA.Countries.Hosting" fall through to the probe below, miss, and be answered by the
+        // default context with the host's real assembly.
+        if (name.StartsWith(PackageAssemblyReferenceRule.AuroraPrefix, StringComparison.OrdinalIgnoreCase))
         {
             throw new PackageReferenceRefusedException(Name ?? "<unnamed>", name);
         }

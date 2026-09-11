@@ -37,7 +37,7 @@ public static class PackageAssemblyReferenceRule
     /// core-contract changes under the same SemVer rules (modules.md §3).
     /// </remarks>
     public static IReadOnlySet<string> AllowedAuroraAssemblies { get; } =
-        new ReadOnlySet<string>(new HashSet<string>(StringComparer.Ordinal)
+        new ReadOnlySet<string>(new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             CoreContract.AssemblyName,
             "Aurora.SharedKernel",
@@ -51,15 +51,23 @@ public static class PackageAssemblyReferenceRule
     /// Whether a package may reference <paramref name="assemblyName"/>.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Anything that is not an Aurora assembly is allowed here: a package may use whatever
     /// third-party libraries it ships, and its own load context is what keeps its choice of versions
     /// away from ours. What it may not do is reach into core past the contract.
+    /// </para>
+    /// <para>
+    /// Names are compared without regard to case, because that is how the runtime binds assembly
+    /// simple names: <c>AURORA.Ledger.Infrastructure</c> and <c>Aurora.Ledger.Infrastructure</c> are
+    /// the same assembly to the loader, so they have to be the same assembly to this rule. Compared
+    /// ordinally, the first passed as "not one of ours" — a bypass, not a rule.
+    /// </para>
     /// </remarks>
     public static bool IsAllowed(string assemblyName)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(assemblyName);
 
-        return !assemblyName.StartsWith(AuroraPrefix, StringComparison.Ordinal)
+        return !assemblyName.StartsWith(AuroraPrefix, StringComparison.OrdinalIgnoreCase)
             || AllowedAuroraAssemblies.Contains(assemblyName);
     }
 }

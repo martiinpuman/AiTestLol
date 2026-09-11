@@ -5,7 +5,8 @@ and the values those extension points are expressed in. **A package may referenc
 the two tier-0 assemblies it is expressed in — `Aurora.SharedKernel` and
 `Aurora.Documents.Canonical` — and no other `Aurora.*` assembly.** The mechanism is
 `PackageAssemblyReferenceRule` in `Aurora.Countries.Hosting`: an allowlist of those three names,
-checked against the package's reference table from metadata before any of its code runs. ADR-0008
+compared the way the loader binds assembly names (case-insensitively) and checked against the
+package's reference table from metadata before any of its code runs. ADR-0008
 §3.1 names only this assembly; `Money`, `DateRange` and the canonical documents the extension points
 are stated in live in the other two, so the rule as enforced admits those as well.
 
