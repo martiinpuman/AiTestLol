@@ -218,6 +218,121 @@ public readonly record struct Money : IComparable<Money>
         }
     }
 
+    /// <summary>
+    /// Splits the amount into <paramref name="parts"/> parts that add back up to it exactly
+    /// (ADR-0021 §6).
+    /// </summary>
+    /// <remarks>
+    /// A hundred dollars across three lines is not three lots of 33.333…, because a third of a
+    /// cent cannot be paid. The leftover minor units go to the earliest parts, so splitting the
+    /// same amount twice gives the same answer twice: a split that varied between calls would
+    /// make an invoice irreproducible.
+    /// </remarks>
+    /// <param name="parts">How many parts to split into; at least one.</param>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="parts"/> is less than one.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The amount names no currency, or is not already a whole number of minor units.
+    /// </exception>
+    public IReadOnlyList<Money> Allocate(int parts)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(parts, 1);
+
+        decimal[] equalWeights = new decimal[parts];
+        Array.Fill(equalWeights, 1m);
+        return Allocate(equalWeights);
+    }
+
+    /// <summary>
+    /// Splits the amount in proportion to <paramref name="weights"/>, into parts that add back up
+    /// to it exactly (ADR-0021 §6).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the one operation that distributes an amount — a discount over lines, landed cost
+    /// over receipts, a payment over invoices, tax over a document. It uses the
+    /// <b>largest-remainder method</b>: every part takes its whole minor units, and the minor
+    /// units left over go one each to the parts with the largest fractional remainder, earliest
+    /// part first when remainders tie. The parts therefore add up to the original amount exactly —
+    /// never a cent short, never a cent invented — which is the property ADR-0021 §6 requires and
+    /// the reason no caller should divide a <see cref="Money"/> by a part count itself.
+    /// </para>
+    /// <para>
+    /// A part weighted zero takes nothing, and takes no leftover either: the leftover is always
+    /// smaller than the number of parts with a non-zero remainder, so a zero-weighted part can
+    /// never be at the front of the queue. Weights are proportions, so their unit and their scale
+    /// do not matter — <c>[1, 1, 2]</c> and <c>[25, 25, 50]</c> split identically.
+    /// </para>
+    /// <para>
+    /// Weights meet the amount at full <see cref="decimal"/> precision, so weights of extreme
+    /// magnitude can exhaust it. That surfaces as <see cref="OverflowException"/> from
+    /// <see cref="decimal"/> itself rather than as a quietly wrong split.
+    /// </para>
+    /// </remarks>
+    /// <param name="weights">One non-negative weight per part, not all zero.</param>
+    /// <exception cref="ArgumentNullException"><paramref name="weights"/> is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="weights"/> is empty, holds a negative weight, or is entirely zero.
+    /// </exception>
+    /// <exception cref="InvalidOperationException">
+    /// The amount names no currency, or is not already a whole number of minor units.
+    /// </exception>
+    public IReadOnlyList<Money> Allocate(IReadOnlyList<decimal> weights)
+    {
+        ArgumentNullException.ThrowIfNull(weights);
+        AssertSpecified();
+
+        decimal weightTotal = AssertAllocatable(weights);
+
+        if (!IsInWholeMinorUnits)
+        {
+            throw new InvalidOperationException(string.Create(
+                CultureInfo.InvariantCulture,
+                $"{this} is not a whole number of minor units, so it cannot be split into parts that " +
+                $"can each be paid. ADR-0021 §4 rounds at defined points and nowhere else, so " +
+                $"allocation will not round for you: round the amount first, under an explicit " +
+                $"policy, with Round(RoundingPolicy.CoreDefaultFor(currency))."));
+        }
+
+        // The split runs on the magnitude and puts the sign back afterwards, so that a credit note
+        // is divided exactly like the invoice it reverses instead of down its own rounding path.
+        decimal scale = MinorUnitScale(Currency);
+        decimal totalMinorUnits = Math.Abs(Amount) * scale;
+
+        decimal[] partMinorUnits = new decimal[weights.Count];
+        decimal[] remainders = new decimal[weights.Count];
+        decimal claimed = 0m;
+
+        for (int part = 0; part < weights.Count; part++)
+        {
+            // Exact integer arithmetic: `%` on decimal does not round, so both the whole minor
+            // units a part takes and the remainder that decides the leftover are exact, rather
+            // than the output of a division that already lost the digit being compared.
+            decimal share = totalMinorUnits * weights[part];
+            decimal remainder = share % weightTotal;
+
+            partMinorUnits[part] = (share - remainder) / weightTotal;
+            remainders[part] = remainder;
+            claimed += partMinorUnits[part];
+        }
+
+        int leftover = (int)(totalMinorUnits - claimed);
+        int[] byLargestRemainder = ByLargestRemainder(remainders);
+        for (int rank = 0; rank < leftover; rank++)
+        {
+            partMinorUnits[byLargestRemainder[rank]] += 1m;
+        }
+
+        bool isCredit = IsNegative;
+        Money[] allocation = new Money[weights.Count];
+        for (int part = 0; part < allocation.Length; part++)
+        {
+            decimal amount = partMinorUnits[part] / scale;
+            allocation[part] = new Money(isCredit ? -amount : amount, Currency);
+        }
+
+        return allocation;
+    }
+
     /// <summary>The amount without its sign, in the same currency.</summary>
     public Money Abs()
     {
@@ -252,6 +367,74 @@ public readonly record struct Money : IComparable<Money>
         {
             throw new CurrencyMismatchException(left.Currency, right.Currency);
         }
+    }
+
+    /// <summary>
+    /// Refuses a set of weights that cannot divide anything, and returns their total.
+    /// </summary>
+    private static decimal AssertAllocatable(IReadOnlyList<decimal> weights)
+    {
+        if (weights.Count == 0)
+        {
+            throw new ArgumentException(
+                "An amount cannot be split across no parts at all: supply one weight per part.",
+                nameof(weights));
+        }
+
+        decimal weightTotal = 0m;
+        for (int part = 0; part < weights.Count; part++)
+        {
+            if (weights[part] < 0m)
+            {
+                throw new ArgumentException(
+                    string.Create(
+                        CultureInfo.InvariantCulture,
+                        $"A part's share of an amount cannot be negative, but weight {part} is " +
+                        $"{weights[part]}. Split by non-negative weights and reverse the sign of " +
+                        $"the whole allocation if what is being split is a credit."),
+                    nameof(weights));
+            }
+
+            weightTotal += weights[part];
+        }
+
+        if (weightTotal == 0m)
+        {
+            throw new ArgumentException(
+                "Every weight is zero, so there is no share for any part to take. Weights are " +
+                "proportions of a total that must itself be greater than zero.",
+                nameof(weights));
+        }
+
+        return weightTotal;
+    }
+
+    /// <summary>
+    /// The part indexes ordered by the remainder each part was short-changed by, largest first,
+    /// earliest part first where two remainders are equal.
+    /// </summary>
+    /// <remarks>
+    /// The tie-break on index is what makes a split repeatable. Without it the order of equal
+    /// remainders would depend on the sort implementation, and the same invoice could give its
+    /// leftover cent to a different line on a different day.
+    /// </remarks>
+    private static int[] ByLargestRemainder(decimal[] remainders)
+    {
+        int[] order = new int[remainders.Length];
+        for (int part = 0; part < order.Length; part++)
+        {
+            order[part] = part;
+        }
+
+        Array.Sort(
+            order,
+            (left, right) =>
+            {
+                int byRemainder = remainders[right].CompareTo(remainders[left]);
+                return byRemainder != 0 ? byRemainder : left.CompareTo(right);
+            });
+
+        return order;
     }
 
     private static decimal MinorUnitScale(Currency currency) => MinorUnitScales[currency.MinorUnits];
