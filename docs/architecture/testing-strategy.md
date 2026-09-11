@@ -88,13 +88,29 @@ One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assembl
 | Id | Rule |
 |---|---|
 | T1 | No tenant `DbContext` has a `public` or `protected` constructor (ADR-0007 §4.1) |
-| T2 | No `AddDbContext*`/`AddDbContextFactory*`/`AddDbContextPool*` call anywhere names a tenant `DbContext` (§4.2) |
-| T3 | `ITenantDbContextFactory<>` is implemented only in `Aurora.Platform.Tenancy` |
+| T2 | **The `AddDbContext` family is called only in `Aurora.Platform.Tenancy`, and only for `Aurora.Platform.Tenancy.Catalog.CatalogDbContext`.** Keys on the **call site's assembly**, not on the generic argument, so a generic helper whose argument is a type parameter (`!!0`) is a violation rather than a silence (ADR-0007 §4.2 as amended by **ADR-0032 §4.1**) |
+| T3 | `ITenantDbContextFactory<>` is implemented only in `Aurora.Platform.Tenancy` — allow-list matched by **exact** assembly name, never a prefix (ADR-0032 §4.4) |
 | T4 | `IHttpContextAccessor` appears only in `Aurora.Web`'s tenant-resolution middleware (§3.3) |
 | T5 | No type registered as a **singleton** has a `TenantScope` field or property |
 | T6 | `TenantScope` appears in no serializable payload: not in an integration event, not in a job payload, not in a cache entry (§10.4) |
 | T7 | Every module integration-test assembly contains exactly one subclass of `TenantIsolationContract<>` |
 | T8 | No `IPlatformJob` implementation references a module's `.Domain`, `.Application` or `.Infrastructure` (§10.1) |
+| T9 | No **container-facing** call or method names a tenant `DbContext`. Container-facing = the called member's declaring type is under `Microsoft.Extensions.DependencyInjection`/`.Hosting`, or the method's own signature names `IServiceCollection`, `ServiceDescriptor`, `IServiceProvider`, `IHostApplicationBuilder` or `WebApplicationBuilder`. Keys on the container surface, never on a method name (ADR-0032 §4.1) |
+| T10 | A tenant `DbContext` type is **named** only inside its owning assemblies — the assembly that declares it plus, when that is a `<module>.Application`, the sibling `<module>.Infrastructure`. Exact names (ADR-0032 §4.2) |
+| T11 | No **externally reachable** member (member accessibility *and* enclosing-type visibility) returns or exposes a tenant `DbContext`; a member typed `ITenantDbContextFactory<TContext>` is not one, and a *parameter* typed as a context is not one (ADR-0032 §4.2) |
+| T12 | A tenant `DbContext` is **constructed** (`newobj`) only in `Aurora.Platform.Tenancy` — the clause that closes the door inside the owning assembly, where T11 is silent by design (ADR-0032 §4.2) |
+| T13 | The catalog exemption is the one exact pair (`Aurora.Platform.Tenancy.Catalog.CatalogDbContext`, assembly `Aurora.Platform.Tenancy`); any other type carrying that simple name is a violation, and after B-05 the absence of the pair is a violation too (ADR-0032 §4.3) |
+| T14 | Every allow-list entry in every tenancy rule names an assembly that exists in the production population (ADR-0032 §4.4) |
+
+**Id collision, not yet resolved.** The implemented `T6` in `tests/Aurora.Architecture.Tests` is
+ADR-0027 §1's `TenantDatabaseHandle` allow-list, not the serializable-payload rule in the row above,
+and the rows `T7`/`T8` are unimplemented. `T9`-`T14` are claimed by ADR-0032. Whoever implements the
+serializable-payload rule takes a fresh id and corrects this table in the same change; until then the
+row above describes an intent, not a mechanism.
+
+**Every rule in this section carries a non-zero population floor and a `SubjectKind` in
+`RuleInventoryTests`** (ADR-0030). A tenancy rule reporting "no violations" without saying how many
+subjects it examined is treated as a finding, not as a pass.
 
 ### 5.4 Financial-correctness rules
 
