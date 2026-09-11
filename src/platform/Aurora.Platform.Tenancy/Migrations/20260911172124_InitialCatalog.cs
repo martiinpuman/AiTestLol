@@ -216,16 +216,22 @@ namespace Aurora.Platform.Tenancy.Migrations
             // writes registry rows and nothing else: no DDL, and nothing on the migrations history,
             // which only aurora_migrator maintains. The three cluster roles are a prerequisite of
             // every cluster; a cluster without them fails here, loudly, rather than serving a
-            // catalog the application cannot reach. Tables a later migration adds inherit the same
-            // grant through the default privileges; an append-only table must revoke UPDATE and
-            // DELETE explicitly in the migration that creates it (ADR-0004 rule 5).
+            // catalog the application cannot reach.
+            //
+            // One grant per table, and no ALTER DEFAULT PRIVILEGES, on purpose. A default would
+            // hand every table a later migration creates the same four privileges before anyone
+            // decided - on the append-only tables of ADR-0007 section 9.2 that is DELETE on an audit
+            // trail, which ADR-0004 rule 5 forbids - and it is permanent: a table created while
+            // the default was in force keeps the grant after the default is removed. So each
+            // future catalog table grants exactly what it means in the migration that creates it
+            // and records the decision in CatalogSchemaAllowlist.AppRolePrivileges; a forgotten
+            // grant is a 42501 at first use, a forgotten record fails CatalogPrivilegeTests.
             migrationBuilder.Sql("GRANT USAGE ON SCHEMA catalog TO aurora_app;");
-            migrationBuilder.Sql(
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.database_cluster, catalog.tenant, " +
-                "catalog.tenant_host, catalog.subscription, catalog.installed_package TO aurora_app;");
-            migrationBuilder.Sql(
-                "ALTER DEFAULT PRIVILEGES FOR ROLE aurora_migrator IN SCHEMA catalog " +
-                "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.database_cluster TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.tenant TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.tenant_host TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.subscription TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.installed_package TO aurora_app;");
         }
 
         /// <inheritdoc />

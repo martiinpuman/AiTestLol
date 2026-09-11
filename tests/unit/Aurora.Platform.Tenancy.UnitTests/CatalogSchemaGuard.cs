@@ -264,5 +264,34 @@ public static class CatalogSchemaAllowlist
     /// <summary>PostgreSQL store types that carry an amount.</summary>
     public static readonly IReadOnlyList<string> MonetaryStoreTypes = ["numeric", "decimal", "money"];
 
+    /// <summary>
+    /// Every privilege PostgreSQL can grant on a table. <c>CatalogPrivilegeTests</c> asks about each
+    /// of them, so an unrecorded <c>TRUNCATE</c> or <c>TRIGGER</c> is reported, not only a missing
+    /// <c>SELECT</c>.
+    /// </summary>
+    public static readonly IReadOnlySet<string> PostgresTablePrivileges = Set(
+        "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER");
+
+    /// <summary>
+    /// What <c>aurora_app</c>, the role every request holds, may do to each catalog table: the
+    /// grants the migrations issue, table by table (ADR-0004 rule 2, ADR-0007 §4.4). There is
+    /// deliberately no default. A table created without a grant of its own is closed to the role
+    /// (the catalog sets no <c>ALTER DEFAULT PRIVILEGES</c>), a table without a row here fails
+    /// <c>CatalogPrivilegeTests</c>, and an append-only table — ADR-0004 rule 5;
+    /// <c>operator_audit_event</c> and <c>erasure_replay_log</c> when they arrive — records
+    /// <c>SELECT, INSERT</c> and nothing else. Edited deliberately, in the same commit as the
+    /// migration that grants it.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> AppRolePrivileges =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["database_cluster"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
+            ["tenant"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
+            ["tenant_host"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
+            ["subscription"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
+            ["installed_package"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
+            ["__EFMigrationsHistory"] = Set(),
+        };
+
     private static HashSet<string> Set(params string[] values) => new(values, StringComparer.Ordinal);
 }

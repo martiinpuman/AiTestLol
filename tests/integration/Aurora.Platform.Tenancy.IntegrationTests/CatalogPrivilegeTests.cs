@@ -1,7 +1,12 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
+using Aurora.Platform.Tenancy.Tests;
 using Npgsql;
 using Shouldly;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Aurora.Platform.Tenancy.IntegrationTests;
 
@@ -38,25 +43,117 @@ public sealed class CatalogPrivilegeTests
 {
     private const string InsufficientPrivilege = "42501";
 
-    private readonly CatalogDatabaseFixture _catalog;
+    /// <summary>
+    /// Every relation in <c>catalog</c> crossed with every table privilege, and whether the app
+    /// role holds it. <c>has_table_privilege</c> reports the <em>effective</em> privilege — one
+    /// that arrives through <c>PUBLIC</c> or role membership counts, which a read of
+    /// <c>information_schema.role_table_grants</c> would miss — and the relation kinds are every
+    /// kind a table privilege applies to, not only ordinary tables.
+    /// </summary>
+    private const string PrivilegesHeldSql =
+        "SELECT c.relname, p.privilege, has_table_privilege(@role, c.oid, p.privilege) " +
+        "FROM pg_class c " +
+        "JOIN pg_namespace n ON n.oid = c.relnamespace " +
+        "CROSS JOIN unnest(@privileges) AS p(privilege) " +
+        "WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')";
 
-    public CatalogPrivilegeTests(CatalogDatabaseFixture catalog) => _catalog = catalog;
+    private readonly CatalogDatabaseFixture _catalog;
+    private readonly ITestOutputHelper _output;
+
+    public CatalogPrivilegeTests(CatalogDatabaseFixture catalog, ITestOutputHelper output)
+    {
+        _catalog = catalog;
+        _output = output;
+    }
 
     [Fact]
-    public async Task The_app_role_may_read_and_write_every_registry_table()
+    public async Task The_app_role_holds_exactly_the_table_privileges_the_allowlist_records_and_nothing_on_any_other_catalog_table()
     {
-        await using NpgsqlConnection connection = await _catalog.OpenAppConnectionAsync();
+        await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
+        IReadOnlyDictionary<string, IReadOnlySet<string>> held = await PrivilegesHeldAsync(connection, null);
 
-        foreach (string table in new[] { "database_cluster", "tenant", "tenant_host", "subscription", "installed_package" })
+        List<string> differences = Differences(held, CatalogSchemaAllowlist.AppRolePrivileges);
+
+        // Say what was inspected, not only that it matched, so a pass is not indistinguishable
+        // from a query that returned no rows (CLAUDE.md self-check 2).
+        _output.WriteLine(
+            $"Asked PostgreSQL about {held.Count} catalog relations x {CatalogSchemaAllowlist.PostgresTablePrivileges.Count} table privileges; "
+            + $"{CatalogDatabaseFixture.AppRole} holds {held.Sum(table => table.Value.Count)}.");
+
+        differences.ShouldBeEmpty(string.Join(Environment.NewLine, differences));
+        held.Count.ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
+    }
+
+    [Fact]
+    public async Task The_privilege_test_fails_the_moment_a_table_arrives_without_a_decision_or_a_grant_drifts_either_way()
+    {
+        await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
+
+        // The three shapes a privilege regression takes, inside a transaction that is rolled back:
+        // a §9.2 table created without recording what the app role may do to it, a privilege the
+        // allowlist does not name, and a recorded privilege that is no longer granted.
+        foreach (string sql in new[]
+                 {
+                     "CREATE TABLE catalog.operator_audit_event (id uuid PRIMARY KEY)",
+                     $"GRANT TRUNCATE ON catalog.tenant TO {CatalogDatabaseFixture.AppRole}",
+                     $"REVOKE DELETE ON catalog.tenant_host FROM {CatalogDatabaseFixture.AppRole}",
+                 })
         {
-            foreach (string privilege in new[] { "SELECT", "INSERT", "UPDATE", "DELETE" })
-            {
-                await using var command = new NpgsqlCommand(
-                    $"SELECT has_table_privilege('{CatalogDatabaseFixture.AppRole}', 'catalog.{table}', '{privilege}')",
-                    connection);
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            await command.ExecuteNonQueryAsync();
+        }
 
-                ((bool)(await command.ExecuteScalarAsync())!).ShouldBeTrue($"{privilege} on catalog.{table}");
+        List<string> differences = Differences(
+            await PrivilegesHeldAsync(connection, transaction), CatalogSchemaAllowlist.AppRolePrivileges);
+
+        await transaction.RollbackAsync();
+
+        differences.Count.ShouldBe(3, string.Join(Environment.NewLine, differences));
+        differences.ShouldContain(d => d.Contains("catalog.operator_audit_event exists but", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds TRUNCATE on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("records DELETE on catalog.tenant_host, which aurora_app does not hold", StringComparison.Ordinal));
+
+        // And once rolled back, the grants match again - the failure above was the drift, not the test.
+        Differences(await PrivilegesHeldAsync(connection, null), CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_table_created_without_a_grant_of_its_own_is_closed_to_the_app_role()
+    {
+        // The catalog sets no default privileges, on purpose: what a future table grants the app
+        // role is decided in the migration that creates it, and forgetting is this 42501 at first
+        // use rather than a silent inheritance of SELECT, INSERT, UPDATE, DELETE - which, on an
+        // append-only table, would be exactly what ADR-0004 rule 5 forbids. The table is committed
+        // rather than rolled back because the point is to try, as aurora_app, from its own
+        // connection, which cannot see an uncommitted table. The collection runs one test at a
+        // time, so no other test sees it either, and it is dropped whatever happens.
+        string table = Unique.Identifier("probe");
+        await using NpgsqlConnection migrator = await _catalog.OpenMigratorConnectionAsync();
+        await CatalogDatabaseFixture.ExecuteAsync(migrator, $"CREATE TABLE catalog.{table} (id uuid PRIMARY KEY)");
+
+        try
+        {
+            await using NpgsqlConnection app = await _catalog.OpenAppConnectionAsync();
+
+            foreach (string sql in new[]
+                     {
+                         $"SELECT count(*) FROM catalog.{table}",
+                         $"INSERT INTO catalog.{table} (id) VALUES (gen_random_uuid())",
+                         $"UPDATE catalog.{table} SET id = id",
+                         $"DELETE FROM catalog.{table}",
+                     })
+            {
+                await using var command = new NpgsqlCommand(sql, app);
+
+                PostgresException refused = await Should.ThrowAsync<PostgresException>(() => command.ExecuteNonQueryAsync(), sql);
+
+                refused.SqlState.ShouldBe(InsufficientPrivilege, sql);
             }
+        }
+        finally
+        {
+            await CatalogDatabaseFixture.ExecuteAsync(migrator, $"DROP TABLE catalog.{table}");
         }
     }
 
@@ -123,5 +220,71 @@ public sealed class CatalogPrivilegeTests
         await alter.ExecuteNonQueryAsync();
 
         await transaction.RollbackAsync();
+    }
+
+    private static async Task<IReadOnlyDictionary<string, IReadOnlySet<string>>> PrivilegesHeldAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        await using var command = new NpgsqlCommand(PrivilegesHeldSql, connection, transaction);
+        command.Parameters.AddWithValue("role", CatalogDatabaseFixture.AppRole);
+        command.Parameters.AddWithValue("privileges", CatalogSchemaAllowlist.PostgresTablePrivileges.ToArray());
+
+        var held = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            string table = reader.GetString(0);
+            if (!held.TryGetValue(table, out HashSet<string>? privileges))
+            {
+                privileges = new HashSet<string>(StringComparer.Ordinal);
+                held[table] = privileges;
+            }
+
+            if (reader.GetBoolean(2))
+            {
+                privileges.Add(reader.GetString(1));
+            }
+        }
+
+        return held.ToDictionary(pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Every way what the app role holds can differ from what the allowlist records, each as a
+    /// sentence a reviewer can act on. Empty means the two agree, table by table, both ways.
+    /// </summary>
+    private static List<string> Differences(
+        IReadOnlyDictionary<string, IReadOnlySet<string>> held,
+        IReadOnlyDictionary<string, IReadOnlySet<string>> recorded)
+    {
+        List<string> differences = [];
+
+        foreach ((string table, IReadOnlySet<string> privileges) in held.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (!recorded.TryGetValue(table, out IReadOnlySet<string>? decided))
+            {
+                differences.Add(
+                    $"catalog.{table} exists but CatalogSchemaAllowlist.AppRolePrivileges records no decision for it; "
+                    + $"{CatalogDatabaseFixture.AppRole} holds [{string.Join(", ", privileges.Order(StringComparer.Ordinal))}]");
+                continue;
+            }
+
+            foreach (string privilege in privileges.Except(decided).Order(StringComparer.Ordinal))
+            {
+                differences.Add($"{CatalogDatabaseFixture.AppRole} holds {privilege} on catalog.{table}, which the allowlist does not record");
+            }
+
+            foreach (string privilege in decided.Except(privileges).Order(StringComparer.Ordinal))
+            {
+                differences.Add($"the allowlist records {privilege} on catalog.{table}, which {CatalogDatabaseFixture.AppRole} does not hold");
+            }
+        }
+
+        foreach (string table in recorded.Keys.Except(held.Keys).Order(StringComparer.Ordinal))
+        {
+            differences.Add($"the allowlist records catalog.{table}, which does not exist in the migrated schema");
+        }
+
+        return differences;
     }
 }

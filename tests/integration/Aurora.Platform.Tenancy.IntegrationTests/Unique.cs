@@ -19,6 +19,9 @@ internal static class Unique
 
     public static string Host() => "h-" + Suffix() + ".aurora.test";
 
+    /// <summary>A PostgreSQL identifier no other test will mint, for a table or database a test creates and drops.</summary>
+    public static string Identifier(string prefix) => prefix + "_" + Suffix();
+
     public static DatabaseCluster Cluster(string region = "nz") =>
         DatabaseCluster.Register(
             ClusterId(),
