@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Tests;
 using Npgsql;
@@ -49,18 +50,35 @@ public sealed class CatalogPrivilegeTests
     private const string InsufficientPrivilege = "42501";
 
     /// <summary>
-    /// Every relation in <c>catalog</c> crossed with every table privilege, and whether the app
-    /// role holds it. <c>has_table_privilege</c> reports the <em>effective</em> privilege — one
-    /// that arrives through <c>PUBLIC</c> or role membership counts, which a read of
-    /// <c>information_schema.role_table_grants</c> would miss — and the relation kinds are every
-    /// kind a table privilege applies to, not only ordinary tables.
+    /// Every ACL entry on every relation in <c>catalog</c> that reaches the app role: the
+    /// table-level entries of <c>pg_class.relacl</c> and the column-level entries of
+    /// <c>pg_attribute.attacl</c>, exploded one privilege per row, kept where the grantee is the
+    /// role itself, <c>PUBLIC</c>, or a role it inherits from. Reading the ACL rather than asking
+    /// <c>has_table_privilege</c> about a list of names is what closes the comparison: a column
+    /// grant, a privilege a later PostgreSQL release adds and a grant that arrives through another
+    /// role are all entries, and every entry the record does not name is a difference. The
+    /// relation kinds are every kind a table privilege applies to, and the LEFT JOIN keeps a
+    /// relation with no entry at all in the result, so a table the role cannot touch is still a
+    /// row the record has to account for.
     /// </summary>
-    private const string PrivilegesHeldSql =
-        "SELECT c.relname, p.privilege, has_table_privilege(@role, c.oid, p.privilege) " +
-        "FROM pg_class c " +
-        "JOIN pg_namespace n ON n.oid = c.relnamespace " +
-        "CROSS JOIN unnest(@privileges) AS p(privilege) " +
-        "WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p', 'v', 'm', 'f')";
+    private const string AclEntriesSql =
+        "WITH relation AS (" +
+        "  SELECT c.oid, c.relname, c.relacl FROM pg_class c" +
+        "  JOIN pg_namespace n ON n.oid = c.relnamespace" +
+        "  WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p', 'v', 'm', 'f'))," +
+        " entry AS (" +
+        "  SELECT r.relname, acl.privilege_type, NULL::text AS column_name, acl.grantee, acl.is_grantable" +
+        "  FROM relation r CROSS JOIN LATERAL aclexplode(r.relacl) AS acl" +
+        "  UNION ALL" +
+        "  SELECT r.relname, acl.privilege_type, a.attname::text, acl.grantee, acl.is_grantable" +
+        "  FROM relation r" +
+        "  JOIN pg_attribute a ON a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped" +
+        "  CROSS JOIN LATERAL aclexplode(a.attacl) AS acl)" +
+        " SELECT r.relname, e.privilege_type, e.column_name, e.is_grantable," +
+        "        CASE WHEN e.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(e.grantee) END" +
+        " FROM relation r" +
+        " LEFT JOIN entry e ON e.relname = r.relname" +
+        "   AND (e.grantee = 0 OR pg_has_role(@role, e.grantee, 'USAGE'))";
 
     private readonly CatalogDatabaseFixture _catalog;
     private readonly ITestOutputHelper _output;
@@ -75,18 +93,19 @@ public sealed class CatalogPrivilegeTests
     public async Task The_app_role_holds_exactly_the_table_privileges_the_allowlist_records_and_nothing_on_any_other_catalog_table()
     {
         await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
-        IReadOnlyDictionary<string, IReadOnlySet<string>> held = await PrivilegesHeldAsync(connection, null);
+        HeldPrivileges held = await PrivilegesHeldAsync(connection, null);
 
-        List<string> differences = Differences(held, CatalogSchemaAllowlist.AppRolePrivileges);
+        List<string> differences = Differences(held.ByRelation, CatalogSchemaAllowlist.AppRolePrivileges);
 
         // Say what was inspected, not only that it matched, so a pass is not indistinguishable
-        // from a query that returned no rows (CLAUDE.md self-check 2).
+        // from a query that returned no rows (CLAUDE.md self-check 2). It cannot pass on nothing:
+        // a query that returned no entries would report every recorded privilege as not held.
         _output.WriteLine(
-            $"Asked PostgreSQL about {held.Count} catalog relations x {CatalogSchemaAllowlist.PostgresTablePrivileges.Count} table privileges; "
-            + $"{CatalogDatabaseFixture.AppRole} holds {held.Sum(table => table.Value.Count)}.");
+            $"Read {held.AclEntries} ACL entries reaching {CatalogDatabaseFixture.AppRole} across {held.ByRelation.Count} catalog relations "
+            + $"(pg_class.relacl and pg_attribute.attacl); it holds {held.ByRelation.Sum(relation => relation.Value.Count)} distinct privileges.");
 
         differences.ShouldBeEmpty(string.Join(Environment.NewLine, differences));
-        held.Count.ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
+        held.ByRelation.Count.ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
     }
 
     [Fact]
@@ -99,9 +118,10 @@ public sealed class CatalogPrivilegeTests
         // table created without recording what the app role may do to it; a privilege the allowlist
         // does not name; a recorded privilege that is no longer granted; a column-level grant, which
         // has_table_privilege cannot see at all; a privilege this code had never heard of (MAINTAIN
-        // arrived with PostgreSQL 17, the pinned version); and a grant to PUBLIC, which reaches the
-        // role without naming it. The last three are the security re-review's H-1: each one left the
-        // seven-privilege enumeration reporting a perfect match.
+        // arrived with PostgreSQL 17, the pinned version); a grant to PUBLIC, which reaches the role
+        // without naming it; and a grant the role could pass on. The column grant, MAINTAIN and
+        // PUBLIC are the security re-review's H-1: each one left the seven-privilege enumeration
+        // this oracle replaced reporting a perfect match.
         string arrival = Unique.Identifier("drift");
         foreach (string sql in new[]
                  {
@@ -111,6 +131,7 @@ public sealed class CatalogPrivilegeTests
                      $"GRANT UPDATE (display_name) ON catalog.tenant TO {CatalogDatabaseFixture.AppRole}",
                      $"GRANT MAINTAIN ON catalog.subscription TO {CatalogDatabaseFixture.AppRole}",
                      "GRANT SELECT ON catalog.installed_package TO PUBLIC",
+                     $"GRANT TRIGGER ON catalog.installed_package TO {CatalogDatabaseFixture.AppRole} WITH GRANT OPTION",
                  })
         {
             await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -118,20 +139,21 @@ public sealed class CatalogPrivilegeTests
         }
 
         List<string> differences = Differences(
-            await PrivilegesHeldAsync(connection, transaction), CatalogSchemaAllowlist.AppRolePrivileges);
+            (await PrivilegesHeldAsync(connection, transaction)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges);
 
         await transaction.RollbackAsync();
 
-        differences.Count.ShouldBe(6, string.Join(Environment.NewLine, differences));
+        differences.Count.ShouldBe(7, string.Join(Environment.NewLine, differences));
         differences.ShouldContain(d => d.Contains($"catalog.{arrival} exists but", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds TRUNCATE on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("records SELECT on catalog.tenant_host, which aurora_app does not hold", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds UPDATE(display_name) on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds MAINTAIN on catalog.subscription, which the allowlist does not record", StringComparison.Ordinal));
-        differences.ShouldContain(d => d.Contains("holds SELECT on catalog.installed_package through PUBLIC, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds SELECT through PUBLIC on catalog.installed_package, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds TRIGGER WITH GRANT OPTION on catalog.installed_package, which the allowlist does not record", StringComparison.Ordinal));
 
         // And once rolled back, the grants match again - the failure above was the drift, not the test.
-        Differences(await PrivilegesHeldAsync(connection, null), CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
+        Differences((await PrivilegesHeldAsync(connection, null)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
     }
 
     [Fact]
@@ -158,15 +180,15 @@ public sealed class CatalogPrivilegeTests
         }
 
         List<string> differences = Differences(
-            await PrivilegesHeldAsync(connection, transaction), CatalogSchemaAllowlist.AppRolePrivileges);
+            (await PrivilegesHeldAsync(connection, transaction)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges);
 
         await transaction.RollbackAsync();
 
         differences.Count.ShouldBe(1, string.Join(Environment.NewLine, differences));
-        differences[0].ShouldContain($"holds REFERENCES on catalog.tenant through {role}, which the allowlist does not record");
+        differences[0].ShouldContain($"holds REFERENCES through {role} on catalog.tenant, which the allowlist does not record");
 
         // Rolled back, neither the role nor its grant is left behind.
-        Differences(await PrivilegesHeldAsync(connection, null), CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
+        Differences((await PrivilegesHeldAsync(connection, null)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
     }
 
     [Fact]
@@ -319,31 +341,76 @@ public sealed class CatalogPrivilegeTests
         await transaction.RollbackAsync();
     }
 
-    private static async Task<IReadOnlyDictionary<string, IReadOnlySet<string>>> PrivilegesHeldAsync(
-        NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    /// <summary>
+    /// What the ACL says the app role holds, relation by relation, and how many entries said so.
+    /// A relation with no entry is present with an empty set: it exists, and the record has to
+    /// say what was decided for it.
+    /// </summary>
+    private sealed record HeldPrivileges(IReadOnlyDictionary<string, IReadOnlySet<string>> ByRelation, int AclEntries);
+
+    private static async Task<HeldPrivileges> PrivilegesHeldAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
     {
-        await using var command = new NpgsqlCommand(PrivilegesHeldSql, connection, transaction);
+        await using var command = new NpgsqlCommand(AclEntriesSql, connection, transaction);
         command.Parameters.AddWithValue("role", CatalogDatabaseFixture.AppRole);
-        command.Parameters.AddWithValue("privileges", CatalogSchemaAllowlist.PostgresTablePrivileges.ToArray());
 
         var held = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        int entries = 0;
         await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            string table = reader.GetString(0);
-            if (!held.TryGetValue(table, out HashSet<string>? privileges))
+            string relation = reader.GetString(0);
+            if (!held.TryGetValue(relation, out HashSet<string>? privileges))
             {
                 privileges = new HashSet<string>(StringComparer.Ordinal);
-                held[table] = privileges;
+                held[relation] = privileges;
             }
 
-            if (reader.GetBoolean(2))
+            if (reader.IsDBNull(1))
             {
-                privileges.Add(reader.GetString(1));
+                continue;
             }
+
+            entries++;
+            privileges.Add(Label(
+                privilege: reader.GetString(1),
+                column: reader.IsDBNull(2) ? null : reader.GetString(2),
+                grantable: reader.GetBoolean(3),
+                grantee: reader.GetString(4)));
         }
 
-        return held.ToDictionary(pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value, StringComparer.Ordinal);
+        return new HeldPrivileges(
+            held.ToDictionary(pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value, StringComparer.Ordinal),
+            entries);
+    }
+
+    /// <summary>
+    /// One ACL entry, spelled the way <c>CatalogSchemaAllowlist.AppRolePrivileges</c> spells a
+    /// decision: <c>SELECT</c>; <c>UPDATE(column)</c> for a column grant; then
+    /// <c>WITH GRANT OPTION</c> if the role could pass it on, and <c>through PUBLIC</c> or
+    /// <c>through &lt;role&gt;</c> if it reaches the app role without naming it. The allowlist
+    /// records only the first two forms, so an entry in either of the others is always a
+    /// difference — a privilege the request path should hold is granted to it, directly.
+    /// </summary>
+    private static string Label(string privilege, string? column, bool grantable, string grantee)
+    {
+        var label = new StringBuilder(privilege);
+
+        if (column is not null)
+        {
+            label.Append('(').Append(column).Append(')');
+        }
+
+        if (grantable)
+        {
+            label.Append(" WITH GRANT OPTION");
+        }
+
+        if (!string.Equals(grantee, CatalogDatabaseFixture.AppRole, StringComparison.Ordinal))
+        {
+            label.Append(" through ").Append(grantee);
+        }
+
+        return label.ToString();
     }
 
     /// <summary>

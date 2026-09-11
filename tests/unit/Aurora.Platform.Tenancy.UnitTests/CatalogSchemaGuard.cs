@@ -265,14 +265,6 @@ public static class CatalogSchemaAllowlist
     public static readonly IReadOnlyList<string> MonetaryStoreTypes = ["numeric", "decimal", "money"];
 
     /// <summary>
-    /// Every privilege PostgreSQL can grant on a table. <c>CatalogPrivilegeTests</c> asks about each
-    /// of them, so an unrecorded <c>TRUNCATE</c> or <c>TRIGGER</c> is reported, not only a missing
-    /// <c>SELECT</c>.
-    /// </summary>
-    public static readonly IReadOnlySet<string> PostgresTablePrivileges = Set(
-        "SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER");
-
-    /// <summary>
     /// What <c>aurora_app</c>, the role every request holds, may do to each catalog table: the
     /// grants the migrations issue, table by table (ADR-0004 rule 2, ADR-0007 §4.4). There is
     /// deliberately no default. A table created without a grant of its own is closed to the role
@@ -282,6 +274,13 @@ public static class CatalogSchemaAllowlist
     /// <c>SELECT, INSERT</c> and nothing else. Edited deliberately, in the same commit as the
     /// migration that grants it.
     /// </summary>
+    /// <remarks>
+    /// Each entry is spelled the way <c>CatalogPrivilegeTests</c> reads it back out of the ACL —
+    /// <c>pg_class.relacl</c> for a table privilege (<c>SELECT</c>), <c>pg_attribute.attacl</c> for
+    /// a column privilege (<c>UPDATE(column)</c>) — and the comparison is entry by entry, both
+    /// ways. Nothing enumerates what PostgreSQL can grant: an entry the record does not name is a
+    /// difference whatever it is, including a privilege that did not exist when this was written.
+    /// </remarks>
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> AppRolePrivileges =
         new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
         {
