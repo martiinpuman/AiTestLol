@@ -212,26 +212,42 @@ namespace Aurora.Platform.Tenancy.Migrations
                 "ALTER TABLE catalog.subscription ADD CONSTRAINT ex_subscription_no_overlap " +
                 "EXCLUDE USING gist (tenant_id WITH =, daterange(valid_from, valid_to, '[)') WITH &&);");
 
-            // Least privilege (ADR-0004 rule 2, ADR-0007 section 4.4). The runtime role reads and
-            // writes registry rows and nothing else: no DDL, and nothing on the migrations history,
-            // which only aurora_migrator maintains. The three cluster roles are a prerequisite of
-            // every cluster; a cluster without them fails here, loudly, rather than serving a
-            // catalog the application cannot reach.
+            // Least privilege (ADR-0004 rule 2, ADR-0007 section 4.4): the runtime role holds, on
+            // each table, the smallest set a named component needs, and CatalogSchemaAllowlist
+            // .AppRolePrivileges records every grant below with the task, saga step or module that
+            // issues it. No DDL, and nothing on the migrations history, which only aurora_migrator
+            // maintains. The three cluster roles are a prerequisite of every cluster; a cluster
+            // without them fails here, loudly, rather than serving a catalog the application
+            // cannot reach.
             //
             // One grant per table, and no ALTER DEFAULT PRIVILEGES, on purpose. A default would
-            // hand every table a later migration creates the same four privileges before anyone
+            // hand every table a later migration creates the same privileges before anyone
             // decided - on the append-only tables of ADR-0007 section 9.2 that is DELETE on an audit
             // trail, which ADR-0004 rule 5 forbids - and it is permanent: a table created while
             // the default was in force keeps the grant after the default is removed. So each
             // future catalog table grants exactly what it means in the migration that creates it
             // and records the decision in CatalogSchemaAllowlist.AppRolePrivileges; a forgotten
             // grant is a 42501 at first use, a forgotten record fails CatalogPrivilegeTests.
+            //
+            // Where the grants stop, and why. The rows in these tables are the routing decision:
+            // which tenant a host resolves to, which cluster and database a tenant resolves to,
+            // which host a cluster is. A request that could rewrite them could rebind another
+            // tenant's hostname, send one tenant's requests at another tenant's database, or point
+            // the resolver at a host of its own choosing carrying the real cluster credentials. So
+            // database_cluster is read-only (operator seed data, written as aurora_migrator);
+            // tenant and tenant_host may be inserted by the provisioning saga, and on tenant only
+            // the lifecycle columns a named component moves are updatable, never the columns a
+            // tenant resolves by; and no table grants DELETE - section 11.4 tombstones a tenant, a
+            // subscription closes with valid_to, and DROP DATABASE is aurora_admin's. A write
+            // privilege with no component to name is not granted: the task that needs it grants
+            // it in its own migration, naming itself.
             migrationBuilder.Sql("GRANT USAGE ON SCHEMA catalog TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.database_cluster TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.tenant TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.tenant_host TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.subscription TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE, DELETE ON catalog.installed_package TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT ON catalog.database_cluster TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT ON catalog.tenant TO aurora_app;");
+            migrationBuilder.Sql("GRANT UPDATE (state, core_schema_version, activated_at, last_activity_at) ON catalog.tenant TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT ON catalog.tenant_host TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT ON catalog.subscription TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE ON catalog.installed_package TO aurora_app;");
         }
 
         /// <inheritdoc />

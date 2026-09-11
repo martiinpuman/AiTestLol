@@ -55,11 +55,7 @@ public sealed class CatalogTenantStateTests
         lifecycle.ShouldContain(TenantState.ProvisioningFailed);
 
         DatabaseCluster cluster = Unique.Cluster();
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
-        {
-            writer.DatabaseClusters.Add(cluster);
-            await writer.SaveChangesAsync();
-        }
+        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
 
         List<TenantState> readBack = [];
         foreach (TenantState state in lifecycle)
@@ -73,8 +69,8 @@ public sealed class CatalogTenantStateTests
 
             // B-05 gives Tenant only the two transitions the provisioning saga's ends need
             // (ADR-0007 §8 steps 1 and 8); the methods that reach the other six arrive with the
-            // tasks that drive them. Until then the state is moved in SQL, which is also the
-            // stronger test: it proves the *database* accepts the value, not that C# does.
+            // tasks that drive them. Until then the state is moved in SQL, as the owner, which is
+            // also the stronger test: it proves the *database* accepts the value, not that C# does.
             await StampAsync(tenant.Id, state);
 
             await using CatalogDbContext reader = _catalog.OpenAsApp();
@@ -93,9 +89,9 @@ public sealed class CatalogTenantStateTests
     {
         DatabaseCluster cluster = Unique.Cluster();
         Tenant tenant = Unique.Tenant(cluster);
+        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
         await using (CatalogDbContext writer = _catalog.OpenAsApp())
         {
-            writer.DatabaseClusters.Add(cluster);
             writer.Tenants.Add(tenant);
             await writer.SaveChangesAsync();
         }
@@ -110,7 +106,10 @@ public sealed class CatalogTenantStateTests
 
     private async Task StampAsync(TenantId tenant, string state)
     {
-        await using NpgsqlConnection connection = await _catalog.OpenAppConnectionAsync();
+        // As the owner: the request path may move state but not deleted_at, and a Deleted row needs
+        // both (ck_tenant_deleted_at_matches_state). What is under test is the database accepting
+        // the value, not which role may write it - CatalogPrivilegeTests owns that.
+        await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
 
         // deleted_at is required exactly when the state is Deleted (ck_tenant_deleted_at_matches_state),
         // so it moves with the state rather than being a second statement that could be forgotten.

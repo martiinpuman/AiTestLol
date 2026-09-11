@@ -12,8 +12,10 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 
 /// <summary>
 /// The rules the catalog database keeps on its own, each shown to bite. Where the entities
-/// already refuse the bad value, the row is written with SQL as <c>aurora_app</c> — the point is
-/// that the database refuses it even when code did not.
+/// already refuse the bad value, the row is written with SQL — the point is that the database
+/// refuses it even when code did not — as the role that may write that table: <c>aurora_app</c>
+/// for a tenant or a host, <c>aurora_migrator</c> for a cluster, a subscription, or a lifecycle
+/// column the request path may not touch (<c>CatalogSchemaAllowlist.AppRolePrivileges</c>).
 /// </summary>
 [Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
@@ -88,7 +90,7 @@ public sealed class CatalogConstraintTests
         Tenant tenant = Unique.Tenant(cluster);
         await SaveAsync(cluster, tenant);
 
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "UPDATE catalog.tenant SET deleted_at = now() WHERE id = @id",
             ("id", tenant.Id.Value)));
 
@@ -161,16 +163,10 @@ public sealed class CatalogConstraintTests
         await SaveAsync(cluster, tenant);
         DateOnly from = new(2026, 10, 1);
 
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
-        {
-            writer.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "standard", 10, from, from.AddMonths(6)));
-            await writer.SaveChangesAsync();
-        }
+        await _catalog.SeedAsync(owner => owner.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "standard", 10, from, from.AddMonths(6))));
 
-        await using CatalogDbContext overlapping = _catalog.OpenAsApp();
-        overlapping.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "premium", 10, from.AddMonths(3), null));
-
-        PostgresException refused = await ShouldBeRefusedAsync(() => overlapping.SaveChangesAsync());
+        PostgresException refused = await ShouldBeRefusedAsync(() => _catalog.SeedAsync(owner =>
+            owner.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "premium", 10, from.AddMonths(3), null))));
         refused.SqlState.ShouldBe(ExclusionViolation);
         refused.ConstraintName.ShouldBe("ex_subscription_no_overlap");
     }
@@ -183,17 +179,17 @@ public sealed class CatalogConstraintTests
         await SaveAsync(cluster, tenant);
         DateOnly from = new(2026, 10, 1);
 
-        await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "standard", 10, from, from.AddMonths(6)));
-        writer.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "premium", 10, from.AddMonths(6), null));
-
-        await writer.SaveChangesAsync();
+        await _catalog.SeedAsync(owner =>
+        {
+            owner.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "standard", 10, from, from.AddMonths(6)));
+            owner.Subscriptions.Add(Subscription.Start(SubscriptionId.Create(), tenant.Id, "premium", 10, from.AddMonths(6), null));
+        });
     }
 
     [Fact]
     public async Task A_port_that_is_not_a_TCP_port_is_refused()
     {
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
             "VALUES (@id, 'nz', 'pg.internal', 70000, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')",
             ("id", Unique.ClusterId().Value)));
@@ -205,7 +201,7 @@ public sealed class CatalogConstraintTests
     [Fact]
     public async Task A_secret_reference_shaped_like_a_credential_is_refused_by_the_database_too()
     {
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
             "VALUES (@id, 'nz', 'pg.internal', 5432, 'postgres', 'Password=hunter2', 'ref:m', 'ref:p', 10, 'Accepting')",
             ("id", Unique.ClusterId().Value)));
@@ -221,7 +217,9 @@ public sealed class CatalogConstraintTests
         Tenant tenant = Unique.Tenant(cluster);
         await SaveAsync(cluster, tenant);
 
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        // As the owner: the request path holds no DELETE at all, and 42501 would prove the grant,
+        // not the foreign key.
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "DELETE FROM catalog.database_cluster WHERE id = @id",
             ("id", cluster.Id.Value)));
 
@@ -229,21 +227,30 @@ public sealed class CatalogConstraintTests
         refused.ConstraintName.ShouldBe("fk_tenant_cluster_in_region");
     }
 
+    /// <summary>The cluster as the owner - the request path only reads clusters - then the tenant, if any, as the request path.</summary>
     private async Task SaveAsync(DatabaseCluster cluster, Tenant? tenant = null)
     {
-        await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.DatabaseClusters.Add(cluster);
-        if (tenant is not null)
+        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
+
+        if (tenant is null)
         {
-            writer.Tenants.Add(tenant);
+            return;
         }
 
+        await using CatalogDbContext writer = _catalog.OpenAsApp();
+        writer.Tenants.Add(tenant);
         await writer.SaveChangesAsync();
     }
 
-    private async Task ExecuteAsAppAsync(string sql, params (string Name, object Value)[] parameters)
+    private Task ExecuteAsAppAsync(string sql, params (string Name, object Value)[] parameters) =>
+        ExecuteAsync(_catalog.OpenAppConnectionAsync, sql, parameters);
+
+    private Task ExecuteAsOwnerAsync(string sql, params (string Name, object Value)[] parameters) =>
+        ExecuteAsync(_catalog.OpenMigratorConnectionAsync, sql, parameters);
+
+    private static async Task ExecuteAsync(Func<Task<NpgsqlConnection>> open, string sql, (string Name, object Value)[] parameters)
     {
-        await using NpgsqlConnection connection = await _catalog.OpenAppConnectionAsync();
+        await using NpgsqlConnection connection = await open();
         await using var command = new NpgsqlCommand(sql, connection);
         foreach ((string name, object value) in parameters)
         {

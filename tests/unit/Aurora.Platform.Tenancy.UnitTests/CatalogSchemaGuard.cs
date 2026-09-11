@@ -8,6 +8,20 @@ namespace Aurora.Platform.Tenancy.Tests;
 public sealed record CatalogColumn(string Table, string Column, string StoreType);
 
 /// <summary>
+/// One privilege <c>aurora_app</c> holds on a catalog table, and the component that needs it.
+/// </summary>
+/// <param name="Privilege">
+/// Spelled the way <c>CatalogPrivilegeTests</c> reads it back out of the ACL: a table privilege as
+/// PostgreSQL names it (<c>SELECT</c>), a column privilege as <c>UPDATE(column)</c>.
+/// </param>
+/// <param name="NeededBy">
+/// The task, saga step or module that issues the statement, so that the reviewer of the next grant
+/// has something to compare against. A grant nobody can be named for is not a decision, and is
+/// not made.
+/// </param>
+public sealed record AppRoleGrant(string Privilege, string NeededBy);
+
+/// <summary>
 /// ADR-0007 §9.3 as a mechanism: <em>the catalog holds no tenant business data</em>.
 /// </summary>
 /// <remarks>
@@ -265,31 +279,94 @@ public static class CatalogSchemaAllowlist
     public static readonly IReadOnlyList<string> MonetaryStoreTypes = ["numeric", "decimal", "money"];
 
     /// <summary>
+    /// The columns that are the routing decision (ADR-0007 §3.2, §3.5): which tenant a host
+    /// resolves to, which cluster and database a tenant resolves to, and everything about a
+    /// cluster, its host and its secret references included. The request path reads them and, for
+    /// a new tenant or host, inserts them; nothing on the request path updates them. So no
+    /// <c>UPDATE</c> in <see cref="AppRolePrivileges"/> names one, and none is table-wide on a
+    /// table that has one — <c>CatalogPrivilegeAllowlistTests</c> holds the record to that, and
+    /// <c>CatalogPrivilegeTests</c> holds the database to the record and tries the writes as the
+    /// role.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> RoutingColumns =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["tenant"] = Set("key", "cluster_id", "database_name", "residency_region"),
+            ["tenant_host"] = Set("host", "tenant_id"),
+            ["database_cluster"] = Columns["database_cluster"],
+        };
+
+    /// <summary>
     /// What <c>aurora_app</c>, the role every request holds, may do to each catalog table: the
-    /// grants the migrations issue, table by table (ADR-0004 rule 2, ADR-0007 §4.4). There is
-    /// deliberately no default. A table created without a grant of its own is closed to the role
-    /// (the catalog sets no <c>ALTER DEFAULT PRIVILEGES</c>), a table without a row here fails
+    /// grants the migrations issue, table by table, each with the component that needs it
+    /// (ADR-0004 rule 2, ADR-0007 §4.4). There is deliberately no default. A table created without
+    /// a grant of its own is closed to the role (the catalog sets no
+    /// <c>ALTER DEFAULT PRIVILEGES</c>), a table without a row here fails
     /// <c>CatalogPrivilegeTests</c>, and an append-only table — ADR-0004 rule 5;
     /// <c>operator_audit_event</c> and <c>erasure_replay_log</c> when they arrive — records
     /// <c>SELECT, INSERT</c> and nothing else. Edited deliberately, in the same commit as the
     /// migration that grants it.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// Each entry is spelled the way <c>CatalogPrivilegeTests</c> reads it back out of the ACL —
     /// <c>pg_class.relacl</c> for a table privilege (<c>SELECT</c>), <c>pg_attribute.attacl</c> for
     /// a column privilege (<c>UPDATE(column)</c>) — and the comparison is entry by entry, both
     /// ways. Nothing enumerates what PostgreSQL can grant: an entry the record does not name is a
     /// difference whatever it is, including a privilege that did not exist when this was written.
+    /// </para>
+    /// <para>
+    /// The decision, table by table. <c>database_cluster</c> is read-only: nothing in ADR-0007 has
+    /// the application registering or editing a cluster; it is operator seed data, written as
+    /// <c>aurora_migrator</c>. <c>tenant</c> and <c>tenant_host</c> are inserted by the
+    /// provisioning saga and never deleted, and on <c>tenant</c> only the lifecycle columns a named
+    /// component moves are updatable — never the <see cref="RoutingColumns"/>. <c>subscription</c>
+    /// has no writer yet — no backlog row bills anyone — so it is read-only until one does.
+    /// <c>installed_package</c> is the package installer's. No table grants <c>DELETE</c>: §11.4
+    /// tombstones a tenant, a subscription closes with <c>valid_to</c>, <c>DROP DATABASE</c> is
+    /// <c>aurora_admin</c>'s.
+    /// </para>
+    /// <para>
+    /// What is deliberately not here. The §11.4 offboarding transitions — <c>suspended_at</c>,
+    /// <c>deletion_due_at</c>, <c>deleted_at</c>, and tombstoning the routing columns of a deleted
+    /// tenant — have no backlog row, and whether such operator-grade writes get a fourth catalog
+    /// role or grants to this one with the writer named is the architect's open question from the
+    /// B-05 security re-review. Until it is answered the request path holds none of them, and the
+    /// task that lands them grants what it needs in its own migration.
+    /// </para>
     /// </remarks>
-    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> AppRolePrivileges =
-        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<AppRoleGrant>> AppRolePrivileges =
+        new Dictionary<string, IReadOnlyList<AppRoleGrant>>(StringComparer.Ordinal)
         {
-            ["database_cluster"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
-            ["tenant"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
-            ["tenant_host"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
-            ["subscription"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
-            ["installed_package"] = Set("SELECT", "INSERT", "UPDATE", "DELETE"),
-            ["__EFMigrationsHistory"] = Set(),
+            ["database_cluster"] =
+            [
+                new("SELECT", "ITenantConnectionResolver (B-06.1) and ITenantAdminConnectionFactory (ADR-0027 §2) read the endpoint and the secret references to build a connection string; ReserveTenant (B-07.1) reads region, state and max_tenants to place a tenant"),
+            ],
+            ["tenant"] =
+            [
+                new("SELECT", "every request: ITenantConnectionResolver (B-06.1) resolves the tenant's cluster and database; ITenantScopeFactory (B-06.3) and the skew check (B-08.3) read state and core_schema_version"),
+                new("INSERT", "ReserveTenant, provisioning saga step 1 (B-07.1)"),
+                new("UPDATE(state)", "RegisterRouting, saga step 8 (B-07.4) sets Active; the reaper (B-07.1) sets ProvisioningFailed; the identity check (B-06.2), the migration runner's quarantine (B-08.2) and the skew check (B-08.3) set SchemaBlocked"),
+                new("UPDATE(core_schema_version)", "RegisterRouting, saga step 8 (B-07.4); the migration runner after each tenant migrates (B-08.1)"),
+                new("UPDATE(activated_at)", "RegisterRouting, saga step 8 (B-07.4)"),
+                new("UPDATE(last_activity_at)", "the tenant's own scope open, at most once a minute (ADR-0007 §10.1; B-06.3)"),
+            ],
+            ["tenant_host"] =
+            [
+                new("SELECT", "every request: resolving the tenant from the request's host (ADR-0007 §3.2 strategy 1)"),
+                new("INSERT", "RegisterRouting, provisioning saga step 8 (B-07.4)"),
+            ],
+            ["subscription"] =
+            [
+                new("SELECT", "entitlement checks: a capability a customer pays for is evaluated from here (ADR-0011 rule 3); no task writes a subscription yet, so nothing else is granted"),
+            ],
+            ["installed_package"] =
+            [
+                new("SELECT", "the package loader and every capability lookup (ADR-0008 §4; B-12, B-13.1); the upgrade plan (ADR-0027 §5)"),
+                new("INSERT", "the installer's final step (ADR-0008 §5.1 step 9; B-13.2), called from provisioning saga step 7 (B-07.4)"),
+                new("UPDATE", "the installer moving state from Installing to Active or Failed (B-13.2); upgrade, deactivate and purge (ADR-0008 §4.2, §5.3; B-13.3)"),
+            ],
+            ["__EFMigrationsHistory"] = [],
         };
 
     private static HashSet<string> Set(params string[] values) => new(values, StringComparer.Ordinal);

@@ -27,10 +27,15 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// </para>
 /// <list type="number">
 /// <item><description>
-/// <b>Downwards:</b> <c>aurora_app</c> has no DDL, holds on each catalog table exactly what
-/// <c>CatalogSchemaAllowlist.AppRolePrivileges</c> records and nothing on any other table, so it
-/// cannot alter the schema that decides where every tenant's data lives, and cannot touch the
-/// migrations history that records it.
+/// <b>Downwards:</b> <c>aurora_app</c> has no DDL and cannot touch the migrations history. But
+/// the routing decision lives in rows, not in the schema — which tenant a host resolves to, which
+/// cluster and database a tenant resolves to, which host a cluster is — so what matters is which
+/// rows it can write. It holds on each catalog table exactly what
+/// <c>CatalogSchemaAllowlist.AppRolePrivileges</c> records, read back from the ACL entry by entry,
+/// and that record lets it insert a tenant and a host, move a tenant's lifecycle columns and write
+/// <c>installed_package</c>: never write a cluster, never update a column a tenant or a host
+/// resolves by, never delete a row. The takeover the security re-review ran with the grants B-05
+/// first shipped is tried here, statement by statement, as the role.
 /// </description></item>
 /// <item><description>
 /// <b>Sideways:</b> on this fixture's cluster <c>aurora_app</c> can open the catalog and no other
@@ -41,7 +46,10 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// database to <c>PUBLIC</c>. What keeps the role out of a database today is §8 step 3 run on that
 /// database (<c>REVOKE ALL … FROM PUBLIC</c>, then an explicit <c>GRANT CONNECT</c>); what catches
 /// a request that reaches the wrong tenant database — which the role, by design, can — is §4.3's
-/// connected-database identity check, which B-07 must test as <em>the</em> cross-tenant control.
+/// connected-database identity check, which B-06.2 builds and proves with a deliberate mis-route.
+/// That check catches a mis-routed request; it does not catch an attacker holding the shared
+/// stage-1 credential, who never runs it — the accepted risk of ADR-0007 §3.5 that
+/// <c>FOLLOWUP-001</c> owns (see the module README).
 /// </description></item>
 /// </list>
 /// </remarks>
@@ -533,19 +541,21 @@ public sealed class CatalogPrivilegeTests
     /// </summary>
     private static List<string> Differences(
         IReadOnlyDictionary<string, IReadOnlySet<string>> held,
-        IReadOnlyDictionary<string, IReadOnlySet<string>> recorded)
+        IReadOnlyDictionary<string, IReadOnlyList<AppRoleGrant>> recorded)
     {
         List<string> differences = [];
 
         foreach ((string table, IReadOnlySet<string> privileges) in held.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {
-            if (!recorded.TryGetValue(table, out IReadOnlySet<string>? decided))
+            if (!recorded.TryGetValue(table, out IReadOnlyList<AppRoleGrant>? grants))
             {
                 differences.Add(
                     $"catalog.{table} exists but CatalogSchemaAllowlist.AppRolePrivileges records no decision for it; "
                     + $"{CatalogDatabaseFixture.AppRole} holds [{string.Join(", ", privileges.Order(StringComparer.Ordinal))}]");
                 continue;
             }
+
+            HashSet<string> decided = [.. grants.Select(grant => grant.Privilege)];
 
             foreach (string privilege in privileges.Except(decided).Order(StringComparer.Ordinal))
             {

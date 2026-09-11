@@ -10,13 +10,24 @@ using Xunit.Abstractions;
 namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 
 /// <summary>
-/// The privilege allowlist names every catalog table and nothing else, so that a table added to
-/// <see cref="CatalogSchemaAllowlist.Columns"/> without a decision on what <c>aurora_app</c> may
-/// do to it fails here, in verify.sh stage 6 with Docker stopped, before the integration test
-/// that compares the decision with what PostgreSQL actually granted (<c>CatalogPrivilegeTests</c>).
+/// The privilege record, held to its own rules in verify.sh stage 6 with Docker stopped: it names
+/// every catalog table and nothing else, spells each grant the way the ACL reads back, names the
+/// component that needs each grant, and never lets the request path delete a row or rewrite one it
+/// is routed by. The integration test then holds the database to the record
+/// (<c>CatalogPrivilegeTests</c>).
 /// </summary>
+/// <remarks>
+/// Every test here is a check over static data, and each can fail in exactly one way: by the record
+/// changing in the direction it forbids. That is the point — widening the record is the first step
+/// of widening the grant, and this is where a reviewer sees it.
+/// </remarks>
 public sealed partial class CatalogPrivilegeAllowlistTests
 {
+    private static readonly IReadOnlyList<(string Table, AppRoleGrant Grant)> Recorded =
+    [
+        .. CatalogSchemaAllowlist.AppRolePrivileges.SelectMany(table => table.Value.Select(grant => (table.Key, grant))),
+    ];
+
     private readonly ITestOutputHelper _output;
 
     public CatalogPrivilegeAllowlistTests(ITestOutputHelper output) => _output = output;
@@ -38,18 +49,104 @@ public sealed partial class CatalogPrivilegeAllowlistTests
         // builds the same spelling from relacl and attacl, so any other form - "select", "UPDATE
         // (state)", a stray "WITH GRANT OPTION" - could never match and would fail there as a
         // privilege the role does not hold. Failing here is the cheaper place.
-        List<(string Table, string Privilege)> recorded = [.. CatalogSchemaAllowlist.AppRolePrivileges
-            .SelectMany(table => table.Value.Select(privilege => (table.Key, privilege)))];
+        _output.WriteLine($"Checked the spelling of {Recorded.Count} recorded grants.");
+        Recorded.ShouldNotBeEmpty();
 
-        _output.WriteLine($"Checked the spelling of {recorded.Count} recorded privileges.");
-        recorded.ShouldNotBeEmpty();
-
-        foreach ((string table, string privilege) in recorded)
+        foreach ((string table, AppRoleGrant grant) in Recorded)
         {
-            PrivilegeLabel().IsMatch(privilege).ShouldBeTrue($"{privilege} on catalog.{table}");
+            PrivilegeLabel().IsMatch(grant.Privilege).ShouldBeTrue($"{grant.Privilege} on catalog.{table}");
         }
+    }
+
+    [Fact]
+    public void Every_recorded_privilege_names_the_task_or_the_decision_that_needs_it()
+    {
+        // The reviewer of the next catalog table has something to compare against only if each
+        // grant says who issues the statement: a backlog task (B-nn, B-nn.n, FOLLOWUP-nnn) or the
+        // ADR section that specifies the component. A grant that names neither was not decided.
+        _output.WriteLine($"Checked {Recorded.Count} recorded grants for a named component.");
+        Recorded.ShouldNotBeEmpty();
+
+        foreach ((string table, AppRoleGrant grant) in Recorded)
+        {
+            NamedComponent().IsMatch(grant.NeededBy).ShouldBeTrue($"{grant.Privilege} on catalog.{table}: '{grant.NeededBy}'");
+        }
+    }
+
+    [Fact]
+    public void A_column_privilege_names_a_column_the_table_has()
+    {
+        List<(string Table, string Column)> columnGrants =
+            [.. Recorded.Select(r => (r.Table, ColumnOf(r.Grant.Privilege))).Where(r => r.Item2 is not null).Select(r => (r.Table, r.Item2!))];
+
+        // The lifecycle columns of catalog.tenant are column grants, so this cannot be checking an
+        // empty list.
+        _output.WriteLine($"Checked {columnGrants.Count} column-level grants against the schema allowlist.");
+        columnGrants.ShouldNotBeEmpty();
+
+        foreach ((string table, string column) in columnGrants)
+        {
+            CatalogSchemaAllowlist.Columns[table].ShouldContain(column, $"catalog.{table}.{column} is granted but is not a column of the table");
+        }
+    }
+
+    [Fact]
+    public void No_grant_lets_the_request_path_delete_or_truncate_a_catalog_row()
+    {
+        // ADR-0007 §11.4 tombstones a tenant, a subscription closes with valid_to, and DROP
+        // DATABASE is aurora_admin's: nothing on the request path deletes a catalog row, so no
+        // grant may let it. The security re-review deleted another tenant's host row with the
+        // DELETE B-05 first granted; this is the record's half of not granting it again.
+        _output.WriteLine($"Checked {Recorded.Count} recorded grants for DELETE or TRUNCATE.");
+        Recorded.ShouldNotBeEmpty();
+
+        Recorded
+            .Where(r => r.Grant.Privilege.StartsWith("DELETE", StringComparison.Ordinal) || r.Grant.Privilege.StartsWith("TRUNCATE", StringComparison.Ordinal))
+            .ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void The_request_path_may_only_read_the_cluster_table()
+    {
+        // A cluster's host, port and secret references are what the resolver dials with the real
+        // cluster credentials. Nothing in ADR-0007 has the application registering or editing one.
+        CatalogSchemaAllowlist.AppRolePrivileges["database_cluster"].Select(grant => grant.Privilege).ShouldBe(["SELECT"]);
+    }
+
+    [Fact]
+    public void No_grant_lets_the_request_path_update_a_column_a_tenant_or_a_host_resolves_by()
+    {
+        // A table-wide UPDATE on a table with routing columns, or a column UPDATE naming one, is
+        // the takeover the security re-review ran: rebind a host, repoint a tenant's database.
+        int examined = 0;
+        foreach ((string table, AppRoleGrant grant) in Recorded.Where(r => r.Grant.Privilege.StartsWith("UPDATE", StringComparison.Ordinal)))
+        {
+            if (!CatalogSchemaAllowlist.RoutingColumns.TryGetValue(table, out IReadOnlySet<string>? routing))
+            {
+                continue;
+            }
+
+            examined++;
+            string? column = ColumnOf(grant.Privilege);
+            column.ShouldNotBeNull($"UPDATE on catalog.{table} is table-wide, and {table} has columns a request is routed by");
+            routing.ShouldNotContain(column, $"UPDATE({column}) on catalog.{table} lets the request path rewrite where a tenant or a host resolves");
+        }
+
+        // catalog.tenant's lifecycle columns are UPDATE grants on a table with routing columns, so
+        // this loop cannot have examined nothing.
+        _output.WriteLine($"Examined {examined} UPDATE grants on tables that hold routing columns.");
+        examined.ShouldBeGreaterThan(0);
+    }
+
+    private static string? ColumnOf(string privilege)
+    {
+        int open = privilege.IndexOf('(', StringComparison.Ordinal);
+        return open < 0 ? null : privilege[(open + 1)..^1];
     }
 
     [GeneratedRegex("^[A-Z]+(\\([a-z_][a-z0-9_]*\\))?$")]
     private static partial Regex PrivilegeLabel();
+
+    [GeneratedRegex("\\b(B-\\d{2}(\\.\\d)?|FOLLOWUP-\\d{3}|ADR-\\d{4})\\b")]
+    private static partial Regex NamedComponent();
 }

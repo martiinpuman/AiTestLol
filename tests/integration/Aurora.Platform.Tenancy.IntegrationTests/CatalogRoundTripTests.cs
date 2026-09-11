@@ -11,9 +11,10 @@ using Xunit;
 namespace Aurora.Platform.Tenancy.IntegrationTests;
 
 /// <summary>
-/// Every entity round-trips through PostgreSQL as <c>aurora_app</c>, typed identifiers and value
-/// objects included — which is also where EF Core is shown to accept the generic
-/// <c>EntityIdConverter</c> in materialisation and in a <c>WHERE</c>.
+/// Every entity round-trips through PostgreSQL, typed identifiers and value objects included —
+/// written as the role that may write it (a cluster and a subscription as <c>aurora_migrator</c>,
+/// the rest as <c>aurora_app</c>) and read back as <c>aurora_app</c> — which is also where EF Core
+/// is shown to accept the generic <c>EntityIdConverter</c> in materialisation and in a <c>WHERE</c>.
 /// </summary>
 [Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
@@ -28,13 +29,7 @@ public sealed class CatalogRoundTripTests
     {
         DatabaseCluster cluster = Unique.Cluster("eu-west");
         Tenant tenant = Unique.Tenant(cluster);
-
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
-        {
-            writer.DatabaseClusters.Add(cluster);
-            writer.Tenants.Add(tenant);
-            await writer.SaveChangesAsync();
-        }
+        await SaveAsync(cluster, tenant);
 
         await using CatalogDbContext reader = _catalog.OpenAsApp();
         Tenant readBack = await reader.Tenants.SingleAsync(t => t.Id == tenant.Id);
@@ -120,16 +115,16 @@ public sealed class CatalogRoundTripTests
         SubscriptionId subscriptionId = SubscriptionId.Create();
         DateOnly from = new(2026, 10, 1);
 
+        await SaveAsync(cluster, tenant);
         await using (CatalogDbContext writer = _catalog.OpenAsApp())
         {
-            writer.DatabaseClusters.Add(cluster);
-            writer.Tenants.Add(tenant);
             writer.TenantHosts.Add(TenantHost.Register(primaryHost, tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
             writer.TenantHosts.Add(TenantHost.Register(customHost, tenant.Id, isPrimary: false, verifiedAt: null));
-            writer.Subscriptions.Add(Subscription.Start(subscriptionId, tenant.Id, "standard", 25, from, from.AddYears(1)));
             writer.InstalledPackages.Add(InstalledPackage.Begin(tenant.Id, "nz", "1.2.0", "user:7f3a", Unique.Now));
             await writer.SaveChangesAsync();
         }
+
+        await _catalog.SeedAsync(owner => owner.Subscriptions.Add(Subscription.Start(subscriptionId, tenant.Id, "standard", 25, from, from.AddYears(1))));
 
         await using CatalogDbContext reader = _catalog.OpenAsApp();
         TenantId tenantId = tenant.Id;
@@ -154,10 +149,12 @@ public sealed class CatalogRoundTripTests
         package.InstalledBy.ShouldBe("user:7f3a");
     }
 
+    /// <summary>The cluster as the owner - the request path only reads clusters - then the tenant as the request path.</summary>
     private async Task SaveAsync(DatabaseCluster cluster, Tenant tenant)
     {
+        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
+
         await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.DatabaseClusters.Add(cluster);
         writer.Tenants.Add(tenant);
         await writer.SaveChangesAsync();
     }
