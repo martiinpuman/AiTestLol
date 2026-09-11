@@ -77,6 +77,33 @@ public sealed class ContributionValidationTests
     }
 
     /// <summary>
+    /// A chart whose roll-up never reaches a top-level account cannot be totalled, and nothing
+    /// downstream is guarded against walking it forever. Install-time validation is the only gate
+    /// before core does, so the loop is refused here and spelled out.
+    /// </summary>
+    [Fact]
+    public void An_account_that_is_its_own_parent_is_refused()
+    {
+        Result validation = AccountRoles.Validate(ChartWith(
+            Entry("1000", parent: "1000")));
+
+        validation.IsFailure.ShouldBeTrue();
+        validation.Error.Description.ShouldContain("Account '1000' is its own parent");
+    }
+
+    [Fact]
+    public void Two_accounts_that_roll_up_into_each_other_are_refused_naming_the_loop()
+    {
+        Result validation = AccountRoles.Validate(ChartWith(
+            Entry("1000", parent: "1010"),
+            Entry("1010", parent: "1000")));
+
+        validation.IsFailure.ShouldBeTrue();
+        validation.Error.Description.ShouldContain(
+            "Account '1000' rolls up into '1010', which rolls up into '1000'");
+    }
+
+    /// <summary>
     /// The required set is smaller than the whole registry on purpose: a tenant that never holds
     /// stock does not need an inventory account, and refusing their package over one would be the
     /// contract inventing a requirement the business does not have.
@@ -336,6 +363,23 @@ public sealed class ContributionValidationTests
         chart.TryGetAccount(role, out AccountCode account).ShouldBeTrue();
         return account;
     }
+
+    /// <summary>The complete chart, plus <paramref name="extra"/> accounts that fill no role.</summary>
+    private static ChartOfAccounts ChartWith(params AccountTemplateEntry[] extra)
+    {
+        ChartOfAccounts chart = ContractTestValues.CompleteChart();
+        Dictionary<AccountRole, AccountCode> mapping =
+            chart.MappedRoles.ToDictionary(role => role, role => Account(chart, role));
+
+        return new ChartOfAccounts([.. chart.Accounts, .. extra], mapping);
+    }
+
+    private static AccountTemplateEntry Entry(string code, string parent) =>
+        new(
+            ContractTestValues.AccountCodeOf(code),
+            ContractTestValues.Text($"Account {code}"),
+            AccountKind.Asset,
+            ContractTestValues.AccountCodeOf(parent));
 
     private static BankStatementLine Line(DateOnly date, decimal amount) =>
         new(date, date, ContractTestValues.Nz(amount), null, null, null);

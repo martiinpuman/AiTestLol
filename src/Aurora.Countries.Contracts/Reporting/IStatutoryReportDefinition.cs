@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Aurora.Countries.Contracts.Accounting;
 using Aurora.Countries.Contracts.Localization;
 using Aurora.Countries.Contracts.Taxation;
@@ -167,8 +168,109 @@ public sealed class StatutoryReportVersion
             }
         }
 
+        Result sums = NoBoxSumsItself(boxes);
+        if (sums.IsFailure)
+        {
+            return sums.Error;
+        }
+
         return Result.Success(new StatutoryReportVersion(slot, boxes, validity, sourceVersion));
     }
+
+    /// <summary>
+    /// A depth-first walk over what sums what, refusing the first box that includes itself —
+    /// directly, or through any chain of other boxes.
+    /// </summary>
+    /// <remarks>
+    /// A box that includes itself passes every shape check above and can never be computed: whatever
+    /// evaluates it later either loops or overflows its stack, in a tenant, at filing time. This
+    /// validation is the only gate before that, so the loop is refused here and spelled out. The
+    /// walk is iterative so a package cannot choose the recursion depth of its own validation.
+    /// </remarks>
+    private static Result NoBoxSumsItself(IReadOnlyList<ReportBox> boxes)
+    {
+        Dictionary<string, IReadOnlyList<string>> summands = new(StringComparer.Ordinal);
+        foreach (ReportBox box in boxes)
+        {
+            if (box.Source is ReportBoxSource.SumOfBoxes sum)
+            {
+                summands[box.Code] = sum.BoxCodes;
+            }
+        }
+
+        HashSet<string> settled = new(StringComparer.Ordinal);
+        foreach (string start in summands.Keys)
+        {
+            List<string>? loop = LoopFrom(start, summands, settled);
+            if (loop is not null)
+            {
+                return PackageManifestErrors.Invalid("report.boxes", DescribeLoop(loop));
+            }
+        }
+
+        return Result.Success();
+    }
+
+    /// <summary>
+    /// The codes from the box that repeats round to itself, or <see langword="null"/> when nothing
+    /// reachable from <paramref name="start"/> repeats. Every box the walk finishes with is added to
+    /// <paramref name="settled"/>, so each box is walked once across all starts.
+    /// </summary>
+    private static List<string>? LoopFrom(
+        string start,
+        Dictionary<string, IReadOnlyList<string>> summands,
+        HashSet<string> settled)
+    {
+        List<string> path = [start];
+        HashSet<string> onPath = new(StringComparer.Ordinal) { start };
+        Stack<int> nextSummand = new();
+        nextSummand.Push(0);
+
+        while (path.Count > 0)
+        {
+            string current = path[^1];
+            int index = nextSummand.Pop();
+            IReadOnlyList<string> codes = summands.TryGetValue(current, out IReadOnlyList<string>? found)
+                ? found
+                : [];
+
+            if (index == codes.Count)
+            {
+                settled.Add(current);
+                onPath.Remove(current);
+                path.RemoveAt(path.Count - 1);
+                continue;
+            }
+
+            nextSummand.Push(index + 1);
+            string summand = codes[index];
+
+            if (onPath.Contains(summand))
+            {
+                int first = path.IndexOf(summand);
+                path.Add(summand);
+                return path.GetRange(first, path.Count - first);
+            }
+
+            if (settled.Contains(summand))
+            {
+                continue;
+            }
+
+            path.Add(summand);
+            onPath.Add(summand);
+            nextSummand.Push(0);
+        }
+
+        return null;
+    }
+
+    private static string DescribeLoop(List<string> loop) =>
+        loop.Count == 2
+            ? $"Box '{loop[0]}' sums itself, so it can never be computed."
+            : $"Box '{loop[0]}' sums '{loop[1]}'"
+              + string.Concat(loop.Skip(2).Select(code => $", which sums '{code}'"))
+              + ", so none of them can ever be computed.";
 
     private StatutoryReportVersion(
         StatutoryReportSlot slot,

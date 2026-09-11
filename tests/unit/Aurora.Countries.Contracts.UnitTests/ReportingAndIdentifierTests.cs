@@ -81,6 +81,45 @@ public sealed class ReportingAndIdentifierTests
         dangling.Error.Description.ShouldContain("99");
     }
 
+    /// <summary>
+    /// A definition whose evaluation never terminates is the strongest form of "installs cleanly
+    /// and fails later". Install-time validation is the only gate before core walks these boxes,
+    /// so a box that includes itself is refused here, with the loop spelled out.
+    /// </summary>
+    [Fact]
+    public void A_box_that_sums_itself_is_refused()
+    {
+        Result<StatutoryReportVersion> version = StatutoryReportVersion.Create(
+            StatutoryReportSlot.PeriodicTaxReturn,
+            [Box("5", new ReportBoxSource.SumOfBoxes(["5"]))],
+            Year(2026),
+            ContractTestValues.Version());
+
+        version.IsFailure.ShouldBeTrue();
+        version.Error.Description.ShouldContain("Box '5' sums itself");
+    }
+
+    [Fact]
+    public void Two_boxes_that_sum_each_other_are_refused_naming_the_loop()
+    {
+        ReportBox output = Box("5", new ReportBoxSource.TaxCategoryTotals(
+            new HashSet<TaxCategory> { TaxCategory.Standard },
+            TaxAmountComponent.TaxAmount));
+
+        Result<StatutoryReportVersion> version = StatutoryReportVersion.Create(
+            StatutoryReportSlot.PeriodicTaxReturn,
+            [
+                output,
+                Box("11", new ReportBoxSource.SumOfBoxes(["5", "15"])),
+                Box("15", new ReportBoxSource.SumOfBoxes(["11"])),
+            ],
+            Year(2026),
+            ContractTestValues.Version());
+
+        version.IsFailure.ShouldBeTrue();
+        version.Error.Description.ShouldContain("Box '11' sums '15', which sums '11'");
+    }
+
     [Fact]
     public void A_report_version_in_force_on_no_day_is_refused() =>
         StatutoryReportVersion.Create(

@@ -86,13 +86,12 @@ public static class AccountRoles
                     $"Account '{account.Code}' rolls up into '{parent}', which the template does not " +
                     $"define.");
             }
+        }
 
-            if (account.Parent == account.Code)
-            {
-                return PackageManifestErrors.Invalid(
-                    "chartOfAccounts.accounts",
-                    $"Account '{account.Code}' is its own parent.");
-            }
+        Result rollUp = EveryRollUpReachesTheTop(template.Accounts);
+        if (rollUp.IsFailure)
+        {
+            return rollUp;
         }
 
         AccountRole[] unmapped = [.. RequiredForPosting.Except(template.RoleMapping.MappedRoles).Order()];
@@ -124,4 +123,54 @@ public static class AccountRoles
 
         return Result.Success();
     }
+
+    /// <summary>
+    /// Follows every account's parent chain up to a top-level account, refusing the first chain that
+    /// comes back round to an account already on it.
+    /// </summary>
+    /// <remarks>
+    /// A chart whose roll-up loops passes every check above and can never be totalled: whatever
+    /// walks it later — a trial balance, a report box over a role — loops with it, in a tenant, at
+    /// period end. This validation is the only gate before that, so the loop is refused here and
+    /// spelled out. Every parent is already known to be defined, so the chain can be followed by
+    /// lookup, and each account is followed once across all chains.
+    /// </remarks>
+    private static Result EveryRollUpReachesTheTop(IReadOnlyList<AccountTemplateEntry> accounts)
+    {
+        Dictionary<AccountCode, AccountCode?> parentOf =
+            accounts.ToDictionary(account => account.Code, account => account.Parent);
+        HashSet<AccountCode> reachesTheTop = [];
+
+        foreach (AccountTemplateEntry account in accounts)
+        {
+            List<AccountCode> chain = [];
+            HashSet<AccountCode> onChain = [];
+
+            for (AccountCode? current = account.Code;
+                 current is { } code && !reachesTheTop.Contains(code);
+                 current = parentOf[code])
+            {
+                if (!onChain.Add(code))
+                {
+                    int first = chain.IndexOf(code);
+                    return PackageManifestErrors.Invalid(
+                        "chartOfAccounts.accounts",
+                        DescribeLoop(chain.GetRange(first, chain.Count - first)));
+                }
+
+                chain.Add(code);
+            }
+
+            reachesTheTop.UnionWith(chain);
+        }
+
+        return Result.Success();
+    }
+
+    private static string DescribeLoop(List<AccountCode> loop) =>
+        loop.Count == 1
+            ? $"Account '{loop[0]}' is its own parent."
+            : $"Account '{loop[0]}' rolls up into '{loop[1]}'"
+              + string.Concat(loop.Skip(2).Select(code => $", which rolls up into '{code}'"))
+              + $", which rolls up into '{loop[0]}', so none of them ever reaches a top-level account.";
 }
