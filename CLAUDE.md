@@ -149,6 +149,14 @@ Reviewers still change nothing else. Posting a review is the only write a review
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
 3. Tenant isolation and authorization tests exist for any new data access or endpoint.
 4. Approved by a senior-reviewer who is not the author, recorded as a submitted review on the task's pull request.
+5. **The orchestrator merges on that verdict.** The product owner is hands-off by standing
+   instruction and does not review or accept pull requests; no branch waits on a human. What a
+   merge does require is a passing verdict from an agent that did not author the branch — and
+   at Full tier, after a rework, from a *second* reviewer. GitHub refuses to record an approval
+   from the account that authored the branch, so a reviewer may have to submit `COMMENT` with
+   `VERDICT: APPROVE` as its first line; that is a real approval and the orchestrator merges on
+   it. An unreviewed branch is never merged, and neither is one whose only review is by its
+   author.
 5. Docs affected by the change are updated.
 
 ## Local toolchain
