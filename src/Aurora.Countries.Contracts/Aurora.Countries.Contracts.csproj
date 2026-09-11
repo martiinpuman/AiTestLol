@@ -6,9 +6,10 @@
     The ten Country Package extension-point interfaces, CountryPackageManifest and the
     AccountRole registry. A package may reference this assembly and the two tier-0 assemblies
     it is expressed in (Aurora.SharedKernel, Aurora.Documents.Canonical) and no other Aurora
-    assembly: the allowlist is PackageAssemblyReferenceRule in Aurora.Countries.Hosting, checked
-    against the package's reference table from metadata before any of its code runs. Keep this
-    assembly's own dependency surface small - whatever it references, a package can reach.
+    assembly: the allowlist is PackageAssemblyReferenceRule in Aurora.Countries.Hosting, matched
+    case-insensitively as the loader binds names and checked against the package's reference
+    table from metadata before any of its code runs. Keep this assembly's own dependency surface
+    small - whatever it references, a package can reach.
 
     The version below is the CORE CONTRACT VERSION of ADR-0008 3.1 - not the product version.
     It is the number a package's coreContractRange is matched against, so it moves only when an
