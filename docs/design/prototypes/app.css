@@ -238,7 +238,13 @@ a { color: var(--color-accent); }
   cursor: pointer; border: 1px solid transparent; white-space: nowrap;
   transition: background var(--duration-fast) var(--easing-standard);
 }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+/* components.md §1 correction: aria-disabled (not the native `disabled`
+   attribute) is the mechanism for a disabled button whose reason must be
+   reachable by keyboard/screen-reader focus, not only mouse hover — native
+   `disabled` removes the element from the tab order, which defeats that
+   requirement outright. The click handler itself must check aria-disabled
+   and no-op, since the browser will not block the click for us here. */
 .btn-primary { background: var(--color-accent-solid); color: var(--color-text-on-accent); }
 .btn-primary:hover:not(:disabled) { background: var(--color-accent-solid-hover); }
 .btn-primary:active:not(:disabled) { background: var(--color-accent-solid-active); }
@@ -339,6 +345,26 @@ table.grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var
 }
 .bulk-bar.show { display: flex; }
 .bulk-bar strong { color: var(--color-accent); }
+
+/* ---------- skeleton loading ---------- */
+/* components.md references a skeleton loading state in several places
+   (data grid initial load, master-detail loading, form fields whose value
+   is fetched) without a shared CSS shape — this is that shape, added by
+   docs/design/screens/SPEC-001-first-run-landing.md's prototype, the first
+   to actually render one. Respects prefers-reduced-motion per tokens.md's
+   motion rules (the shimmer is decorative; a static, slightly-dimmed block
+   is just as informative and doesn't rely on motion to read as "loading"). */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface-sunken) 25%, var(--color-border) 37%, var(--color-surface-sunken) 63%);
+  background-size: 400% 100%;
+  animation: skeleton-pulse 1.4s ease infinite;
+  border-radius: var(--radius-sm);
+  color: transparent;
+}
+@keyframes skeleton-pulse { 0% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: var(--color-surface-sunken); opacity: .7; }
+}
 
 /* ---------- empty state ---------- */
 .empty-state {

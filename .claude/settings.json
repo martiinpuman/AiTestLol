@@ -10,6 +10,30 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/scripts/hooks/guard-bash.sh\"; [ -x \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=\"${CLAUDE_PROJECT_DIR:-.}/scripts/hooks/guard-source-edit.sh\"; [ -x \"$f\" ] || exit 0; exec bash \"$f\"",
+            "timeout": 15
+          }
+        ]
+      }
     ]
   }
 }
