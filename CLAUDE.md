@@ -54,7 +54,7 @@ The core defines the extension points as contracts. The core must never contain 
 | scripts/verify.sh | The single quality gate: build, all tests, architecture tests, lint, format check | senior developers |
 
 ## Ownership
-Only senior developers change src/, tests/ and scripts/. Other roles write only in their own docs folder. If you need a change outside your area, ask for it in your summary to the orchestrator. Developers may also update docs/product/glossary.md and module README files.
+Only senior developers change src/, tests/ and scripts/ — except `scripts/hooks/`, `scripts/dev-*.sh`, `scripts/bootstrap-env.sh`, `scripts/project-health.sh`, `scripts/agent-progress.sh` and `.claude/`, which are orchestrator-owned automation (`docs/architecture/automation.md`). Other roles write only in their own docs folder. If you need a change outside your area, ask for it in your summary to the orchestrator. Developers may also update docs/product/glossary.md and module README files.
 
 ## Engineering standards
 - Clean Architecture: dependencies point inward. The domain layer has no references to frameworks, databases or UI. Enforced by automated architecture tests, not goodwill.
@@ -152,7 +152,11 @@ rule that a review may never quietly change the code it approves.
 5. Docs affected by the change are updated.
 
 ## Local toolchain
-The .NET SDK lives at `/usr/share/dotnet`. Any script or agent that runs `dotnet` must first source `scripts/dev-env.sh`, which puts it on PATH and starts the Docker daemon if it is not already running. Integration tests use Testcontainers against `postgres:17-alpine`.
+The .NET SDK lives at `/usr/share/dotnet`. Any script or agent that runs `dotnet` must first source `scripts/dev-env.sh` **in the same shell call** — shell state does not persist between tool calls. Integration tests use Testcontainers against `postgres:17-alpine`.
+
+While iterating, run tests with `bash scripts/dev-test.sh` rather than `dotnet test`: it prints the executed counts and the failures and discards the rest (89% less output). `scripts/verify.sh` is still what decides whether a branch may merge.
+
+Two hooks watch every agent. A `Bash` command that force-pushes, pushes to the wrong branch, deletes an ADR, stages a `.env` or runs `dotnet` without `dev-env.sh` is **blocked** with the reason. A file you write that compares a country to a string literal in core, reads the ambient clock, declares a `float`/`double` in `src/`, leaves a `TODO` with no backlog id, or contains a credential-shaped literal is **reported back to you** — fix it in the same turn. The rules and their proofs are in `docs/architecture/automation.md`.
 
 ## Hard limits for every agent
 Never: deploy anything, create cloud resources, spend money, sign up for services, use real customer or personal data, commit secrets, force-push, or delete docs/decisions/. New third-party dependencies need a permissive license (MIT, Apache-2.0, BSD) and an entry in docs/architecture/dependencies.md; watch for libraries that have moved to commercial licensing.
