@@ -11,7 +11,7 @@ Bootstrap tasks `B-01` … `B-15` are the architect's walking-skeleton sequence 
 | ID | Title | Spec | Module | Depends on | Parallel-safe | Status | Notes |
 |---|---|---|---|---|---|---|---|
 | B-01 | Solution skeleton and build-wide settings | `architecture/solution-layout.md` §6 (B-01) | Solution/Build | — | Yes — nothing else can start until this lands, but nothing blocks *it* | done | Pure engineering scaffolding; architect's AC is the spec. Everything else in this table depends on it, directly or transitively. |
-| B-02 | `scripts/verify.sh` stages 0–3 and 11 | `architecture/solution-layout.md` §6 (B-02), §5 | Build/Tooling | B-01 | Yes — with B-03, B-05 | ready | Touches `scripts/` only; no file overlap with B-03/B-05. |
+| B-02 | `scripts/verify.sh` stages 0–3 and 11 | `architecture/solution-layout.md` §6 (B-02), §5 | Build/Tooling | B-01 | Yes — with B-03, B-05 | done | Touches `scripts/` only; no file overlap with B-03/B-05. |
 | B-03 | `Aurora.SharedKernel` (Money, Quantity, Percentage, DateRange, ids, `Result`) | `architecture/solution-layout.md` §6 (B-03) | SharedKernel (tier 0) | B-01 | Yes — with B-02, B-05 | ready | Foundational value objects; every later module reads this but nothing here reads them back. |
 | B-04 | `Aurora.Architecture.Tests` first rule set | `architecture/solution-layout.md` §6 (B-04) | Architecture.Tests | B-01, B-03 | Yes — with B-05, B-12 | ready | Needs B-03 to exist so the domain-purity rule has something to assert over. |
 | B-05 | Catalog database and `CatalogDbContext` | `architecture/solution-layout.md` §6 (B-05) | Platform/Tenancy (catalog) | B-01 | Yes — with B-02, B-03, B-04 | ready | Different project tree from SharedKernel/Architecture.Tests. |
