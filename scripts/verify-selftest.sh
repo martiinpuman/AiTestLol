@@ -9,17 +9,17 @@
 #
 # It also asserts the properties of the gate that no single stage owns: that it
 # runs from any working directory, that sourcing scripts/dev-env.sh is what puts
-# the SDK on PATH, that stages 0-3 need no network at all, and that a failing
-# stage leaves every later stage unrun (fail fast,
-# docs/architecture/solution-layout.md 5.1).
+# the SDK on PATH, that it needs no network at all, that the options in
+# solution-layout.md 5.3 do what the table says, and that a failing stage leaves
+# every later stage unrun (fail fast, 5.1).
 #
 # This is deliberately NOT a stage of verify.sh. It costs one full gate run per
 # case, and it mutates the working tree while it runs - which is precisely what
 # a gate must never do. Run it when verify.sh itself changes.
 #
-# Covers stages 0-3 and 6 (task B-02). Stages 4, 5 and 7-10 arrive with B-11;
-# dependencies.md 1 rule 4 already demands six such cases for stage 4 alone, and
-# they belong here rather than in a second harness.
+# Covers stages 0-3, 6 and 11 (task B-02). Stages 4, 5 and 7-10 arrive with
+# B-11; dependencies.md 1 rule 4 already demands six such cases for stage 4
+# alone, and they belong here rather than in a second harness.
 #
 # SAFETY. The injections below are real, if brief:
 #   - every file a case touches is copied aside before the case mutates it and
@@ -179,6 +179,31 @@ assert_fail_stage() {
   printf '    exit %s,%s\n' "${RUN_RC}" "${line}"
 }
 
+# 5.3's options are user-facing contract, and what they skipped has to be
+# visible in the table rather than merely true. Read from summary.txt, which is
+# the plain-text copy of the same table the developer sees.
+assert_summary_row() {
+  local id="$1" row fragment
+  shift
+  row="$(grep -E "^ ${id}[[:space:]]" -- "${VERIFY_DIR}/summary.txt" 2>/dev/null | head -n 1 || true)"
+  [[ -n "${row}" ]] || fail_case "no summary row for stage ${id}" || return 1
+  for fragment in "$@"; do
+    [[ "${row}" == *"${fragment}"* ]] \
+      || fail_case "stage ${id} row lacks '${fragment}':${row}" || return 1
+  done
+  printf '    summary row:%s\n' "${row}"
+}
+
+# A usage error is exit 2, distinct from a stage failure (exit 1), so a script
+# that wraps the gate can tell "I called it wrong" from "the code is broken".
+assert_usage_error() {
+  local needle="$1"
+  (( RUN_RC == 2 )) || fail_case "expected exit 2, got ${RUN_RC}" || return 1
+  grep -qF -- "${needle}" "${CASE_LOG}" \
+    || fail_case "expected '${needle}' in the output" || return 1
+  printf '    exit 2: %s\n' "${needle}"
+}
+
 assert_stage_log_contains() {
   local id="$1" needle="$2" log
   log="$(ls -- "${VERIFY_DIR}/$(printf '%02d' "${id}")"-*.log 2>/dev/null | head -n 1 || true)"
@@ -207,10 +232,14 @@ assert_nothing_ran_after() {
 # Cases
 # ---------------------------------------------------------------------------
 
+# The count in stage 6's row is asserted here rather than only in the case that
+# makes it fail: it is printed on every run precisely so that a stage which
+# measured nothing cannot look like a stage on which everything passed.
 case_baseline() {
-  case_begin "baseline: a clean tree passes"
+  case_begin "baseline: a clean tree passes, and stage 6 says how many tests ran"
   run_verify
   assert_pass || return 0
+  assert_summary_row 6 "PASS" "test(s) executed" || return 0
 }
 
 case_any_cwd() {
@@ -244,31 +273,56 @@ case_dev_env_is_sourced() {
 # 5.1 allows exactly two network calls - the NuGet restore and one pull of
 # postgres:17-alpine - and no stage implemented today makes either: the packages
 # are already in the global cache and nothing here starts a container. Proven by
-# running the stages in a network namespace that has no interface at all, rather
-# than by reading the commands and believing them.
+# running the whole gate in a network namespace with no route to anywhere,
+# rather than by reading the commands and believing them.
 #
-# Stage 6 is not in the loop, and the reason is worth writing down. `dotnet test`
-# reaches its test host over a TCP socket on loopback; `unshare -n` hands back a
-# namespace whose loopback is *down*, so stage 6 times out there after 90s per
-# assembly with "failed to connect to testhost". That is machine-local IPC
-# failing, not egress being denied - raising loopback needs iproute2, which this
-# image does not ship. Stage 6 runs `--no-build` over assemblies stage 3 already
-# produced, so it has nothing to fetch; the day this image gains `ip`, add it to
-# the loop behind `ip link set lo up`.
+# `unshare -n` hands back a namespace whose loopback interface exists but is
+# *down*, and `dotnet test` reaches its test host over a TCP socket on
+# loopback - so without the helper below stage 6 times out after 90s per
+# assembly with "failed to connect to testhost", which is machine-local IPC
+# failing rather than egress being denied. Raising an interface is normally
+# iproute2's job and this image ships no `ip`; the helper performs the same
+# ioctl directly. Loopback carries no traffic off the machine, so the case
+# still proves what it claims.
+LOOPBACK_HELPER="${WORK}/netns-loopback-up.py"
+
+write_loopback_helper() {
+  cat >"${LOOPBACK_HELPER}" <<'PY'
+"""Raise loopback in the current network namespace, then exec the rest of argv.
+
+This is what `ip link set lo up` ultimately performs: read the interface flags
+with SIOCGIFFLAGS, set IFF_UP, write them back with SIOCSIFFLAGS. It opens no
+route out of the namespace.
+"""
+import fcntl
+import os
+import socket
+import struct
+import sys
+
+SIOCGIFFLAGS = 0x8913
+SIOCSIFFLAGS = 0x8914
+IFF_UP = 0x1
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+flags = struct.unpack("16sh", fcntl.ioctl(sock, SIOCGIFFLAGS, struct.pack("16sh", b"lo", 0)))[1]
+fcntl.ioctl(sock, SIOCSIFFLAGS, struct.pack("16sh", b"lo", flags | IFF_UP))
+sock.close()
+os.execvp(sys.argv[1], sys.argv[1:])
+PY
+}
+
 case_offline() {
-  case_begin "5.1 stages 0-3 need no network at all"
+  case_begin "5.1 the whole gate runs with no network egress at all"
   if ! unshare -n true >/dev/null 2>&1; then
     printf '    SKIP: this kernel or user cannot create a network namespace\n'
     return 0
   fi
-  local stage
-  for stage in 0 1 2 3; do
-    RUN_RC=0
-    unshare -n -- "${VERIFY}" --stage "${stage}" >"${CASE_LOG}" 2>&1 || RUN_RC=$?
-    (( RUN_RC == 0 )) \
-      || fail_case "stage ${stage} did not pass with no network interface" || return 1
-    printf '    stage %s PASS with no network interface\n' "${stage}"
-  done
+  write_loopback_helper
+  RUN_RC=0
+  unshare -n -- python3 "${LOOPBACK_HELPER}" "${VERIFY}" >"${CASE_LOG}" 2>&1 || RUN_RC=$?
+  assert_pass || return 0
+  assert_summary_row 6 "PASS" "test(s) executed" || return 0
 }
 
 case_preflight_no_sdk() {
@@ -395,6 +449,77 @@ case_unit_test_host_aborts() {
   assert_stage_log_contains 6 "solution-wide test run failed" || return 0
 }
 
+# The other way stage 6 can be wrong: it measured nothing and said PASS. A
+# dropped test project, a misspelled Category trait and a filter typo all look
+# like this, so the floor is raised for the length of one run - which is also
+# exactly what the developer who lands the first tests does permanently, which
+# is why this case keeps working after MIN_UNIT_TESTS stops being zero.
+case_unit_tests_vacuous() {
+  case_begin "stage 6: a filter that matches nothing, against a floor of one"
+  VERIFY_ENV=(AURORA_MIN_UNIT_TESTS=1)
+  run_verify --filter 'FullyQualifiedName~ZzzNoSuchTestExists'
+  assert_fail_stage 6 || return 0
+  assert_stage_log_contains 6 "below the required minimum of 1" || return 0
+  assert_stage_log_contains 6 "ZzzNoSuchTestExists" || return 0
+  assert_summary_row 6 "FAIL" "0 test(s) executed" || return 0
+}
+
+# Stage 11 enforces 5.1's central promise - the gate never mutates what it
+# measures - and B-11 adds the stages that read lock files and the dependency
+# closure, which is the code most likely to regress it. The probe is an MSBuild
+# target that writes an untracked file during stage 3's build, so the mutation
+# lands at a point in the run this case decides rather than on a timer.
+case_summary_tree_guard() {
+  case_begin "stage 11: a stage that writes into the repository it measures"
+  local proj="src/hosts/Aurora.Web/Aurora.Web.csproj"
+  local probe="GATE_MUTATION_PROBE.txt"
+  stage_file "${proj}"
+  stage_file "${probe}"
+  sed -i 's|^</Project>|  <Target Name="AuroraSelfTestMutation" AfterTargets="Build">\n    <WriteLinesToFile File="$(MSBuildThisFileDirectory)../../../GATE_MUTATION_PROBE.txt" Lines="verify-selftest" Overwrite="true" />\n  </Target>\n\n</Project>|' \
+    -- "${REPO_ROOT}/${proj}"
+  run_verify
+  assert_fail_stage 11 || return 0
+  assert_stage_log_contains 11 "${probe}" || return 0
+  assert_summary_row 11 "FAIL" "working tree changed" || return 0
+}
+
+# 5.3. Each of these is a way of calling the gate wrongly, and each must be
+# exit 2 with a message - not a silently skipped stage, and not exit 1, which
+# would tell a wrapper script the repository is broken.
+case_usage_errors() {
+  case_begin "5.3 bad usage exits 2 and says what was wrong"
+  run_verify --bogus
+  assert_usage_error "unknown argument: --bogus" || return 0
+  run_verify --stage 99
+  assert_usage_error "no such stage" || return 0
+  run_verify --stage 4
+  assert_usage_error "B-11" || return 0
+  run_verify --filter
+  assert_usage_error "--filter needs an expression" || return 0
+  VERIFY_ENV=(AURORA_MIN_UNIT_TESTS=some)
+  run_verify
+  assert_usage_error "AURORA_MIN_UNIT_TESTS must be a non-negative integer" || return 0
+}
+
+# The remaining half of 5.3: the flags that skip work must say in the table
+# which flag skipped it, or a --fast run is indistinguishable from a full one
+# in anything a reviewer reads afterwards.
+case_option_skips_are_declared() {
+  case_begin "5.3 --fast, --no-docker and --stage declare what they skipped"
+  run_verify --stage 0
+  assert_pass || return 0
+  assert_summary_row 0 "PASS" || return 0
+  assert_summary_row 6 "SKIP" "--stage 0" || return 0
+  run_verify --fast
+  assert_pass || return 0
+  assert_summary_row 8 "SKIP" "--fast" || return 0
+  assert_summary_row 9 "SKIP" "--fast" || return 0
+  assert_summary_row 10 "SKIP" "--fast" || return 0
+  run_verify --no-docker
+  assert_pass || return 0
+  assert_summary_row 8 "SKIP" "--no-docker" || return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -426,6 +551,10 @@ CASES=(
   case_build_msbuild_warning
   case_unit_test_failure
   case_unit_test_host_aborts
+  case_unit_tests_vacuous
+  case_summary_tree_guard
+  case_usage_errors
+  case_option_skips_are_declared
 )
 
 # case_end, not the case bodies, owns the restore: a case that fails an
