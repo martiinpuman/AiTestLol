@@ -43,6 +43,85 @@ Aurora.Countries.Contracts.Accounting.IChartOfAccountsTemplate.Accounts.get -> S
 Aurora.Countries.Contracts.Accounting.IChartOfAccountsTemplate.Name.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
 Aurora.Countries.Contracts.Accounting.IChartOfAccountsTemplate.RoleMapping.get -> Aurora.Countries.Contracts.Accounting.IAccountRoleMapping!
 Aurora.Countries.Contracts.Accounting.IChartOfAccountsTemplate.TemplateId.get -> string!
+Aurora.Countries.Contracts.Banking.BankAccountReference
+Aurora.Countries.Contracts.Banking.BankAccountReference.<Clone>$() -> Aurora.Countries.Contracts.Banking.BankAccountReference!
+Aurora.Countries.Contracts.Banking.BankAccountReference.BankAccountReference(string! Identifier, string? Scheme, string? BankIdentifier) -> void
+Aurora.Countries.Contracts.Banking.BankAccountReference.BankIdentifier.get -> string?
+Aurora.Countries.Contracts.Banking.BankAccountReference.BankIdentifier.init -> void
+Aurora.Countries.Contracts.Banking.BankAccountReference.Deconstruct(out string! Identifier, out string? Scheme, out string? BankIdentifier) -> void
+Aurora.Countries.Contracts.Banking.BankAccountReference.Equals(Aurora.Countries.Contracts.Banking.BankAccountReference? other) -> bool
+Aurora.Countries.Contracts.Banking.BankAccountReference.Identifier.get -> string!
+Aurora.Countries.Contracts.Banking.BankAccountReference.Identifier.init -> void
+Aurora.Countries.Contracts.Banking.BankAccountReference.Scheme.get -> string?
+Aurora.Countries.Contracts.Banking.BankAccountReference.Scheme.init -> void
+Aurora.Countries.Contracts.Banking.BankStatement
+Aurora.Countries.Contracts.Banking.BankStatement.Account.get -> Aurora.Countries.Contracts.Banking.BankAccountReference!
+Aurora.Countries.Contracts.Banking.BankStatement.ClosingBalance.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Banking.BankStatement.LineCount.get -> int
+Aurora.Countries.Contracts.Banking.BankStatement.Lines.get -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Banking.BankStatementLine!>!
+Aurora.Countries.Contracts.Banking.BankStatement.OpeningBalance.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Banking.BankStatement.Period.get -> Aurora.SharedKernel.DateRange
+Aurora.Countries.Contracts.Banking.BankStatementLine
+Aurora.Countries.Contracts.Banking.BankStatementLine.<Clone>$() -> Aurora.Countries.Contracts.Banking.BankStatementLine!
+Aurora.Countries.Contracts.Banking.BankStatementLine.Amount.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Banking.BankStatementLine.Amount.init -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.BankStatementLine(System.DateOnly BookingDate, System.DateOnly ValueDate, Aurora.SharedKernel.Money Amount, string? Reference, string? CounterpartyName, string? RemittanceInformation) -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.BookingDate.get -> System.DateOnly
+Aurora.Countries.Contracts.Banking.BankStatementLine.BookingDate.init -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.CounterpartyName.get -> string?
+Aurora.Countries.Contracts.Banking.BankStatementLine.CounterpartyName.init -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.Deconstruct(out System.DateOnly BookingDate, out System.DateOnly ValueDate, out Aurora.SharedKernel.Money Amount, out string? Reference, out string? CounterpartyName, out string? RemittanceInformation) -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.Equals(Aurora.Countries.Contracts.Banking.BankStatementLine? other) -> bool
+Aurora.Countries.Contracts.Banking.BankStatementLine.Reference.get -> string?
+Aurora.Countries.Contracts.Banking.BankStatementLine.Reference.init -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.RemittanceInformation.get -> string?
+Aurora.Countries.Contracts.Banking.BankStatementLine.RemittanceInformation.init -> void
+Aurora.Countries.Contracts.Banking.BankStatementLine.ValueDate.get -> System.DateOnly
+Aurora.Countries.Contracts.Banking.BankStatementLine.ValueDate.init -> void
+Aurora.Countries.Contracts.Banking.BankingErrors
+Aurora.Countries.Contracts.Banking.IPaymentFileFormat
+Aurora.Countries.Contracts.Banking.IPaymentFileFormat.FormatId.get -> string!
+Aurora.Countries.Contracts.Banking.IPaymentFileFormat.Name.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
+Aurora.Countries.Contracts.Banking.IPaymentFileFormat.Render(Aurora.Countries.Contracts.Banking.PaymentInstructionBatch! batch) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Banking.PaymentFile!>
+Aurora.Countries.Contracts.Banking.IStatementImportFormat
+Aurora.Countries.Contracts.Banking.IStatementImportFormat.CanRead(System.ReadOnlyMemory<byte> content) -> bool
+Aurora.Countries.Contracts.Banking.IStatementImportFormat.FileExtensions.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Aurora.Countries.Contracts.Banking.IStatementImportFormat.FormatId.get -> string!
+Aurora.Countries.Contracts.Banking.IStatementImportFormat.Parse(System.ReadOnlyMemory<byte> content) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Banking.BankStatement!>
+Aurora.Countries.Contracts.Banking.PaymentFile
+Aurora.Countries.Contracts.Banking.PaymentFile.<Clone>$() -> Aurora.Countries.Contracts.Banking.PaymentFile!
+Aurora.Countries.Contracts.Banking.PaymentFile.Content.get -> System.ReadOnlyMemory<byte>
+Aurora.Countries.Contracts.Banking.PaymentFile.Content.init -> void
+Aurora.Countries.Contracts.Banking.PaymentFile.Deconstruct(out string! FormatId, out string! FileName, out string! MediaType, out System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Banking.PaymentFile.Equals(Aurora.Countries.Contracts.Banking.PaymentFile? other) -> bool
+Aurora.Countries.Contracts.Banking.PaymentFile.FileName.get -> string!
+Aurora.Countries.Contracts.Banking.PaymentFile.FileName.init -> void
+Aurora.Countries.Contracts.Banking.PaymentFile.FormatId.get -> string!
+Aurora.Countries.Contracts.Banking.PaymentFile.FormatId.init -> void
+Aurora.Countries.Contracts.Banking.PaymentFile.MediaType.get -> string!
+Aurora.Countries.Contracts.Banking.PaymentFile.MediaType.init -> void
+Aurora.Countries.Contracts.Banking.PaymentFile.PaymentFile(string! FormatId, string! FileName, string! MediaType, System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction
+Aurora.Countries.Contracts.Banking.PaymentInstruction.<Clone>$() -> Aurora.Countries.Contracts.Banking.PaymentInstruction!
+Aurora.Countries.Contracts.Banking.PaymentInstruction.Amount.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Banking.PaymentInstruction.Amount.init -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction.Creditor.get -> Aurora.Countries.Contracts.Banking.BankAccountReference!
+Aurora.Countries.Contracts.Banking.PaymentInstruction.Creditor.init -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction.CreditorName.get -> string!
+Aurora.Countries.Contracts.Banking.PaymentInstruction.CreditorName.init -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction.Deconstruct(out string! EndToEndId, out Aurora.Countries.Contracts.Banking.BankAccountReference! Creditor, out string! CreditorName, out Aurora.SharedKernel.Money Amount, out string? RemittanceInformation) -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction.EndToEndId.get -> string!
+Aurora.Countries.Contracts.Banking.PaymentInstruction.EndToEndId.init -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction.Equals(Aurora.Countries.Contracts.Banking.PaymentInstruction? other) -> bool
+Aurora.Countries.Contracts.Banking.PaymentInstruction.PaymentInstruction(string! EndToEndId, Aurora.Countries.Contracts.Banking.BankAccountReference! Creditor, string! CreditorName, Aurora.SharedKernel.Money Amount, string? RemittanceInformation) -> void
+Aurora.Countries.Contracts.Banking.PaymentInstruction.RemittanceInformation.get -> string?
+Aurora.Countries.Contracts.Banking.PaymentInstruction.RemittanceInformation.init -> void
+Aurora.Countries.Contracts.Banking.PaymentInstructionBatch
+Aurora.Countries.Contracts.Banking.PaymentInstructionBatch.Company.get -> Aurora.SharedKernel.CompanyId
+Aurora.Countries.Contracts.Banking.PaymentInstructionBatch.Debtor.get -> Aurora.Countries.Contracts.Banking.BankAccountReference!
+Aurora.Countries.Contracts.Banking.PaymentInstructionBatch.Instructions.get -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Banking.PaymentInstruction!>!
+Aurora.Countries.Contracts.Banking.PaymentInstructionBatch.RequestedExecutionDate.get -> System.DateOnly
+Aurora.Countries.Contracts.Banking.PaymentInstructionBatch.Total.get -> Aurora.SharedKernel.Money
 Aurora.Countries.Contracts.CoreContract
 Aurora.Countries.Contracts.CountryPackageCapabilities
 Aurora.Countries.Contracts.CountryPackageCapability
@@ -73,6 +152,86 @@ Aurora.Countries.Contracts.CountryPackageManifest.Publisher.get -> string!
 Aurora.Countries.Contracts.CountryPackageManifest.SchemaName.get -> string!
 Aurora.Countries.Contracts.CountryPackageManifest.Version.get -> Aurora.Countries.Contracts.PackageVersion
 Aurora.Countries.Contracts.CountryPackageManifestJson
+Aurora.Countries.Contracts.Documents.EInvoiceDocument
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.<Clone>$() -> Aurora.Countries.Contracts.Documents.EInvoiceDocument!
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.Content.get -> System.ReadOnlyMemory<byte>
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.Content.init -> void
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.Deconstruct(out string! ProfileId, out string! DocumentId, out string! MediaType, out System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.DocumentId.get -> string!
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.DocumentId.init -> void
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.EInvoiceDocument(string! ProfileId, string! DocumentId, string! MediaType, System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.Equals(Aurora.Countries.Contracts.Documents.EInvoiceDocument? other) -> bool
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.MediaType.get -> string!
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.MediaType.init -> void
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.ProfileId.get -> string!
+Aurora.Countries.Contracts.Documents.EInvoiceDocument.ProfileId.init -> void
+Aurora.Countries.Contracts.Documents.ElectronicAddress
+Aurora.Countries.Contracts.Documents.ElectronicAddress.<Clone>$() -> Aurora.Countries.Contracts.Documents.ElectronicAddress!
+Aurora.Countries.Contracts.Documents.ElectronicAddress.Deconstruct(out Aurora.Countries.Contracts.Documents.ElectronicAddressScheme Scheme, out string! Value) -> void
+Aurora.Countries.Contracts.Documents.ElectronicAddress.ElectronicAddress(Aurora.Countries.Contracts.Documents.ElectronicAddressScheme Scheme, string! Value) -> void
+Aurora.Countries.Contracts.Documents.ElectronicAddress.Equals(Aurora.Countries.Contracts.Documents.ElectronicAddress? other) -> bool
+Aurora.Countries.Contracts.Documents.ElectronicAddress.Scheme.get -> Aurora.Countries.Contracts.Documents.ElectronicAddressScheme
+Aurora.Countries.Contracts.Documents.ElectronicAddress.Scheme.init -> void
+Aurora.Countries.Contracts.Documents.ElectronicAddress.Value.get -> string!
+Aurora.Countries.Contracts.Documents.ElectronicAddress.Value.init -> void
+Aurora.Countries.Contracts.Documents.ElectronicAddressScheme
+Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.ElectronicAddressScheme() -> void
+Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.Equals(Aurora.Countries.Contracts.Documents.ElectronicAddressScheme other) -> bool
+Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.IsSpecified.get -> bool
+Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.Value.get -> string!
+Aurora.Countries.Contracts.Documents.IDocumentTransport
+Aurora.Countries.Contracts.Documents.IDocumentTransport.SendAsync(Aurora.Countries.Contracts.Documents.OutboundDocument! document, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Documents.TransportReceipt!>>!
+Aurora.Countries.Contracts.Documents.IDocumentTransport.TransportId.get -> string!
+Aurora.Countries.Contracts.Documents.IEInvoicingProfile<TDocument>
+Aurora.Countries.Contracts.Documents.IEInvoicingProfile<TDocument>.IdentifierScheme.get -> Aurora.Countries.Contracts.Documents.ElectronicAddressScheme
+Aurora.Countries.Contracts.Documents.IEInvoicingProfile<TDocument>.Map(TDocument! document) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Documents.EInvoiceDocument!>
+Aurora.Countries.Contracts.Documents.IEInvoicingProfile<TDocument>.ProfileId.get -> string!
+Aurora.Countries.Contracts.Documents.IEInvoicingProfile<TDocument>.Transport.get -> Aurora.Countries.Contracts.Documents.IDocumentTransport!
+Aurora.Countries.Contracts.Documents.IEInvoicingProfile<TDocument>.Validate(TDocument! document) -> Aurora.Countries.Contracts.Documents.ValidationReport!
+Aurora.Countries.Contracts.Documents.OutboundDocument
+Aurora.Countries.Contracts.Documents.OutboundDocument.<Clone>$() -> Aurora.Countries.Contracts.Documents.OutboundDocument!
+Aurora.Countries.Contracts.Documents.OutboundDocument.Content.get -> System.ReadOnlyMemory<byte>
+Aurora.Countries.Contracts.Documents.OutboundDocument.Content.init -> void
+Aurora.Countries.Contracts.Documents.OutboundDocument.Deconstruct(out Aurora.Countries.Contracts.Documents.ElectronicAddress! Recipient, out string! DocumentId, out string! MediaType, out System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Documents.OutboundDocument.DocumentId.get -> string!
+Aurora.Countries.Contracts.Documents.OutboundDocument.DocumentId.init -> void
+Aurora.Countries.Contracts.Documents.OutboundDocument.Equals(Aurora.Countries.Contracts.Documents.OutboundDocument? other) -> bool
+Aurora.Countries.Contracts.Documents.OutboundDocument.MediaType.get -> string!
+Aurora.Countries.Contracts.Documents.OutboundDocument.MediaType.init -> void
+Aurora.Countries.Contracts.Documents.OutboundDocument.OutboundDocument(Aurora.Countries.Contracts.Documents.ElectronicAddress! Recipient, string! DocumentId, string! MediaType, System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Documents.OutboundDocument.Recipient.get -> Aurora.Countries.Contracts.Documents.ElectronicAddress!
+Aurora.Countries.Contracts.Documents.OutboundDocument.Recipient.init -> void
+Aurora.Countries.Contracts.Documents.TransportReceipt
+Aurora.Countries.Contracts.Documents.TransportReceipt.<Clone>$() -> Aurora.Countries.Contracts.Documents.TransportReceipt!
+Aurora.Countries.Contracts.Documents.TransportReceipt.AcceptedAt.get -> System.DateTimeOffset
+Aurora.Countries.Contracts.Documents.TransportReceipt.AcceptedAt.init -> void
+Aurora.Countries.Contracts.Documents.TransportReceipt.Deconstruct(out string! TransportId, out string! ReferenceId, out System.DateTimeOffset AcceptedAt) -> void
+Aurora.Countries.Contracts.Documents.TransportReceipt.Equals(Aurora.Countries.Contracts.Documents.TransportReceipt? other) -> bool
+Aurora.Countries.Contracts.Documents.TransportReceipt.ReferenceId.get -> string!
+Aurora.Countries.Contracts.Documents.TransportReceipt.ReferenceId.init -> void
+Aurora.Countries.Contracts.Documents.TransportReceipt.TransportId.get -> string!
+Aurora.Countries.Contracts.Documents.TransportReceipt.TransportId.init -> void
+Aurora.Countries.Contracts.Documents.TransportReceipt.TransportReceipt(string! TransportId, string! ReferenceId, System.DateTimeOffset AcceptedAt) -> void
+Aurora.Countries.Contracts.Documents.ValidationFinding
+Aurora.Countries.Contracts.Documents.ValidationFinding.<Clone>$() -> Aurora.Countries.Contracts.Documents.ValidationFinding!
+Aurora.Countries.Contracts.Documents.ValidationFinding.Deconstruct(out string! RuleId, out Aurora.Countries.Contracts.Documents.ValidationSeverity Severity, out Aurora.Countries.Contracts.Localization.LocalizedText! Message, out string? Location) -> void
+Aurora.Countries.Contracts.Documents.ValidationFinding.Equals(Aurora.Countries.Contracts.Documents.ValidationFinding? other) -> bool
+Aurora.Countries.Contracts.Documents.ValidationFinding.Location.get -> string?
+Aurora.Countries.Contracts.Documents.ValidationFinding.Location.init -> void
+Aurora.Countries.Contracts.Documents.ValidationFinding.Message.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
+Aurora.Countries.Contracts.Documents.ValidationFinding.Message.init -> void
+Aurora.Countries.Contracts.Documents.ValidationFinding.RuleId.get -> string!
+Aurora.Countries.Contracts.Documents.ValidationFinding.RuleId.init -> void
+Aurora.Countries.Contracts.Documents.ValidationFinding.Severity.get -> Aurora.Countries.Contracts.Documents.ValidationSeverity
+Aurora.Countries.Contracts.Documents.ValidationFinding.Severity.init -> void
+Aurora.Countries.Contracts.Documents.ValidationFinding.ValidationFinding(string! RuleId, Aurora.Countries.Contracts.Documents.ValidationSeverity Severity, Aurora.Countries.Contracts.Localization.LocalizedText! Message, string? Location) -> void
+Aurora.Countries.Contracts.Documents.ValidationReport
+Aurora.Countries.Contracts.Documents.ValidationReport.FindingCount.get -> int
+Aurora.Countries.Contracts.Documents.ValidationReport.Findings.get -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Documents.ValidationFinding!>!
+Aurora.Countries.Contracts.Documents.ValidationReport.IsValid.get -> bool
+Aurora.Countries.Contracts.Documents.ValidationSeverity
+Aurora.Countries.Contracts.Documents.ValidationSeverity.Error = 2 -> Aurora.Countries.Contracts.Documents.ValidationSeverity
+Aurora.Countries.Contracts.Documents.ValidationSeverity.Warning = 1 -> Aurora.Countries.Contracts.Documents.ValidationSeverity
 Aurora.Countries.Contracts.EffectiveDatedAttribute
 Aurora.Countries.Contracts.EffectiveDatedAttribute.EffectiveDatedAttribute() -> void
 Aurora.Countries.Contracts.ExtensionPointAttribute
@@ -81,11 +240,97 @@ Aurora.Countries.Contracts.ExtensionPointAttribute.ExtensionPointAttribute(Auror
 Aurora.Countries.Contracts.ICountryPackage
 Aurora.Countries.Contracts.ICountryPackage.GetExtension(System.Type! contractType) -> object?
 Aurora.Countries.Contracts.ICountryPackage.Manifest.get -> Aurora.Countries.Contracts.CountryPackageManifest!
+Aurora.Countries.Contracts.Identifiers.IIdentifierValidator
+Aurora.Countries.Contracts.Identifiers.IIdentifierValidator.CountryCode.get -> string!
+Aurora.Countries.Contracts.Identifiers.IIdentifierValidator.Kind.get -> Aurora.Countries.Contracts.Identifiers.IdentifierKind
+Aurora.Countries.Contracts.Identifiers.IIdentifierValidator.Validate(string! candidate) -> Aurora.Countries.Contracts.Identifiers.IdentifierValidation!
+Aurora.Countries.Contracts.Identifiers.IdentifierKind
+Aurora.Countries.Contracts.Identifiers.IdentifierKind.BankAccount = 3 -> Aurora.Countries.Contracts.Identifiers.IdentifierKind
+Aurora.Countries.Contracts.Identifiers.IdentifierKind.CompanyRegistrationNumber = 1 -> Aurora.Countries.Contracts.Identifiers.IdentifierKind
+Aurora.Countries.Contracts.Identifiers.IdentifierKind.TaxId = 2 -> Aurora.Countries.Contracts.Identifiers.IdentifierKind
+Aurora.Countries.Contracts.Identifiers.IdentifierStatus
+Aurora.Countries.Contracts.Identifiers.IdentifierStatus.Rejected = 2 -> Aurora.Countries.Contracts.Identifiers.IdentifierStatus
+Aurora.Countries.Contracts.Identifiers.IdentifierStatus.Unverified = 0 -> Aurora.Countries.Contracts.Identifiers.IdentifierStatus
+Aurora.Countries.Contracts.Identifiers.IdentifierStatus.Verified = 1 -> Aurora.Countries.Contracts.Identifiers.IdentifierStatus
+Aurora.Countries.Contracts.Identifiers.IdentifierValidation
+Aurora.Countries.Contracts.Identifiers.IdentifierValidation.NormalizedValue.get -> string?
+Aurora.Countries.Contracts.Identifiers.IdentifierValidation.Reason.get -> Aurora.Countries.Contracts.Localization.LocalizedText?
+Aurora.Countries.Contracts.Identifiers.IdentifierValidation.Status.get -> Aurora.Countries.Contracts.Identifiers.IdentifierStatus
+Aurora.Countries.Contracts.Interchange.AccountRecord
+Aurora.Countries.Contracts.Interchange.AccountRecord.<Clone>$() -> Aurora.Countries.Contracts.Interchange.AccountRecord!
+Aurora.Countries.Contracts.Interchange.AccountRecord.AccountRecord(Aurora.Countries.Contracts.Accounting.AccountCode Code, Aurora.Countries.Contracts.Localization.LocalizedText! Name, Aurora.Countries.Contracts.Accounting.AccountKind Kind) -> void
+Aurora.Countries.Contracts.Interchange.AccountRecord.Code.get -> Aurora.Countries.Contracts.Accounting.AccountCode
+Aurora.Countries.Contracts.Interchange.AccountRecord.Code.init -> void
+Aurora.Countries.Contracts.Interchange.AccountRecord.Deconstruct(out Aurora.Countries.Contracts.Accounting.AccountCode Code, out Aurora.Countries.Contracts.Localization.LocalizedText! Name, out Aurora.Countries.Contracts.Accounting.AccountKind Kind) -> void
+Aurora.Countries.Contracts.Interchange.AccountRecord.Equals(Aurora.Countries.Contracts.Interchange.AccountRecord? other) -> bool
+Aurora.Countries.Contracts.Interchange.AccountRecord.Kind.get -> Aurora.Countries.Contracts.Accounting.AccountKind
+Aurora.Countries.Contracts.Interchange.AccountRecord.Kind.init -> void
+Aurora.Countries.Contracts.Interchange.AccountRecord.Name.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
+Aurora.Countries.Contracts.Interchange.AccountRecord.Name.init -> void
+Aurora.Countries.Contracts.Interchange.IInterchangeFormat
+Aurora.Countries.Contracts.Interchange.IInterchangeFormat.ExportAsync(Aurora.Countries.Contracts.Interchange.IInterchangeSource! source, System.IO.Stream! destination, Aurora.SharedKernel.DateRange period, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Interchange.InterchangeCounts>>!
+Aurora.Countries.Contracts.Interchange.IInterchangeFormat.FormatId.get -> string!
+Aurora.Countries.Contracts.Interchange.IInterchangeFormat.ImportAsync(System.IO.Stream! source, Aurora.Countries.Contracts.Interchange.IInterchangeSink! sink, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Interchange.InterchangeCounts>>!
+Aurora.Countries.Contracts.Interchange.IInterchangeFormat.Name.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
+Aurora.Countries.Contracts.Interchange.IInterchangeSink
+Aurora.Countries.Contracts.Interchange.IInterchangeSink.WriteAccountAsync(Aurora.Countries.Contracts.Interchange.AccountRecord! account, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Aurora.SharedKernel.Result>!
+Aurora.Countries.Contracts.Interchange.IInterchangeSink.WriteJournalEntryAsync(Aurora.Countries.Contracts.Interchange.JournalEntryRecord! entry, System.Threading.CancellationToken cancellationToken) -> System.Threading.Tasks.Task<Aurora.SharedKernel.Result>!
+Aurora.Countries.Contracts.Interchange.IInterchangeSource
+Aurora.Countries.Contracts.Interchange.IInterchangeSource.Company.get -> Aurora.SharedKernel.CompanyId
+Aurora.Countries.Contracts.Interchange.IInterchangeSource.LedgerCurrency.get -> Aurora.SharedKernel.Currency
+Aurora.Countries.Contracts.Interchange.IInterchangeSource.ReadAccountsAsync(System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<Aurora.Countries.Contracts.Interchange.AccountRecord!>!
+Aurora.Countries.Contracts.Interchange.IInterchangeSource.ReadJournalEntriesAsync(Aurora.SharedKernel.DateRange period, System.Threading.CancellationToken cancellationToken) -> System.Collections.Generic.IAsyncEnumerable<Aurora.Countries.Contracts.Interchange.JournalEntryRecord!>!
+Aurora.Countries.Contracts.Interchange.InterchangeCounts
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.Accounts.get -> int
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.Accounts.init -> void
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.Deconstruct(out int Accounts, out int JournalEntries, out int JournalLines) -> void
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.Equals(Aurora.Countries.Contracts.Interchange.InterchangeCounts other) -> bool
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.InterchangeCounts() -> void
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.InterchangeCounts(int Accounts, int JournalEntries, int JournalLines) -> void
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.IsEmpty.get -> bool
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.JournalEntries.get -> int
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.JournalEntries.init -> void
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.JournalLines.get -> int
+Aurora.Countries.Contracts.Interchange.InterchangeCounts.JournalLines.init -> void
+Aurora.Countries.Contracts.Interchange.InterchangeErrors
+Aurora.Countries.Contracts.Interchange.JournalEntryRecord
+Aurora.Countries.Contracts.Interchange.JournalEntryRecord.Description.get -> Aurora.Countries.Contracts.Localization.LocalizedText?
+Aurora.Countries.Contracts.Interchange.JournalEntryRecord.EntryDate.get -> System.DateOnly
+Aurora.Countries.Contracts.Interchange.JournalEntryRecord.EntryId.get -> string!
+Aurora.Countries.Contracts.Interchange.JournalEntryRecord.Lines.get -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Interchange.JournalLineRecord!>!
+Aurora.Countries.Contracts.Interchange.JournalEntryRecord.Total.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Interchange.JournalLineRecord
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.<Clone>$() -> Aurora.Countries.Contracts.Interchange.JournalLineRecord!
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Account.get -> Aurora.Countries.Contracts.Accounting.AccountCode
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Account.init -> void
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Credit.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Credit.init -> void
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Debit.get -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Debit.init -> void
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Deconstruct(out Aurora.Countries.Contracts.Accounting.AccountCode Account, out Aurora.SharedKernel.Money Debit, out Aurora.SharedKernel.Money Credit, out Aurora.Countries.Contracts.Taxation.TaxCode? TaxCode) -> void
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.Equals(Aurora.Countries.Contracts.Interchange.JournalLineRecord? other) -> bool
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.JournalLineRecord(Aurora.Countries.Contracts.Accounting.AccountCode Account, Aurora.SharedKernel.Money Debit, Aurora.SharedKernel.Money Credit, Aurora.Countries.Contracts.Taxation.TaxCode? TaxCode) -> void
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.TaxCode.get -> Aurora.Countries.Contracts.Taxation.TaxCode?
+Aurora.Countries.Contracts.Interchange.JournalLineRecord.TaxCode.init -> void
 Aurora.Countries.Contracts.Jurisdiction
 Aurora.Countries.Contracts.Jurisdiction.CountryCode.get -> string!
 Aurora.Countries.Contracts.Jurisdiction.DefaultCurrencyCode.get -> string!
 Aurora.Countries.Contracts.Jurisdiction.Equals(Aurora.Countries.Contracts.Jurisdiction? other) -> bool
 Aurora.Countries.Contracts.Jurisdiction.Locales.get -> System.Collections.Generic.IReadOnlyList<System.Globalization.CultureInfo!>!
+Aurora.Countries.Contracts.Localization.ILocalePack
+Aurora.Countries.Contracts.Localization.ILocalePack.FormatsFor(System.Globalization.CultureInfo! culture) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Localization.LocaleFormats!>
+Aurora.Countries.Contracts.Localization.ILocalePack.Locales.get -> System.Collections.Generic.IReadOnlyList<System.Globalization.CultureInfo!>!
+Aurora.Countries.Contracts.Localization.ILocalePack.TryGetString(System.Globalization.CultureInfo! culture, string! key, out string! value) -> bool
+Aurora.Countries.Contracts.Localization.LocaleFormats
+Aurora.Countries.Contracts.Localization.LocaleFormats.Apply() -> System.Globalization.CultureInfo!
+Aurora.Countries.Contracts.Localization.LocaleFormats.BaseCulture.get -> System.Globalization.CultureInfo!
+Aurora.Countries.Contracts.Localization.LocaleFormats.CurrencyDecimalDigits.get -> int?
+Aurora.Countries.Contracts.Localization.LocaleFormats.CurrencySymbol.get -> string?
+Aurora.Countries.Contracts.Localization.LocaleFormats.DecimalSeparator.get -> string?
+Aurora.Countries.Contracts.Localization.LocaleFormats.GroupSeparator.get -> string?
+Aurora.Countries.Contracts.Localization.LocaleFormats.HasOverrides.get -> bool
+Aurora.Countries.Contracts.Localization.LocaleFormats.LongDatePattern.get -> string?
+Aurora.Countries.Contracts.Localization.LocaleFormats.ShortDatePattern.get -> string?
 Aurora.Countries.Contracts.Localization.LocalizedText
 Aurora.Countries.Contracts.Localization.LocalizedText.BaseText.get -> string!
 Aurora.Countries.Contracts.Localization.LocalizedText.Equals(Aurora.Countries.Contracts.Localization.LocalizedText? other) -> bool
@@ -121,6 +366,102 @@ Aurora.Countries.Contracts.PackageVersion.Equals(Aurora.Countries.Contracts.Pack
 Aurora.Countries.Contracts.PackageVersion.IsSpecified.get -> bool
 Aurora.Countries.Contracts.PackageVersion.PackageVersion() -> void
 Aurora.Countries.Contracts.PackageVersion.Value.get -> string!
+Aurora.Countries.Contracts.Reporting.BalanceSide
+Aurora.Countries.Contracts.Reporting.BalanceSide.Credit = 2 -> Aurora.Countries.Contracts.Reporting.BalanceSide
+Aurora.Countries.Contracts.Reporting.BalanceSide.Debit = 1 -> Aurora.Countries.Contracts.Reporting.BalanceSide
+Aurora.Countries.Contracts.Reporting.BalanceSide.Net = 3 -> Aurora.Countries.Contracts.Reporting.BalanceSide
+Aurora.Countries.Contracts.Reporting.FilingDocument
+Aurora.Countries.Contracts.Reporting.FilingDocument.<Clone>$() -> Aurora.Countries.Contracts.Reporting.FilingDocument!
+Aurora.Countries.Contracts.Reporting.FilingDocument.Content.get -> System.ReadOnlyMemory<byte>
+Aurora.Countries.Contracts.Reporting.FilingDocument.Content.init -> void
+Aurora.Countries.Contracts.Reporting.FilingDocument.Deconstruct(out string! FormatId, out string! FileName, out string! MediaType, out System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Reporting.FilingDocument.Equals(Aurora.Countries.Contracts.Reporting.FilingDocument? other) -> bool
+Aurora.Countries.Contracts.Reporting.FilingDocument.FileName.get -> string!
+Aurora.Countries.Contracts.Reporting.FilingDocument.FileName.init -> void
+Aurora.Countries.Contracts.Reporting.FilingDocument.FilingDocument(string! FormatId, string! FileName, string! MediaType, System.ReadOnlyMemory<byte> Content) -> void
+Aurora.Countries.Contracts.Reporting.FilingDocument.FormatId.get -> string!
+Aurora.Countries.Contracts.Reporting.FilingDocument.FormatId.init -> void
+Aurora.Countries.Contracts.Reporting.FilingDocument.MediaType.get -> string!
+Aurora.Countries.Contracts.Reporting.FilingDocument.MediaType.init -> void
+Aurora.Countries.Contracts.Reporting.IFilingFormat
+Aurora.Countries.Contracts.Reporting.IFilingFormat.FormatId.get -> string!
+Aurora.Countries.Contracts.Reporting.IFilingFormat.Render(Aurora.Countries.Contracts.Reporting.StatutoryReportResult! result) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Reporting.FilingDocument!>
+Aurora.Countries.Contracts.Reporting.IFilingFormat.Slot.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+Aurora.Countries.Contracts.Reporting.IStatutoryReportDefinition
+Aurora.Countries.Contracts.Reporting.IStatutoryReportDefinition.CoveragePeriod.get -> Aurora.SharedKernel.DateRange
+Aurora.Countries.Contracts.Reporting.IStatutoryReportDefinition.History() -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Reporting.StatutoryReportVersion!>!
+Aurora.Countries.Contracts.Reporting.IStatutoryReportDefinition.Name.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
+Aurora.Countries.Contracts.Reporting.IStatutoryReportDefinition.Slot.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+Aurora.Countries.Contracts.Reporting.IStatutoryReportDefinition.VersionAsOf(System.DateOnly asOf) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Reporting.StatutoryReportVersion!>
+Aurora.Countries.Contracts.Reporting.ReportBox
+Aurora.Countries.Contracts.Reporting.ReportBox.<Clone>$() -> Aurora.Countries.Contracts.Reporting.ReportBox!
+Aurora.Countries.Contracts.Reporting.ReportBox.Code.get -> string!
+Aurora.Countries.Contracts.Reporting.ReportBox.Code.init -> void
+Aurora.Countries.Contracts.Reporting.ReportBox.Deconstruct(out string! Code, out Aurora.Countries.Contracts.Localization.LocalizedText! Label, out Aurora.Countries.Contracts.Reporting.ReportBoxSource! Source) -> void
+Aurora.Countries.Contracts.Reporting.ReportBox.Equals(Aurora.Countries.Contracts.Reporting.ReportBox? other) -> bool
+Aurora.Countries.Contracts.Reporting.ReportBox.Label.get -> Aurora.Countries.Contracts.Localization.LocalizedText!
+Aurora.Countries.Contracts.Reporting.ReportBox.Label.init -> void
+Aurora.Countries.Contracts.Reporting.ReportBox.ReportBox(string! Code, Aurora.Countries.Contracts.Localization.LocalizedText! Label, Aurora.Countries.Contracts.Reporting.ReportBoxSource! Source) -> void
+Aurora.Countries.Contracts.Reporting.ReportBox.Source.get -> Aurora.Countries.Contracts.Reporting.ReportBoxSource!
+Aurora.Countries.Contracts.Reporting.ReportBox.Source.init -> void
+Aurora.Countries.Contracts.Reporting.ReportBoxSource
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.AccountRoleBalances
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.AccountRoleBalances.AccountRoleBalances(System.Collections.Generic.IReadOnlySet<Aurora.Countries.Contracts.Accounting.AccountRole>! roles, Aurora.Countries.Contracts.Reporting.BalanceSide side) -> void
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.AccountRoleBalances.Roles.get -> System.Collections.Generic.IReadOnlySet<Aurora.Countries.Contracts.Accounting.AccountRole>!
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.AccountRoleBalances.Side.get -> Aurora.Countries.Contracts.Reporting.BalanceSide
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.SumOfBoxes
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.SumOfBoxes.BoxCodes.get -> System.Collections.Generic.IReadOnlyList<string!>!
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.SumOfBoxes.SumOfBoxes(System.Collections.Generic.IReadOnlyList<string!>! boxCodes) -> void
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.TaxCategoryTotals
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.TaxCategoryTotals.Categories.get -> System.Collections.Generic.IReadOnlySet<Aurora.Countries.Contracts.Taxation.TaxCategory>!
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.TaxCategoryTotals.Component.get -> Aurora.Countries.Contracts.Reporting.TaxAmountComponent
+Aurora.Countries.Contracts.Reporting.ReportBoxSource.TaxCategoryTotals.TaxCategoryTotals(System.Collections.Generic.IReadOnlySet<Aurora.Countries.Contracts.Taxation.TaxCategory>! categories, Aurora.Countries.Contracts.Reporting.TaxAmountComponent component) -> void
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult.BoxCodes.get -> System.Collections.Generic.IReadOnlyCollection<string!>!
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult.Company.get -> Aurora.SharedKernel.CompanyId
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult.Period.get -> Aurora.SharedKernel.DateRange
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult.Registration.get -> Aurora.Countries.Contracts.Taxation.TaxRegistrationId
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult.Slot.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+Aurora.Countries.Contracts.Reporting.StatutoryReportResult.ValueOf(string! boxCode) -> Aurora.SharedKernel.Result<Aurora.SharedKernel.Money>
+Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.Equals(Aurora.Countries.Contracts.Reporting.StatutoryReportSlot other) -> bool
+Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.IsSpecified.get -> bool
+Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.StatutoryReportSlot() -> void
+Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.Value.get -> string!
+Aurora.Countries.Contracts.Reporting.StatutoryReportVersion
+Aurora.Countries.Contracts.Reporting.StatutoryReportVersion.Boxes.get -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Reporting.ReportBox!>!
+Aurora.Countries.Contracts.Reporting.StatutoryReportVersion.Slot.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+Aurora.Countries.Contracts.Reporting.StatutoryReportVersion.SourceVersion.get -> Aurora.Countries.Contracts.PackageVersion
+Aurora.Countries.Contracts.Reporting.StatutoryReportVersion.Validity.get -> Aurora.SharedKernel.DateRange
+Aurora.Countries.Contracts.Reporting.TaxAmountComponent
+Aurora.Countries.Contracts.Reporting.TaxAmountComponent.TaxAmount = 2 -> Aurora.Countries.Contracts.Reporting.TaxAmountComponent
+Aurora.Countries.Contracts.Reporting.TaxAmountComponent.TaxableAmount = 1 -> Aurora.Countries.Contracts.Reporting.TaxAmountComponent
+Aurora.Countries.Contracts.Retention.ErasureHandling
+Aurora.Countries.Contracts.Retention.ErasureHandling.DeferUntilRetentionLapses = 2 -> Aurora.Countries.Contracts.Retention.ErasureHandling
+Aurora.Countries.Contracts.Retention.ErasureHandling.EraseOnRequest = 1 -> Aurora.Countries.Contracts.Retention.ErasureHandling
+Aurora.Countries.Contracts.Retention.IRetentionPolicy
+Aurora.Countries.Contracts.Retention.IRetentionPolicy.Categories.get -> System.Collections.Generic.IReadOnlySet<Aurora.Countries.Contracts.Retention.RecordCategory>!
+Aurora.Countries.Contracts.Retention.IRetentionPolicy.History(Aurora.Countries.Contracts.Retention.RecordCategory category) -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Retention.RetentionRule!>!
+Aurora.Countries.Contracts.Retention.IRetentionPolicy.RuleFor(Aurora.Countries.Contracts.Retention.RecordCategory category, System.DateOnly asOf) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Retention.RetentionRule!>
+Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RecordCategory.AccountingRecord = 1 -> Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RecordCategory.CommercialDocument = 3 -> Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RecordCategory.PartyMasterData = 5 -> Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RecordCategory.PayrollRecord = 4 -> Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RecordCategory.TaxRecord = 2 -> Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RetentionRule
+Aurora.Countries.Contracts.Retention.RetentionRule.<Clone>$() -> Aurora.Countries.Contracts.Retention.RetentionRule!
+Aurora.Countries.Contracts.Retention.RetentionRule.Category.get -> Aurora.Countries.Contracts.Retention.RecordCategory
+Aurora.Countries.Contracts.Retention.RetentionRule.Deconstruct(out Aurora.Countries.Contracts.Retention.RecordCategory Category, out int MinimumYears, out bool Immutable, out Aurora.Countries.Contracts.Retention.ErasureHandling Erasure, out Aurora.SharedKernel.DateRange Validity, out Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
+Aurora.Countries.Contracts.Retention.RetentionRule.Equals(Aurora.Countries.Contracts.Retention.RetentionRule? other) -> bool
+Aurora.Countries.Contracts.Retention.RetentionRule.Erasure.get -> Aurora.Countries.Contracts.Retention.ErasureHandling
+Aurora.Countries.Contracts.Retention.RetentionRule.Immutable.get -> bool
+Aurora.Countries.Contracts.Retention.RetentionRule.Immutable.init -> void
+Aurora.Countries.Contracts.Retention.RetentionRule.MinimumYears.get -> int
+Aurora.Countries.Contracts.Retention.RetentionRule.RetainUntil(System.DateOnly recordDate) -> System.DateOnly
+Aurora.Countries.Contracts.Retention.RetentionRule.RetentionRule(Aurora.Countries.Contracts.Retention.RecordCategory Category, int MinimumYears, bool Immutable, Aurora.Countries.Contracts.Retention.ErasureHandling Erasure, Aurora.SharedKernel.DateRange Validity, Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
+Aurora.Countries.Contracts.Retention.RetentionRule.SourceVersion.get -> Aurora.Countries.Contracts.PackageVersion
+Aurora.Countries.Contracts.Retention.RetentionRule.Validity.get -> Aurora.SharedKernel.DateRange
 Aurora.Countries.Contracts.Taxation.ITaxCategoryMapping
 Aurora.Countries.Contracts.Taxation.ITaxCategoryMapping.DefaultCodeFor(Aurora.Countries.Contracts.Taxation.TaxCategory category, System.DateOnly asOf) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Taxation.TaxCode>
 Aurora.Countries.Contracts.Taxation.ITaxCategoryMapping.MappedCategories.get -> System.Collections.Generic.IReadOnlySet<Aurora.Countries.Contracts.Taxation.TaxCategory>!
@@ -173,7 +514,9 @@ Aurora.Countries.Contracts.Taxation.TaxRuleVersion.SourceVersion.get -> Aurora.C
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.TaxOn(Aurora.SharedKernel.Money taxableAmount) -> Aurora.SharedKernel.Money
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.TaxRuleVersion(Aurora.Countries.Contracts.Taxation.TaxCode Code, Aurora.Countries.Contracts.Taxation.TaxCategory Category, Aurora.Countries.Contracts.Taxation.TaxRate Rate, Aurora.Countries.Contracts.Taxation.TaxBasis Basis, Aurora.SharedKernel.RoundingPolicy Rounding, Aurora.SharedKernel.DateRange Validity, Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Validity.get -> Aurora.SharedKernel.DateRange
+const Aurora.Countries.Contracts.Banking.BankingErrors.InvalidCode = "country_package.banking.invalid" -> string!
 const Aurora.Countries.Contracts.CountryPackageManifestJson.ResourceName = "package.manifest.json" -> string!
+const Aurora.Countries.Contracts.Interchange.InterchangeErrors.InvalidCode = "country_package.interchange.invalid" -> string!
 const Aurora.Countries.Contracts.PackageKey.SchemaPrefix = "pkg_" -> string!
 const Aurora.Countries.Contracts.PackageManifestErrors.InvalidCode = "country_package.manifest.invalid" -> string!
 const Aurora.Countries.Contracts.Taxation.TaxErrors.InvalidCode = "country_package.tax.invalid" -> string!
@@ -183,9 +526,46 @@ const Aurora.Countries.Contracts.Taxation.TaxRate.MaxDecimalPlaces = 6 -> int
 override Aurora.Countries.Contracts.Accounting.AccountCode.GetHashCode() -> int
 override Aurora.Countries.Contracts.Accounting.AccountCode.ToString() -> string!
 override Aurora.Countries.Contracts.Accounting.AccountTemplateEntry.GetHashCode() -> int
+override Aurora.Countries.Contracts.Banking.BankAccountReference.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Banking.BankAccountReference.GetHashCode() -> int
+override Aurora.Countries.Contracts.Banking.BankAccountReference.ToString() -> string!
+override Aurora.Countries.Contracts.Banking.BankStatementLine.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Banking.BankStatementLine.GetHashCode() -> int
+override Aurora.Countries.Contracts.Banking.BankStatementLine.ToString() -> string!
+override Aurora.Countries.Contracts.Banking.PaymentFile.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Banking.PaymentFile.GetHashCode() -> int
+override Aurora.Countries.Contracts.Banking.PaymentFile.ToString() -> string!
+override Aurora.Countries.Contracts.Banking.PaymentInstruction.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Banking.PaymentInstruction.GetHashCode() -> int
+override Aurora.Countries.Contracts.Banking.PaymentInstruction.ToString() -> string!
 override Aurora.Countries.Contracts.CountryPackageManifest.Equals(object? obj) -> bool
 override Aurora.Countries.Contracts.CountryPackageManifest.GetHashCode() -> int
 override Aurora.Countries.Contracts.CountryPackageManifest.ToString() -> string!
+override Aurora.Countries.Contracts.Documents.EInvoiceDocument.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Documents.EInvoiceDocument.GetHashCode() -> int
+override Aurora.Countries.Contracts.Documents.EInvoiceDocument.ToString() -> string!
+override Aurora.Countries.Contracts.Documents.ElectronicAddress.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Documents.ElectronicAddress.GetHashCode() -> int
+override Aurora.Countries.Contracts.Documents.ElectronicAddress.ToString() -> string!
+override Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.GetHashCode() -> int
+override Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.ToString() -> string!
+override Aurora.Countries.Contracts.Documents.OutboundDocument.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Documents.OutboundDocument.GetHashCode() -> int
+override Aurora.Countries.Contracts.Documents.OutboundDocument.ToString() -> string!
+override Aurora.Countries.Contracts.Documents.TransportReceipt.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Documents.TransportReceipt.GetHashCode() -> int
+override Aurora.Countries.Contracts.Documents.TransportReceipt.ToString() -> string!
+override Aurora.Countries.Contracts.Documents.ValidationFinding.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Documents.ValidationFinding.GetHashCode() -> int
+override Aurora.Countries.Contracts.Documents.ValidationFinding.ToString() -> string!
+override Aurora.Countries.Contracts.Interchange.AccountRecord.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Interchange.AccountRecord.GetHashCode() -> int
+override Aurora.Countries.Contracts.Interchange.AccountRecord.ToString() -> string!
+override Aurora.Countries.Contracts.Interchange.InterchangeCounts.GetHashCode() -> int
+override Aurora.Countries.Contracts.Interchange.InterchangeCounts.ToString() -> string!
+override Aurora.Countries.Contracts.Interchange.JournalLineRecord.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Interchange.JournalLineRecord.GetHashCode() -> int
+override Aurora.Countries.Contracts.Interchange.JournalLineRecord.ToString() -> string!
 override Aurora.Countries.Contracts.Jurisdiction.Equals(object? obj) -> bool
 override Aurora.Countries.Contracts.Jurisdiction.GetHashCode() -> int
 override Aurora.Countries.Contracts.Jurisdiction.ToString() -> string!
@@ -200,6 +580,17 @@ override Aurora.Countries.Contracts.PackageKey.GetHashCode() -> int
 override Aurora.Countries.Contracts.PackageKey.ToString() -> string!
 override Aurora.Countries.Contracts.PackageVersion.GetHashCode() -> int
 override Aurora.Countries.Contracts.PackageVersion.ToString() -> string!
+override Aurora.Countries.Contracts.Reporting.FilingDocument.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Reporting.FilingDocument.GetHashCode() -> int
+override Aurora.Countries.Contracts.Reporting.FilingDocument.ToString() -> string!
+override Aurora.Countries.Contracts.Reporting.ReportBox.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Reporting.ReportBox.GetHashCode() -> int
+override Aurora.Countries.Contracts.Reporting.ReportBox.ToString() -> string!
+override Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.GetHashCode() -> int
+override Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.ToString() -> string!
+override Aurora.Countries.Contracts.Retention.RetentionRule.Equals(object? obj) -> bool
+override Aurora.Countries.Contracts.Retention.RetentionRule.GetHashCode() -> int
+override Aurora.Countries.Contracts.Retention.RetentionRule.ToString() -> string!
 override Aurora.Countries.Contracts.Taxation.TaxCode.GetHashCode() -> int
 override Aurora.Countries.Contracts.Taxation.TaxCode.ToString() -> string!
 override Aurora.Countries.Contracts.Taxation.TaxRate.GetHashCode() -> int
@@ -216,6 +607,17 @@ static Aurora.Countries.Contracts.Accounting.AccountRoles.RequiredForPosting.get
 static Aurora.Countries.Contracts.Accounting.AccountRoles.Validate(Aurora.Countries.Contracts.Accounting.IChartOfAccountsTemplate! template) -> Aurora.SharedKernel.Result
 static Aurora.Countries.Contracts.Accounting.AccountTemplateEntry.operator !=(Aurora.Countries.Contracts.Accounting.AccountTemplateEntry left, Aurora.Countries.Contracts.Accounting.AccountTemplateEntry right) -> bool
 static Aurora.Countries.Contracts.Accounting.AccountTemplateEntry.operator ==(Aurora.Countries.Contracts.Accounting.AccountTemplateEntry left, Aurora.Countries.Contracts.Accounting.AccountTemplateEntry right) -> bool
+static Aurora.Countries.Contracts.Banking.BankAccountReference.operator !=(Aurora.Countries.Contracts.Banking.BankAccountReference? left, Aurora.Countries.Contracts.Banking.BankAccountReference? right) -> bool
+static Aurora.Countries.Contracts.Banking.BankAccountReference.operator ==(Aurora.Countries.Contracts.Banking.BankAccountReference? left, Aurora.Countries.Contracts.Banking.BankAccountReference? right) -> bool
+static Aurora.Countries.Contracts.Banking.BankStatement.Create(Aurora.Countries.Contracts.Banking.BankAccountReference! account, Aurora.SharedKernel.DateRange period, Aurora.SharedKernel.Money openingBalance, Aurora.SharedKernel.Money closingBalance, System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Banking.BankStatementLine!>! lines) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Banking.BankStatement!>
+static Aurora.Countries.Contracts.Banking.BankStatementLine.operator !=(Aurora.Countries.Contracts.Banking.BankStatementLine? left, Aurora.Countries.Contracts.Banking.BankStatementLine? right) -> bool
+static Aurora.Countries.Contracts.Banking.BankStatementLine.operator ==(Aurora.Countries.Contracts.Banking.BankStatementLine? left, Aurora.Countries.Contracts.Banking.BankStatementLine? right) -> bool
+static Aurora.Countries.Contracts.Banking.BankingErrors.Invalid(string! field, string! description) -> Aurora.SharedKernel.Error!
+static Aurora.Countries.Contracts.Banking.PaymentFile.operator !=(Aurora.Countries.Contracts.Banking.PaymentFile? left, Aurora.Countries.Contracts.Banking.PaymentFile? right) -> bool
+static Aurora.Countries.Contracts.Banking.PaymentFile.operator ==(Aurora.Countries.Contracts.Banking.PaymentFile? left, Aurora.Countries.Contracts.Banking.PaymentFile? right) -> bool
+static Aurora.Countries.Contracts.Banking.PaymentInstruction.operator !=(Aurora.Countries.Contracts.Banking.PaymentInstruction? left, Aurora.Countries.Contracts.Banking.PaymentInstruction? right) -> bool
+static Aurora.Countries.Contracts.Banking.PaymentInstruction.operator ==(Aurora.Countries.Contracts.Banking.PaymentInstruction? left, Aurora.Countries.Contracts.Banking.PaymentInstruction? right) -> bool
+static Aurora.Countries.Contracts.Banking.PaymentInstructionBatch.Create(Aurora.SharedKernel.CompanyId company, Aurora.Countries.Contracts.Banking.BankAccountReference! debtor, System.DateOnly requestedExecutionDate, System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Banking.PaymentInstruction!>! instructions) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Banking.PaymentInstructionBatch!>
 static Aurora.Countries.Contracts.CoreContract.AssemblyName.get -> string!
 static Aurora.Countries.Contracts.CoreContract.Version.get -> string!
 static Aurora.Countries.Contracts.CountryPackageCapabilities.All.get -> System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.CountryPackageCapability>!
@@ -225,7 +627,35 @@ static Aurora.Countries.Contracts.CountryPackageExtensions.Declares(this Aurora.
 static Aurora.Countries.Contracts.CountryPackageExtensions.GetExtension<TContract>(this Aurora.Countries.Contracts.ICountryPackage! package) -> TContract?
 static Aurora.Countries.Contracts.CountryPackageManifest.Create(Aurora.Countries.Contracts.PackageId id, Aurora.Countries.Contracts.PackageKey key, string? displayName, Aurora.Countries.Contracts.PackageVersion version, string? coreContractRange, string? declaredSchema, Aurora.Countries.Contracts.Jurisdiction! jurisdiction, System.Collections.Generic.IReadOnlyCollection<Aurora.Countries.Contracts.CountryPackageCapability>! capabilities, System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.PackageDependency>! dependsOn, System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.PackageId>! conflictsWith, bool localeOnly, string? publisher, Aurora.Countries.Contracts.PackageTrustLevel declaredTrust) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.CountryPackageManifest!>
 static Aurora.Countries.Contracts.CountryPackageManifestJson.Read(System.ReadOnlySpan<byte> utf8Json) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.CountryPackageManifest!>
+static Aurora.Countries.Contracts.Documents.EInvoiceDocument.operator !=(Aurora.Countries.Contracts.Documents.EInvoiceDocument? left, Aurora.Countries.Contracts.Documents.EInvoiceDocument? right) -> bool
+static Aurora.Countries.Contracts.Documents.EInvoiceDocument.operator ==(Aurora.Countries.Contracts.Documents.EInvoiceDocument? left, Aurora.Countries.Contracts.Documents.EInvoiceDocument? right) -> bool
+static Aurora.Countries.Contracts.Documents.ElectronicAddress.operator !=(Aurora.Countries.Contracts.Documents.ElectronicAddress? left, Aurora.Countries.Contracts.Documents.ElectronicAddress? right) -> bool
+static Aurora.Countries.Contracts.Documents.ElectronicAddress.operator ==(Aurora.Countries.Contracts.Documents.ElectronicAddress? left, Aurora.Countries.Contracts.Documents.ElectronicAddress? right) -> bool
+static Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.Create(string? value) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Documents.ElectronicAddressScheme>
+static Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.operator !=(Aurora.Countries.Contracts.Documents.ElectronicAddressScheme left, Aurora.Countries.Contracts.Documents.ElectronicAddressScheme right) -> bool
+static Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.operator ==(Aurora.Countries.Contracts.Documents.ElectronicAddressScheme left, Aurora.Countries.Contracts.Documents.ElectronicAddressScheme right) -> bool
+static Aurora.Countries.Contracts.Documents.OutboundDocument.operator !=(Aurora.Countries.Contracts.Documents.OutboundDocument? left, Aurora.Countries.Contracts.Documents.OutboundDocument? right) -> bool
+static Aurora.Countries.Contracts.Documents.OutboundDocument.operator ==(Aurora.Countries.Contracts.Documents.OutboundDocument? left, Aurora.Countries.Contracts.Documents.OutboundDocument? right) -> bool
+static Aurora.Countries.Contracts.Documents.TransportReceipt.operator !=(Aurora.Countries.Contracts.Documents.TransportReceipt? left, Aurora.Countries.Contracts.Documents.TransportReceipt? right) -> bool
+static Aurora.Countries.Contracts.Documents.TransportReceipt.operator ==(Aurora.Countries.Contracts.Documents.TransportReceipt? left, Aurora.Countries.Contracts.Documents.TransportReceipt? right) -> bool
+static Aurora.Countries.Contracts.Documents.ValidationFinding.operator !=(Aurora.Countries.Contracts.Documents.ValidationFinding? left, Aurora.Countries.Contracts.Documents.ValidationFinding? right) -> bool
+static Aurora.Countries.Contracts.Documents.ValidationFinding.operator ==(Aurora.Countries.Contracts.Documents.ValidationFinding? left, Aurora.Countries.Contracts.Documents.ValidationFinding? right) -> bool
+static Aurora.Countries.Contracts.Documents.ValidationReport.Of(System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Documents.ValidationFinding!>! findings) -> Aurora.Countries.Contracts.Documents.ValidationReport!
+static Aurora.Countries.Contracts.Documents.ValidationReport.Valid.get -> Aurora.Countries.Contracts.Documents.ValidationReport!
+static Aurora.Countries.Contracts.Identifiers.IdentifierValidation.NoValidatorInstalled(Aurora.Countries.Contracts.Identifiers.IdentifierKind kind, string! countryCode) -> Aurora.Countries.Contracts.Identifiers.IdentifierValidation!
+static Aurora.Countries.Contracts.Identifiers.IdentifierValidation.Rejected(Aurora.Countries.Contracts.Localization.LocalizedText! reason) -> Aurora.Countries.Contracts.Identifiers.IdentifierValidation!
+static Aurora.Countries.Contracts.Identifiers.IdentifierValidation.Unverified(Aurora.Countries.Contracts.Localization.LocalizedText! reason) -> Aurora.Countries.Contracts.Identifiers.IdentifierValidation!
+static Aurora.Countries.Contracts.Identifiers.IdentifierValidation.Verified(string! normalizedValue) -> Aurora.Countries.Contracts.Identifiers.IdentifierValidation!
+static Aurora.Countries.Contracts.Interchange.AccountRecord.operator !=(Aurora.Countries.Contracts.Interchange.AccountRecord? left, Aurora.Countries.Contracts.Interchange.AccountRecord? right) -> bool
+static Aurora.Countries.Contracts.Interchange.AccountRecord.operator ==(Aurora.Countries.Contracts.Interchange.AccountRecord? left, Aurora.Countries.Contracts.Interchange.AccountRecord? right) -> bool
+static Aurora.Countries.Contracts.Interchange.InterchangeCounts.operator !=(Aurora.Countries.Contracts.Interchange.InterchangeCounts left, Aurora.Countries.Contracts.Interchange.InterchangeCounts right) -> bool
+static Aurora.Countries.Contracts.Interchange.InterchangeCounts.operator ==(Aurora.Countries.Contracts.Interchange.InterchangeCounts left, Aurora.Countries.Contracts.Interchange.InterchangeCounts right) -> bool
+static Aurora.Countries.Contracts.Interchange.InterchangeErrors.Invalid(string! field, string! description) -> Aurora.SharedKernel.Error!
+static Aurora.Countries.Contracts.Interchange.JournalEntryRecord.Create(string! entryId, System.DateOnly entryDate, Aurora.Countries.Contracts.Localization.LocalizedText? description, System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Interchange.JournalLineRecord!>! lines) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Interchange.JournalEntryRecord!>
+static Aurora.Countries.Contracts.Interchange.JournalLineRecord.operator !=(Aurora.Countries.Contracts.Interchange.JournalLineRecord? left, Aurora.Countries.Contracts.Interchange.JournalLineRecord? right) -> bool
+static Aurora.Countries.Contracts.Interchange.JournalLineRecord.operator ==(Aurora.Countries.Contracts.Interchange.JournalLineRecord? left, Aurora.Countries.Contracts.Interchange.JournalLineRecord? right) -> bool
 static Aurora.Countries.Contracts.Jurisdiction.Create(string? countryCode, string? defaultCurrencyCode, System.Collections.Generic.IReadOnlyList<string!>? locales) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Jurisdiction!>
+static Aurora.Countries.Contracts.Localization.LocaleFormats.Create(System.Globalization.CultureInfo! baseCulture, string? shortDatePattern = null, string? longDatePattern = null, string? decimalSeparator = null, string? groupSeparator = null, string? currencySymbol = null, int? currencyDecimalDigits = null) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Localization.LocaleFormats!>
 static Aurora.Countries.Contracts.Localization.LocalizedText.Create(string? baseText, System.Collections.Generic.IReadOnlyDictionary<string!, string!>? byLocale) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Localization.LocalizedText!>
 static Aurora.Countries.Contracts.Localization.LocalizedText.Invariant(string? text) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Localization.LocalizedText!>
 static Aurora.Countries.Contracts.PackageDependency.Create(string? id, string? versionRange) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.PackageDependency>
@@ -241,6 +671,20 @@ static Aurora.Countries.Contracts.PackageManifestErrors.Invalid(string! field, s
 static Aurora.Countries.Contracts.PackageVersion.Create(string? value) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.PackageVersion>
 static Aurora.Countries.Contracts.PackageVersion.operator !=(Aurora.Countries.Contracts.PackageVersion left, Aurora.Countries.Contracts.PackageVersion right) -> bool
 static Aurora.Countries.Contracts.PackageVersion.operator ==(Aurora.Countries.Contracts.PackageVersion left, Aurora.Countries.Contracts.PackageVersion right) -> bool
+static Aurora.Countries.Contracts.Reporting.FilingDocument.operator !=(Aurora.Countries.Contracts.Reporting.FilingDocument? left, Aurora.Countries.Contracts.Reporting.FilingDocument? right) -> bool
+static Aurora.Countries.Contracts.Reporting.FilingDocument.operator ==(Aurora.Countries.Contracts.Reporting.FilingDocument? left, Aurora.Countries.Contracts.Reporting.FilingDocument? right) -> bool
+static Aurora.Countries.Contracts.Reporting.ReportBox.operator !=(Aurora.Countries.Contracts.Reporting.ReportBox? left, Aurora.Countries.Contracts.Reporting.ReportBox? right) -> bool
+static Aurora.Countries.Contracts.Reporting.ReportBox.operator ==(Aurora.Countries.Contracts.Reporting.ReportBox? left, Aurora.Countries.Contracts.Reporting.ReportBox? right) -> bool
+static Aurora.Countries.Contracts.Reporting.StatutoryReportResult.Create(Aurora.Countries.Contracts.Reporting.StatutoryReportSlot slot, Aurora.SharedKernel.CompanyId company, Aurora.Countries.Contracts.Taxation.TaxRegistrationId registration, Aurora.SharedKernel.DateRange period, System.Collections.Generic.IReadOnlyDictionary<string!, Aurora.SharedKernel.Money>! boxValues) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Reporting.StatutoryReportResult!>
+static Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.AnnualAccounts.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+static Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.Create(string? value) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Reporting.StatutoryReportSlot>
+static Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.CrossBorderSalesListing.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+static Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.PeriodicTaxReturn.get -> Aurora.Countries.Contracts.Reporting.StatutoryReportSlot
+static Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.operator !=(Aurora.Countries.Contracts.Reporting.StatutoryReportSlot left, Aurora.Countries.Contracts.Reporting.StatutoryReportSlot right) -> bool
+static Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.operator ==(Aurora.Countries.Contracts.Reporting.StatutoryReportSlot left, Aurora.Countries.Contracts.Reporting.StatutoryReportSlot right) -> bool
+static Aurora.Countries.Contracts.Reporting.StatutoryReportVersion.Create(Aurora.Countries.Contracts.Reporting.StatutoryReportSlot slot, System.Collections.Generic.IReadOnlyList<Aurora.Countries.Contracts.Reporting.ReportBox!>! boxes, Aurora.SharedKernel.DateRange validity, Aurora.Countries.Contracts.PackageVersion sourceVersion) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Reporting.StatutoryReportVersion!>
+static Aurora.Countries.Contracts.Retention.RetentionRule.operator !=(Aurora.Countries.Contracts.Retention.RetentionRule? left, Aurora.Countries.Contracts.Retention.RetentionRule? right) -> bool
+static Aurora.Countries.Contracts.Retention.RetentionRule.operator ==(Aurora.Countries.Contracts.Retention.RetentionRule? left, Aurora.Countries.Contracts.Retention.RetentionRule? right) -> bool
 static Aurora.Countries.Contracts.Taxation.TaxCode.Create(string? value) -> Aurora.SharedKernel.Result<Aurora.Countries.Contracts.Taxation.TaxCode>
 static Aurora.Countries.Contracts.Taxation.TaxCode.operator !=(Aurora.Countries.Contracts.Taxation.TaxCode left, Aurora.Countries.Contracts.Taxation.TaxCode right) -> bool
 static Aurora.Countries.Contracts.Taxation.TaxCode.operator ==(Aurora.Countries.Contracts.Taxation.TaxCode left, Aurora.Countries.Contracts.Taxation.TaxCode right) -> bool
@@ -265,10 +709,13 @@ static Aurora.Countries.Contracts.Taxation.TaxRuleVersion.operator ==(Aurora.Cou
 ~override Aurora.Countries.Contracts.Accounting.AccountCode.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.Accounting.AccountTemplateEntry.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.Accounting.AccountTemplateEntry.ToString() -> string
+~override Aurora.Countries.Contracts.Documents.ElectronicAddressScheme.Equals(object obj) -> bool
+~override Aurora.Countries.Contracts.Interchange.InterchangeCounts.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.PackageDependency.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.PackageId.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.PackageKey.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.PackageVersion.Equals(object obj) -> bool
+~override Aurora.Countries.Contracts.Reporting.StatutoryReportSlot.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.Taxation.TaxCode.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.Taxation.TaxRate.Equals(object obj) -> bool
 ~override Aurora.Countries.Contracts.Taxation.TaxRegistrationId.Equals(object obj) -> bool

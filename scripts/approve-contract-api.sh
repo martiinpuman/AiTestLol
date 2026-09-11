@@ -1,18 +1,22 @@
 #!/usr/bin/env bash
 #
-# Move every line the PublicApiAnalyzers code fix put in PublicAPI.Unshipped.txt into
-# PublicAPI.Shipped.txt, sorted, and empty the unshipped file.
+# Rewrite the approved public API surface of Aurora.Countries.Contracts.
 #
-# This is the deliberate human step of ADR-0008 3.1: the build refuses any public member of
-# Aurora.Countries.Contracts that is not in the shipped file, and running this script is the moment
-# somebody decides the change is intended and what SemVer bump it costs. It is never run by
-# verify.sh - a gate must not fix what it is measuring - and the diff it produces is the thing a
-# reviewer reads to see the contract surface change.
+# The build refuses (RS0016) any public member of that assembly that is not listed in
+# PublicAPI.Shipped.txt, which is the gate ADR-0008 3.1 asks for: the contract surface cannot change
+# without somebody running this script and reading the diff it produces. That diff is where the
+# SemVer decision is made - a removed or changed line is MAJOR, an added one is MINOR.
+#
+# It is never run by verify.sh. A gate must not fix what it is measuring (solution-layout.md 5.1).
+#
+# How it works: PublicApiAnalyzers ships the "add to public API" code fix, and `dotnet format
+# analyzers` applies it, writing into PublicAPI.Unshipped.txt. The fixer only emits the members it
+# sees as missing, so the shipped file is emptied first and rebuilt whole - which also means a
+# member that no longer exists disappears from the file instead of lingering as a stale line.
 #
 # Usage, from anywhere in the repository:
 #
-#   scripts/approve-contract-api.sh            # merge whatever the code fix has staged
-#   scripts/approve-contract-api.sh --generate # run the code fix first, then merge
+#   scripts/approve-contract-api.sh
 #
 set -Eeuo pipefail
 
@@ -20,26 +24,36 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=dev-env.sh
 AURORA_SKIP_DOCKER=1 source "${REPO_ROOT}/scripts/dev-env.sh"
 
-PROJECT="${REPO_ROOT}/src/Aurora.Countries.Contracts/Aurora.Countries.Contracts.csproj"
-SHIPPED="${REPO_ROOT}/src/Aurora.Countries.Contracts/PublicAPI.Shipped.txt"
-UNSHIPPED="${REPO_ROOT}/src/Aurora.Countries.Contracts/PublicAPI.Unshipped.txt"
+PROJECT_DIR="${REPO_ROOT}/src/Aurora.Countries.Contracts"
+PROJECT="${PROJECT_DIR}/Aurora.Countries.Contracts.csproj"
+SHIPPED="${PROJECT_DIR}/PublicAPI.Shipped.txt"
+UNSHIPPED="${PROJECT_DIR}/PublicAPI.Unshipped.txt"
 HEADER='#nullable enable'
 
-if [[ "${1:-}" == "--generate" ]]; then
-  dotnet format analyzers "${PROJECT}" --diagnostics RS0016 --severity info
-fi
+before=$(grep -c -v -x -e "${HEADER}" -e '' "${SHIPPED}" || true)
 
-added=$(grep -v -x -e "${HEADER}" -e '' "${UNSHIPPED}" | wc -l | tr -d ' ')
+printf '%s\n' "${HEADER}" >"${SHIPPED}"
+printf '%s\n' "${HEADER}" >"${UNSHIPPED}"
+
+dotnet format analyzers "${PROJECT}" --diagnostics RS0016 --severity info
 
 {
   printf '%s\n' "${HEADER}"
-  cat "${SHIPPED}" "${UNSHIPPED}" | grep -v -x -e "${HEADER}" -e '' | LC_ALL=C sort -u
-} >"${SHIPPED}.new"
+  grep -v -x -e "${HEADER}" -e '' "${UNSHIPPED}" | LC_ALL=C sort -u
+} >"${SHIPPED}"
 
-mv "${SHIPPED}.new" "${SHIPPED}"
 printf '%s\n' "${HEADER}" >"${UNSHIPPED}"
 
-total=$(grep -c -v -x -e "${HEADER}" -e '' "${SHIPPED}" || true)
-printf 'approved %s new API line(s); the contract surface is now %s line(s).\n' "${added}" "${total}"
-printf 'Review the diff of %s and decide the SemVer bump (ADR-0008 3.1) before committing.\n' \
+after=$(grep -c -v -x -e "${HEADER}" -e '' "${SHIPPED}" || true)
+
+if (( after == 0 )); then
+  printf 'approve-contract-api: the code fix produced no API lines at all.\n' >&2
+  printf '  That is never right for a non-empty assembly - it means the fixer did not run.\n' >&2
+  printf '  The shipped file has been left empty on purpose so the next build fails loudly.\n' >&2
+  exit 1
+fi
+
+printf 'contract surface: %s line(s), was %s.\n' "${after}" "${before}"
+printf 'Read the diff of %s and decide the SemVer bump (ADR-0008 3.1) before committing:\n' \
   "${SHIPPED#"${REPO_ROOT}"/}"
+printf '  a removed or changed line is MAJOR, an added one is MINOR.\n'
