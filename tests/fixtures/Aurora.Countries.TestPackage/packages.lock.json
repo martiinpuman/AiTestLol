@@ -2,11 +2,12 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
-      "Microsoft.CodeAnalysis.PublicApiAnalyzers": {
-        "type": "Direct",
-        "requested": "[5.6.0, )",
-        "resolved": "5.6.0",
-        "contentHash": "W4kJGezNIKLzo0Ak5FAQDFvkMf2U7DtGL4THmHyRSApfKsKt5V+eX/bU0ZLKAt/uf9Bb2o1bi0YDKj/GRB/vYQ=="
+      "aurora.countries.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "Aurora.Documents.Canonical": "[1.0.0, )",
+          "Aurora.SharedKernel": "[1.0.0, )"
+        }
       },
       "aurora.documents.canonical": {
         "type": "Project",
