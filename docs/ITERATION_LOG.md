@@ -108,3 +108,54 @@ deliberately failing test.
 
 The runner discovers and runs xunit 2.9.3 tests, and a failing test genuinely fails the run — which the
 quality gate depends on. The architect's correction is confirmed; ADR-0020's decision stands unchanged.
+
+---
+
+## Iteration 3 — 2026-09-11 — B-01 merged, the gate and the kernel reviewed
+
+**Done**
+- **B-01 merged.** Solution skeleton, 9 projects, Release clean at 0 warnings. Reviewed twice: the
+  first review found a solution-wide red `dotnet test` that no planned gate stage would have caught.
+- **B-02 reviewed** → CHANGES_REQUESTED: stage 6 reported PASS having executed zero tests, and
+  nothing in the backlog would ever have made it notice.
+- **B-03 reviewed** → CHANGES_REQUESTED with a **blocker**: `Money.Allocate` silently lost or invented
+  minor units for ordinary ratio weights. 20.6% of 300 000 randomised splits did not sum to their
+  total. Reproduced independently by the orchestrator before acting.
+- Architect closed four spec corrections and swept §6 for acceptance rows narrower than the ADRs they
+  implement. Found five, of which **B-07's would have permitted cross-tenant database adoption**.
+
+**verify.sh** — green on the integration branch throughout.
+
+**Problems** — the `decimal` precision trap was invisible to a clean build, 203 passing tests and
+strict analyzers. Only a reviewer reading the implementation against the ADR found it.
+
+**Lessons folded in** — `CLAUDE.md` gained the self-check list; every rejection so far has been one of
+three shapes, and they are now stated where developers read them before starting.
+
+---
+
+## Iteration 4 — 2026-09-11 — parallel build, and optimisation at the product owner's request
+
+**Done**
+- **B-02 and B-03 merged.** The quality gate is live (stages 0–3, 6, 11, plus a 16-case self-test
+  harness); `Aurora.SharedKernel` landed 208 tests and raised the gate's test floor from 0 to 200.
+- **B-05 completed and in review** — catalog database, 363 solution tests, 41 integration tests.
+- **B-04, B-12, B-02-FU** dispatched in parallel.
+- **Optimisation pass**, on the product owner's instruction: review depth and length tiered by risk;
+  reviewers now write their own review files instead of returning 5 000 words through the
+  orchestrator's context; `docs/DEVELOPER_BRIEF.md` added as a routing document; Standard and Light
+  tasks may now stack on a gate-green predecessor branch; parallelism limits measured (4 CPUs is the
+  binding constraint, not disk or memory).
+
+**Measured** — B-01 44 min of agent time, B-02 74, B-03 96. Roughly half of the two larger tasks went
+on the rejection round, which is what the self-check list and tiering target.
+
+**Problems**
+1. **Three concurrent Fable agents exhausted Fable's quota in under a minute**, all dying before doing
+   work. Fable's quota is separate from Opus's and tighter. The loop now prefers one or two and falls
+   back to Opus on a rate limit rather than idling.
+2. **A completion notice badly understated what an agent had done** — B-05's showed a single sentence
+   while its branch held 24 commits. Always check the branch before concluding nothing happened.
+
+**Wasted effort** — the three killed Fable spawns. Nothing else; every interrupted task resumed from
+committed work.
