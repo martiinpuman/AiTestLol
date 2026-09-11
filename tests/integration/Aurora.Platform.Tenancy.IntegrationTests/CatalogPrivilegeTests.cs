@@ -221,7 +221,7 @@ public sealed class CatalogPrivilegeTests
     }
 
     [Fact]
-    public async Task Only_section_8_step_3_hardening_keeps_the_app_role_out_of_a_newly_created_database()
+    public async Task A_newly_created_database_is_open_to_the_app_role_until_section_8_step_3_hardens_it()
     {
         // What the test above rests on, shown on a database created the way the provisioner will
         // create a tenant's (ADR-0007 §8 step 2): until §8 step 3 runs on it, aurora_app - one
