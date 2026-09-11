@@ -49,12 +49,12 @@ The core defines the extension points as contracts. The core must never contain 
 | docs/architecture/ | Overview, module map, health checks, dependencies.md | architect |
 | docs/decisions/ | ADR-####-title.md. Never deleted, only superseded. | architect |
 | docs/design/ | Design system, screen specs, prototypes/ | ui-designer |
-| docs/reviews/ | TASK-###.md review records | orchestrator saves senior-reviewer output |
+| docs/reviews/ | Historical review records up to iteration 5. **New reviews are posted on the task's GitHub pull request**, not here. | reviewers post to GitHub |
 | src/, tests/, scripts/ | Code | senior developers only |
 | scripts/verify.sh | The single quality gate: build, all tests, architecture tests, lint, format check | senior developers |
 
 ## Ownership
-Only senior developers change src/, tests/ and scripts/. Other roles write only in their own docs folder. If you need a change outside your area, ask for it in your summary to the orchestrator. Developers may also update docs/product/glossary.md and module README files.
+Only senior developers change src/, tests/ and scripts/ — except `scripts/hooks/`, `scripts/dev-*.sh`, `scripts/bootstrap-env.sh`, `scripts/project-health.sh`, `scripts/agent-progress.sh` and `.claude/`, which are orchestrator-owned automation (`docs/architecture/automation.md`). Other roles write only in their own docs folder. If you need a change outside your area, ask for it in your summary to the orchestrator. Developers may also update docs/product/glossary.md and module README files.
 
 ## Engineering standards
 - Clean Architecture: dependencies point inward. The domain layer has no references to frameworks, databases or UI. Enforced by automated architecture tests, not goodwill.
@@ -125,34 +125,46 @@ How deep and how long a review runs is set by its tier too, and task sizing and 
 the orchestrator's rules — all four live in `docs/ORCHESTRATION.md`, which reviewers and the
 orchestrator read and nobody else needs.
 
-### Reviewers write their own review file
+### Reviewers post their review on the pull request
 
-A review is saved at `docs/reviews/<TASK-ID>.md` (or `<TASK-ID>-rereview.md`). **The reviewer writes
-that file itself**, with a heredoc, and returns to the orchestrator only:
+Every task branch has a draft pull request into the integration branch. **The review goes
+there** — findings anchored to the lines they concern, and a submitted review carrying the
+verdict: `APPROVE`, `REQUEST_CHANGES`, or `COMMENT` for findings that do not block. The
+product owner reads GitHub; a review in a repository file is one nobody acts on until an
+orchestrator relays it.
 
-- the verdict,
-- a one-line summary of each blocker and major,
-- the gate result,
-- anything the orchestrator must route to another role.
+Reviewers return to the orchestrator only the verdict, one line per blocker and major, the
+gate result, and anything to route to another role — never the review text. It is on the PR,
+and a second copy is the one that drifts.
 
-Do not return the full review text. It was being written once by the reviewer, read once by the
-orchestrator, and written again to the file — three times the tokens for one document, and the
-orchestrator's copy was the one that could drift from the file.
+`docs/reviews/` holds the records written before this changed. It is history, not the
+destination. Because the repository is the team's only memory, the orchestrator records each
+merged task's verdict and its PR number in `docs/ITERATION_LOG.md`, so a session with no
+GitHub access can still find out why a branch was rejected and what fixed it.
 
-Reviewers still change nothing else. Writing under `docs/reviews/` is the single exception to the
-read-only rule, and it exists so a review cannot be lost or garbled in transit. A reviewer that edits
-anything under `src/`, `tests/`, `scripts/`, `docs/architecture/` or `docs/decisions/` has broken the
-rule that a review may never quietly change the code it approves.
+Reviewers still change nothing else. Posting a review is the only write a reviewer makes.
 
 ## Definition of Done (per task)
 1. All acceptance criteria in the spec are met and covered by tests.
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
 3. Tenant isolation and authorization tests exist for any new data access or endpoint.
-4. Approved by a senior-reviewer who is not the author (recorded in docs/reviews/TASK-###.md).
+4. Approved by a senior-reviewer who is not the author, recorded as a submitted review on the task's pull request.
+5. **The orchestrator merges on that verdict.** The product owner is hands-off by standing
+   instruction and does not review or accept pull requests; no branch waits on a human. What a
+   merge does require is a passing verdict from an agent that did not author the branch — and
+   at Full tier, after a rework, from a *second* reviewer. GitHub refuses to record an approval
+   from the account that authored the branch, so a reviewer may have to submit `COMMENT` with
+   `VERDICT: APPROVE` as its first line; that is a real approval and the orchestrator merges on
+   it. An unreviewed branch is never merged, and neither is one whose only review is by its
+   author.
 5. Docs affected by the change are updated.
 
 ## Local toolchain
-The .NET SDK lives at `/usr/share/dotnet`. Any script or agent that runs `dotnet` must first source `scripts/dev-env.sh`, which puts it on PATH and starts the Docker daemon if it is not already running. Integration tests use Testcontainers against `postgres:17-alpine`.
+The .NET SDK lives at `/usr/share/dotnet`. Any script or agent that runs `dotnet` must first source `scripts/dev-env.sh` **in the same shell call** — shell state does not persist between tool calls. Integration tests use Testcontainers against `postgres:17-alpine`.
+
+While iterating, run tests with `bash scripts/dev-test.sh` rather than `dotnet test`: it prints the executed counts and the failures and discards the rest (89% less output). `scripts/verify.sh` is still what decides whether a branch may merge.
+
+Two hooks watch every agent. A `Bash` command that force-pushes, pushes to the wrong branch, deletes an ADR, stages a `.env` or runs `dotnet` without `dev-env.sh` is **blocked** with the reason. A file you write that compares a country to a string literal in core, reads the ambient clock, declares a `float`/`double` in `src/`, leaves a `TODO` with no backlog id, or contains a credential-shaped literal is **reported back to you** — fix it in the same turn. The rules and their proofs are in `docs/architecture/automation.md`.
 
 ## Hard limits for every agent
 Never: deploy anything, create cloud resources, spend money, sign up for services, use real customer or personal data, commit secrets, force-push, or delete docs/decisions/. New third-party dependencies need a permissive license (MIT, Apache-2.0, BSD) and an entry in docs/architecture/dependencies.md; watch for libraries that have moved to commercial licensing.

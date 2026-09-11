@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for the Tenancy platform module against a real PostgreSQL (testing-strategy.md 4, 6).
+
+    One postgres:17-alpine container per xUnit collection, and this project has exactly one
+    collection ("Catalog database"). Every test class carries [Trait("Category", "Integration")]
+    so verify.sh stage 6 leaves them out and stage 8 runs them.
+
+    The fixture creates the three cluster roles of ADR-0004 rule 2, creates the catalog database
+    owned by aurora_migrator, migrates as aurora_migrator, and hands tests a connection as
+    aurora_app - so the tests exercise the privilege model the deployment will actually have,
+    not the container's superuser.
+
+    CatalogSchemaGuard.cs is linked from the unit test project so the ADR-0007 9.3 guard
+    reads one allowlist whether it is checking the EF model (unit) or the migrated schema (here).
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Platform.Tenancy.IntegrationTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\platform\Aurora.Platform.Tenancy\Aurora.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\unit\Aurora.Platform.Tenancy.UnitTests\CatalogSchemaGuard.cs" Link="CatalogSchemaGuard.cs" />
+  </ItemGroup>
+
+</Project>

@@ -52,12 +52,36 @@
   </p>
 
   <div class="card-grid">
+    <a class="proto-card" href="sign-in.html">
+      <div class="thumb">🔑</div>
+      <h2>Sign in</h2>
+      <p>Tenant resolved from the hostname (never typed), the generic anti-enumeration credential
+      response, a locked-out variant, an unknown-address variant, and a blocking mid-session
+      re-authentication dialog. First prototype with a live locale switch (English/Swedish).</p>
+      <div class="tags"><span class="badge badge-info">Auth</span><span class="badge badge-neutral">Locale</span></div>
+    </a>
+    <a class="proto-card" href="first-run-landing.html">
+      <div class="thumb">👋</div>
+      <h2>First-run landing</h2>
+      <p>What a brand-new tenant's administrator sees right after provisioning: a "what's already set up"
+      summary using Status badges, an explicit "this emptiness is expected" panel, and a permission-denied
+      variant for a later, more limited role. Second locale-formatting demonstration (dates).</p>
+      <div class="tags"><span class="badge badge-info">Onboarding</span><span class="badge badge-neutral">Empty state</span></div>
+    </a>
     <a class="proto-card" href="shell.html">
       <div class="thumb">⌂</div>
       <h2>App shell</h2>
       <p>Top bar, collapsible nav rail, global search, command palette (⌘K), notifications, user menu, and the
       always-visible tenant/company switcher. Includes a demo control to cycle the SignalR reconnection banner.</p>
       <div class="tags"><span class="badge badge-info">Navigation</span><span class="badge badge-neutral">Company switcher</span></div>
+    </a>
+    <a class="proto-card" href="companies-list.html">
+      <div class="thumb">🏢</div>
+      <h2>Companies (list)</h2>
+      <p>The first screen backed by a real API resource (<code>/api/v1/companies</code>): a deliberately plain,
+      non-grid list, a permission split between viewing and creating, an honest "this shouldn't happen"
+      empty state, and a scale note on when this screen should graduate to the Data grid component.</p>
+      <div class="tags"><span class="badge badge-info">Master data</span><span class="badge badge-neutral">Permissions</span></div>
     </a>
     <a class="proto-card" href="list.html">
       <div class="thumb">🧾</div>

@@ -1,10 +1,13 @@
 # `tests/integration/` — tests against a real PostgreSQL database
 
-Empty by design. Task B-01 scaffolds the test projects that exist without a module or a platform
-assembly; the rest are created by the tasks that own them —
-`Aurora.Platform.Tenancy.IntegrationTests` with B-06, `Aurora.Countries.NewZealand.Tests` with the
-first Country Package, and one `Aurora.Modules.<M>.IntegrationTests` per module from
-`scripts/new-module.sh` (task B-14).
+Each project is created by the task that owns the thing it tests.
+
+| Project | Tests | Landed with |
+|---|---|---|
+| `Aurora.Platform.Tenancy.IntegrationTests` | The catalog database: migrated schema, constraints, round trips and `aurora_app`'s privileges | B-05 |
+
+Still to come: `Aurora.Countries.NewZealand.Tests` with the first Country Package, and one
+`Aurora.Modules.<M>.IntegrationTests` per module from `scripts/new-module.sh` (task B-14).
 
 Every test here is tagged `[Trait("Category", "Integration")]` so `verify.sh` can run stage 6
 without Docker and stage 8 with it. Tests share **one** PostgreSQL container per xUnit collection —
@@ -14,6 +17,20 @@ runtime budget.
 Every module integration-test assembly must contain a subclass of `TenantIsolationContract<T>`
 (`Aurora.TestKit`, task B-10); an architecture fitness test asserts it, because a module whose
 isolation is merely assumed is a module whose isolation is untested.
+
+The tenancy project is the one exception, and it is not a loophole: the catalog is the single
+database shared by every tenant, so there is no second tenant database to keep it out of. What it
+asserts instead is the blast radius of the role the request path holds: exactly which privileges it
+holds on every object in the schema — tables, columns, the schema, functions, sequences, types —
+read from the ACL entry by entry, a `NULL` ACL as the default it means; that it can neither create
+nor rewrite a row a request is routed by and can delete none at all, tried as the role; that it
+cannot call a function no migration opened to it; that it has no DDL; and that on a hardened
+cluster it can open no database but the catalog — see that module's
+[README](../../src/platform/Aurora.Platform.Tenancy/README.md) for why the last of these is a
+property of ADR-0007 §8 step 3's per-database hardening and not of the role, which under §3.5 stage 1
+is one per cluster and legitimately connects to every tenant database. B-06.2's deliberate mis-route
+test proves §4.3's identity check; once B-07 provisions tenant databases, the §12.2 contract applies
+to them in the ordinary way.
 
 See [`docs/architecture/testing-strategy.md`](../../docs/architecture/testing-strategy.md) and
 [`ADR-0007`](../../docs/decisions/ADR-0007-multi-tenancy-database-per-tenant.md) §12.2.

@@ -32,8 +32,14 @@ if [ -z "${done_ids}" ]; then
 else
   for id in ${done_ids}; do
     review="$(ls docs/reviews/${id}.md docs/reviews/${id}-rereview.md 2>/dev/null | tail -1 || true)"
-    if [ -z "${review}" ]; then
-      fail "${id} is done but has no review in docs/reviews/"
+    # Reviews now live on the task's pull request. The repository's record of one is
+    # its line in the iteration log naming the verdict and the PR — that is what a
+    # session with no GitHub access reads. Either form counts.
+    logged="$(grep -E "^\| *${id} *\|" docs/ITERATION_LOG.md 2>/dev/null | grep -cE 'APPROVE|#[0-9]+' || true)"
+    if [ -z "${review}" ] && [ "${logged:-0}" -eq 0 ]; then
+      fail "${id} is done but has neither a review in docs/reviews/ nor a verdict line in ITERATION_LOG.md"
+    elif [ -z "${review}" ]; then
+      ok "${id} — verdict recorded in ITERATION_LOG.md"
     elif ! grep -qiE '^#+ *Verdict|Verdict: *(APPROVE|CHANGES_REQUESTED)|^## Verdict' "${review}"; then
       fail "${review} records no verdict"
     elif grep -qiE 'Verdict:? *CHANGES_REQUESTED' "${review}" \
@@ -79,6 +85,19 @@ while read -r path; do
     # A reviewer's detached scratch worktree. Transient by design and removed by
     # the reviewer; only worth reporting, never a broken invariant.
     say "${path} — reviewer scratch, in use or awaiting cleanup"
+  elif [[ "${br}" == worktree-agent-* ]] \
+       && [ -n "$(find "${path}" -maxdepth 1 -mmin -60 -print -quit 2>/dev/null)" ]; then
+    # An agent sits on its own worktree-agent-* branch until it checks out a task
+    # branch, so by ancestry it is indistinguishable from merged leftover — reporting
+    # it as one sent the orchestrator after a worktree that was simply starting up.
+    # Recent modification is the signal that separates the two.
+    say "${path} (${br}) — agent active in the last hour"
+  elif [ "$(git rev-parse "${br}" 2>/dev/null)" = "$(git rev-parse "${INTEGRATION}" 2>/dev/null)" ]; then
+    # Tip equal to the integration tip means no commits yet — a branch that has not
+    # started, not one whose work is merged. Ancestry alone cannot tell them apart,
+    # and calling a freshly dispatched agent's worktree prunable sends the
+    # orchestrator to delete work that is about to be written.
+    say "${path} (${br}) — branched, no commits yet"
   elif git merge-base --is-ancestor "${br}" "${INTEGRATION}" 2>/dev/null; then
     fail "${path} (${br}) — its work is merged, prune it"
     stale=$((stale + 1))
@@ -89,13 +108,38 @@ done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
 [ "${stale}" -eq 0 ] && say "none stale"
 echo
 
+# 3b. Two in-flight branches changing the same file is a merge conflict scheduled for
+#     later, and hand-resolution has already introduced a defect into a third document.
+echo "file claims"
+bash scripts/file-claims.sh 2>/dev/null | grep -E 'CONTESTED|no file is claimed' | sed 's/^/  /' || true
+if ! bash scripts/file-claims.sh >/dev/null 2>&1; then
+  fail "$(bash scripts/file-claims.sh 2>/dev/null | tail -3 | head -1)"
+fi
+echo
+
 # 4. Dangling document references. The architect once shipped forward references
 #    to ADRs that did not exist yet; a reader following one finds nothing and
 #    cannot tell whether the document is missing or the reference is wrong.
 echo "cross-references"
 dangling=0
 for adr in $(grep -rhoE 'ADR-[0-9]{4}' docs/ --include='*.md' 2>/dev/null | sort -u); do
-  ls docs/decisions/${adr}-*.md >/dev/null 2>&1 || { fail "${adr} is referenced but no such ADR exists"; dangling=$((dangling + 1)); }
+  if ! ls docs/decisions/${adr}-*.md >/dev/null 2>&1; then
+    # An ADR cited here but living on an unmerged task branch is work in flight, not a
+    # broken reference — B-12 merged citing three of them. Say which branch has it, so
+    # the difference between "pending a merge" and "lost" is visible rather than guessed.
+    on_branch=""
+    for b in $(git branch -a --format='%(refname:short)' | grep -E '^(origin/)?task/' | sed 's|^origin/||' | sort -u); do
+      if git ls-tree -r --name-only "${b}" -- docs/decisions 2>/dev/null | grep -q "${adr}-"; then
+        on_branch="${b}"; break
+      fi
+    done
+    if [ -n "${on_branch}" ]; then
+      say "${adr} is referenced here but lives on ${on_branch}, not yet merged"
+    else
+      fail "${adr} is referenced but no such ADR exists"
+      dangling=$((dangling + 1))
+    fi
+  fi
 done
 for spec in $(grep -rhoE 'SPEC-[0-9]{3}' docs/ --include='*.md' 2>/dev/null | sort -u); do
   ls docs/product/specs/${spec}-*.md >/dev/null 2>&1 || { fail "${spec} is referenced but no such spec exists"; dangling=$((dangling + 1)); }

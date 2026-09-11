@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Unit tests for the Country Package contract (docs/architecture/solution-layout.md 6, B-12).
+
+    Fast and in-memory: no database, no container, no network. verify.sh stage 6 runs this project
+    and must pass with Docker stopped.
+
+    FsCheck carries the property-based test that TaxRate.ApplyTo never produces an amount that is
+    not a whole number of minor units, for arbitrary amounts and arbitrary published rates. It is
+    used from plain [Fact]s via QuickCheckThrowOnFailure, because FsCheck.Xunit is a separate
+    package and docs/architecture/dependencies.md 3 approves only FsCheck itself.
+
+    PublicAPI.Shipped.txt is embedded rather than read from disk so the snapshot test measures the
+    file that was built with the assembly, not whatever happens to be in the working tree.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Countries.Contracts.UnitTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="FsCheck" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Aurora.Countries.Contracts\Aurora.Countries.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\src\Aurora.Countries.Contracts\PublicAPI.Shipped.txt"
+                      LogicalName="PublicAPI.Shipped.txt" />
+  </ItemGroup>
+
+</Project>

@@ -159,3 +159,48 @@ on the rejection round, which is what the self-check list and tiering target.
 
 **Wasted effort** — the three killed Fable spawns. Nothing else; every interrupted task resumed from
 committed work.
+
+## Iteration 5 — 2026-09-11
+
+**Reviews returned, all four rejecting.** B-04 REJECT (2 mechanical majors, but the reviewer planted
+eleven real violations in production code and watched every rule go red — the rule set is sound).
+B-05 security re-review CHANGES_REQUESTED with 2 High: the privilege oracle that replaced
+`ALTER DEFAULT PRIVILEGES` is blind to column-level grants and to PG 17's `MAINTAIN`, and the
+request-path role owns the tenant routing tables — the reviewer repointed another tenant's database
+and cluster host as `aurora_app`, with no DDL and no superuser. B-12 CHANGES_REQUESTED twice: four
+majors from the peer review and one High from security, the latter a case-insensitivity bypass of the
+`Aurora.*` assembly rule. Three rework agents dispatched; every one returns to a second reviewer.
+
+**Automation built** (`docs/architecture/automation.md`). Three levers against the cost of a review
+round trip, which on the tasks measured so far has been roughly half of a task's wall clock:
+
+- Two hooks. A `PreToolUse(Bash)` guard blocks force-push, a push to any branch but the integration or
+  a `task/*` branch, deleting an ADR, staging a `.env`, and `dotnet` without `dev-env.sh` sourced in
+  the same call. A `PostToolUse(Write|Edit)` guard reports a country compared to a string literal in
+  core, an ambient clock read, a `float`/`double` in `src/`, a `TODO` with no backlog id, and a
+  credential-shaped literal. `hooks-selftest.sh` asserts every rule from both sides and prints its
+  case count: 35 cases, 17 blocking, 18 allowing.
+- `scripts/dev-test.sh`: the executed counts and the failures, nothing else. 89% less output than raw
+  `dotnet test` on a passing run. Zero executed tests is a failure, not a pass.
+- Three skills (`aurora-status`, `dispatch`, `integrate`) and `senior-developer` gaining
+  `memory: project`, `maxTurns: 400` and `disallowedTools: Agent`.
+
+**What building it taught.** Writing the hook selftest caught four defects in the hooks, three of them
+rules that never fired at all because the path derivation was wrong — the guards would have sat there
+looking like enforcement. Then *using* the guard caught two more that the selftest had not: a push
+whose output went through a pipe was refused, and a commit message describing a blocked command was
+analysed as if it were one. Both are now cases in the selftest. The allow side of a guard is not a
+formality; it is half of what the guard is.
+
+**Next:** integrate the three reworks as they return, each through a second reviewer. Then B-06.
+
+### Merged this iteration
+
+Reviews are now posted on each task's pull request. This table is the repository's own record of
+them, so a session with no GitHub access can still find the verdict and what it rested on.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| B-12 | #4 | APPROVE (second reviewer, Full) | senior-reviewer | Reproduced both carrying claims itself rather than accepting them. Mutated the tax implementation to naive and watched the new boundary property go red; 500 draws, 500 constructible, 188 phantom minor units against naive and 0 against shipped; confirmed rate and target are genuinely arbitrary (500 distinct rates) while sign, midpoint and currency are the fixed lists the remark claims. Broke the generator's construction deliberately to check the property goes red rather than being discarded. Probed twelve alternative assembly-name spellings through the package load context: no third bypass, and no culture-sensitive comparison anywhere. Reverting `src/` to the pre-rework commit turned 16 new tests red, confirming all four unbounded-range rows had been green-as-passing. Gate PASS at 440 executed, self-test 21/21. |
+| ARCH-CORRECTIONS | #6 | APPROVE (second reviewer, Full) | senior-reviewer | Reproduced all ten PostgreSQL behaviours the ADR-0028 amendment claims, against 17.11 — the REVOKE form leaves `pg_default_acl` empty and permits a later GRANT; the positive grant constrains a table created afterwards; the row trigger is cloned to a new partition and the truncate trigger is not; event triggers need a superuser this project does not define. Two rounds of new majors, both false claims *introduced by the fixes* — the second in text the first fix commit had just added. Verified the collateral check by hand: all 12 references to ADR-0008's own §6.1/§6.2 byte-identical to base after the renumbering. GitHub refused `APPROVE` with `403: Submitting APPROVE reviews is not permitted for this session type` — a session-policy restriction, not an authorship one, so the verdict is in the review body. |
+| B-05 | #3 | APPROVE (third security reviewer, Full) | security-reviewer | Re-ran all nineteen attack shapes from both earlier rounds; every one returns `42501` except `UPDATE … RETURNING database_name`, which crosses no privilege. Re-derived all three counted assertions against its own cluster and found them exact. Verified by execution on PG 17.11 that the per-schema `ALTER DEFAULT PRIVILEGES … REVOKE` form stores nothing — independently re-confirming ADR-0028 §2's second mechanism as a permanent no-op on a third cluster. Four mediums remain, none blocking, now recorded as FOLLOWUP-010…013 rather than routed a fourth time. Gate PASS at 603 unit tests on the merged tree (B-05 alone 371, B-12 alone 440), integration 54/54. |

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A real Country Package, built the way a real one is, for the host tests to read and load.
+
+    It exists because every mechanism B-12 adds is about a package as a FILE: a manifest embedded as
+    an assembly resource, a detached signature over the assembly's bytes, an assembly loaded into its
+    own context. A hand-rolled test double of an ICountryPackage proves none of that - it is already
+    in the test's own load context, with no manifest resource and nothing to sign.
+
+    It is not a test project: verify.sh stage 6 runs test assemblies, and this one holds no tests.
+    Aurora.Countries.Hosting.UnitTests references it so that the built assembly lands beside the
+    tests, which then copy it into a temporary package directory and sign it.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Countries.TestPackage</RootNamespace>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Aurora.Countries.Contracts\Aurora.Countries.Contracts.csproj" />
+  </ItemGroup>
+
+  <!-- This is what makes it a package rather than a library (ADR-0008 3.2). -->
+  <ItemGroup>
+    <EmbeddedResource Include="package.manifest.json" LogicalName="package.manifest.json" />
+  </ItemGroup>
+
+</Project>
