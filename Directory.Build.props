@@ -1,0 +1,77 @@
+<Project>
+
+  <!--
+    Aurora ERP - build-wide settings.
+
+    docs/architecture/solution-layout.md 4 calls these "not negotiable"; every property listed
+    there appears below with the reason it exists. Nothing here is per-project: if a setting
+    has to differ for one project, that is a discussion, not a local override.
+  -->
+
+  <PropertyGroup Label="Target platform">
+    <!-- One place, so the next LTS upgrade is a one-line change (ADR-0002). -->
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- The tenant guarantee of ADR-0007 relies on non-nullable parameters. -->
+    <Nullable>enable</Nullable>
+    <!-- Explicit is clearer in a large, long-lived codebase (ADR-0002). -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!--
+      ICU must be present. Localization is day one (ADR-0022); an invariant-globalization
+      runtime silently breaks every locale-specific format, and the runtime image is
+      therefore an ICU-bearing one (ADR-0025 1).
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Warnings, analysis and code style">
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Gives the `dotnet format` check in verify.sh stage 2 teeth in the build too. -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <!--
+      IDE0005 (unnecessary using directive) is only reported during build when a documentation
+      file is produced. Generating one is the price of that rule; CS1591 (missing XML comment on
+      a publicly visible type or member) is the price of generating one, and mandatory XML
+      comments on every public member is not a rule this codebase wants.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Package restore">
+    <!-- Directory.Packages.props is the single version list. -->
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- A transitive package cannot smuggle in an unreviewed version. -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+    <!--
+      packages.lock.json is committed; the locked-mode restore in verify.sh stage 1 makes the
+      licence gate in docs/architecture/dependencies.md enforceable rather than aspirational.
+    -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!--
+      verify.sh stage 5 fails on High or Critical advisories only (solution-layout.md 5.2).
+      NuGetAudit reports from Low upward by default, and TreatWarningsAsErrors would turn a
+      Low advisory into a broken build - a stricter rule than the gate, enforced in a
+      different place. Raising the audit level keeps the two consistent.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditLevel>high</NuGetAuditLevel>
+    <!-- Nothing in this solution is published to a package feed. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Reproducible builds">
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition=" '$(CI)' == 'true' or '$(TF_BUILD)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' ">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Output layout">
+    <!--
+      All build output under artifacts/, which is git-ignored (solution-layout.md 1), instead of
+      a bin/ and obj/ pair beside every one of the ~60 projects this solution grows to.
+    -->
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(MSBuildThisFileDirectory)artifacts</ArtifactsPath>
+  </PropertyGroup>
+
+</Project>

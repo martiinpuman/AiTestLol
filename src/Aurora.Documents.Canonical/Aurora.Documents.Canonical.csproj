@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tier 0 - kernel (docs/architecture/modules.md 3).
+
+    The jurisdiction-neutral commercial document semantic model, shaped after EN 16931.
+    A deliberate shared kernel between Sales, Purchasing, DocumentExchange and every Country
+    Package, which is why a change here is a core-contract change under ADR-0008 3.1.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Documents.Canonical</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.SharedKernel\Aurora.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>

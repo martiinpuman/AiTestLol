@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The composition root (docs/architecture/solution-layout.md 3).
+
+    This is the ONLY project allowed to reference a module's .Infrastructure assembly. Both hosts
+    reference this project and nothing else from src/modules, which keeps "which modules exist"
+    a single reviewable file and makes it impossible for Aurora.Web to reach Sales.Domain.
+
+    Every module added from here on adds exactly one ProjectReference below and one line in its
+    AddXModule() call. An architecture fitness test asserts the hosts reference no .Domain or
+    .Infrastructure assembly directly.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Composition</RootNamespace>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tier 0 - kernel (docs/architecture/modules.md 3).
+
+    Money, Quantity, Percentage, DateRange, strongly-typed id primitives, Result/Error, IClock.
+    This assembly references nothing but the BCL, and an architecture fitness test asserts it.
+    Do not add a PackageReference or a ProjectReference here.
+
+    Content arrives with task B-03.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.SharedKernel</RootNamespace>
+  </PropertyGroup>
+
+</Project>
