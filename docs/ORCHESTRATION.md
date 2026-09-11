@@ -120,3 +120,27 @@ written.
 Concurrency, restated: **up to six agents, of which at most four may build.** Reviews and
 developer tasks count against the four. Designers, architects, project-managers and
 researchers do not.
+
+## A finding raised twice and left is itself the finding
+
+**2026-09-11, from B-04's second review.** The first review rejected B-04 for a `.csproj`
+comment describing a fixture directory that did not exist (M-1), and separately listed as
+**minor n-6** the residue of the same idea: a filter excluding any path segment named
+`Fixtures/`. The author fixed M-1 and left n-6, exactly as the tiering allows.
+
+n-6 was the half with teeth. A production `.csproj` under **any** directory named
+`Fixtures/` vanished from the scanned population entirely — invisible not just to the
+layering rules but to all six tenancy rules, the floating-point rule and the clock rule,
+while the suite stayed green at 42/42. The rule set that is currently the only automated
+proof of tenant isolation had a hole you could drive a module through, and it was written
+down in the first review as a nice-to-have.
+
+The rule this buys: **when the same idea appears in a review as both a major and a minor,
+the minor is not independent.** Fixing the stated instance and deferring the mechanism
+leaves the mechanism. Before accepting a rework, check every deferred minor that shares a
+mechanism with an accepted major, and promote it rather than carrying it.
+
+More generally, a minor's tier is a claim about blast radius, and that claim is worth
+re-testing when the code around it changes. A minor deferred twice should be either fixed
+or written into the backlog with an id — never carried a third time in a review file where
+it reads as acknowledged and handled.
