@@ -121,6 +121,20 @@ Peer review is required by the Definition of Done, but its depth is proportionat
 The tier is named in the task brief. When in doubt, go up a tier — and a reviewer may escalate a task
 it was given at a lower tier by saying so in the verdict.
 
+**How deep a review goes is also set by the tier.** Reviews are the single largest cost in this
+project's cycle time — on the two largest tasks so far, roughly half the total agent time went on the
+rejection round — so depth must be spent where it changes outcomes.
+
+| Tier | What the reviewer does |
+|---|---|
+| **Full** | Everything. Read the implementation against the ADR line by line, verify claims by running them, prove the tests bite by mutation, and attack the two or three properties the design actually rests on. This is what found the allocation blocker. |
+| **Standard** | Run the gate. Verify the **top three risks** you identify in the change, by executing them rather than reasoning about them. Read the rest for correctness without exhaustive proof. Say explicitly which three you chose and why. |
+| **Light** | Run the gate. Confirm the acceptance criteria are met. Check the change does not weaken an existing guarantee. Stop there. |
+
+At Standard and Light, a reviewer who finds something that smells like a Full-tier risk should
+escalate rather than quietly doing a Full review — say so in the verdict and let the orchestrator
+decide. Depth that nobody asked for is depth nobody budgeted for.
+
 ## Definition of Done (per task)
 1. All acceptance criteria in the spec are met and covered by tests.
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
