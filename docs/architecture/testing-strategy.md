@@ -95,22 +95,29 @@ One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assembl
 | T6 | `TenantScope` appears in no serializable payload: not in an integration event, not in a job payload, not in a cache entry (§10.4) |
 | T7 | Every module integration-test assembly contains exactly one subclass of `TenantIsolationContract<>` |
 | T8 | No `IPlatformJob` implementation references a module's `.Domain`, `.Application` or `.Infrastructure` (§10.1) |
-| T9 | No **container-facing** call or method names a tenant `DbContext`. Container-facing = the called member's declaring type is under `Microsoft.Extensions.DependencyInjection`/`.Hosting`, or the method's own signature names `IServiceCollection`, `ServiceDescriptor`, `IServiceProvider`, `IHostApplicationBuilder` or `WebApplicationBuilder`. Keys on the container surface, never on a method name (ADR-0032 §4.1) |
-| T10 | A tenant `DbContext` type is **named** only inside its owning assemblies — the assembly that declares it plus, when that is a `<module>.Application`, the sibling `<module>.Infrastructure`. Exact names (ADR-0032 §4.2) |
-| T11 | No **externally reachable** member (member accessibility *and* enclosing-type visibility) returns or exposes a tenant `DbContext`; a member typed `ITenantDbContextFactory<TContext>` is not one, and a *parameter* typed as a context is not one (ADR-0032 §4.2) |
-| T12 | A tenant `DbContext` is **constructed** (`newobj`) only in `Aurora.Platform.Tenancy` — the clause that closes the door inside the owning assembly, where T11 is silent by design (ADR-0032 §4.2) |
-| T13 | The catalog exemption is the one exact pair (`Aurora.Platform.Tenancy.Catalog.CatalogDbContext`, assembly `Aurora.Platform.Tenancy`); any other type carrying that simple name is a violation, and after B-05 the absence of the pair is a violation too (ADR-0032 §4.3) |
-| T14 | Every allow-list entry in every tenancy rule names an assembly that exists in the production population (ADR-0032 §4.4) |
+| T15 | No **container-facing** call or method names a tenant `DbContext`, **and no container-facing call registers a type the rule cannot resolve**. Container-facing = the called member's declaring type is under the namespace `Microsoft.Extensions.DependencyInjection` or `Microsoft.Extensions.Hosting` (segment-bounded prefix), or the method's own signature names one of five exact types: `IServiceCollection`, `ServiceDescriptor`, `IServiceProvider`, `IHostApplicationBuilder`, `WebApplicationBuilder`. A tenant context named by the call's **declaring type's** generic arguments counts, which is what catches `TypeHelper<SalesDbContext>.Register(services)` and needs the scanner extension in ADR-0032 §4.1.1a. Keys on the container surface, never on a method name (ADR-0032 §4.1) |
+| T16 | A tenant `DbContext` type is **named** only inside its owning assemblies — the assembly that declares it plus, when that is a `<module>.Application`, the sibling `<module>.Infrastructure`. Exact names (ADR-0032 §4.2) |
+| T17 | No **externally reachable** member (member accessibility *and* enclosing-type visibility) returns or exposes a tenant `DbContext` — return type, field, property, or a **`ref`/`out` parameter**, which yields one (`bool TryOpen(out SalesDbContext)`). A *by-value* parameter does not, and a member typed `ITenantDbContextFactory<TContext>` does not (ADR-0032 §4.2) |
+| T18 | A tenant `DbContext` is **constructed** (`newobj`) only in `Aurora.Platform.Tenancy` — the clause that closes the door inside the owning assembly, where T17 is silent by design (ADR-0032 §4.2) |
+| T19 | The catalog exemption is the one exact pair (`Aurora.Platform.Tenancy.Catalog.CatalogDbContext`, assembly `Aurora.Platform.Tenancy`); any other type carrying that simple name is a violation, and **if the population contains any type deriving from `DbContext`, the pair must be present exactly once** — self-triggering, so it needs no promotion step and must not cite the `No_tenant_DbContext_exists_yet…` guard, which cannot fire on it (ADR-0032 §4.3) |
+| T20 | Every allow-list entry in every tenancy rule names an assembly that exists in the production population. **Inert until B-05**, which brings `Aurora.Platform.Tenancy` and `Aurora.Platform.Tenancy.Contracts` — both on T3's and T6's exact allow-lists, the second because it *declares* `TenantScope`, `TenantAccess`, `TenantDatabaseHandle` and both factory interfaces (ADR-0032 §4.4) |
 
-**Id collision, not yet resolved.** The implemented `T6` in `tests/Aurora.Architecture.Tests` is
+**Id allocation, and a collision that is not yet resolved.** The rows above are `T15`-`T20`, the range this branch was allocated; `T9`-`T14` belong to other in-flight branches (`task/ARCH-IDENTITY` claims `T9` for a company-scope rule and `T10` for `HybridCache` keys) and are not renumbered here. The implemented `T6` in `tests/Aurora.Architecture.Tests` is
 ADR-0027 §1's `TenantDatabaseHandle` allow-list, not the serializable-payload rule in the row above,
-and the rows `T7`/`T8` are unimplemented. `T9`-`T14` are claimed by ADR-0032. Whoever implements the
+and the rows `T7`/`T8` are unimplemented. Whoever implements the
 serializable-payload rule takes a fresh id and corrects this table in the same change; until then the
 row above describes an intent, not a mechanism.
 
-**Every rule in this section carries a non-zero population floor and a `SubjectKind` in
-`RuleInventoryTests`** (ADR-0030). A tenancy rule reporting "no violations" without saying how many
-subjects it examined is treated as a finding, not as a pass.
+**None of the tenancy rules above is the structural guarantee.** The guarantee is ADR-0007 §4.1
+layer 1 — one `internal` constructor taking a `TenantAccess` only `Aurora.Platform.Tenancy` can
+construct. These rules are defence in depth over it, each with a stated blind spot in ADR-0032 §7.
+Do not cite this table as coverage.
+
+**Every live rule in this section carries a non-zero population floor and a `SubjectKind` in
+`RuleInventoryTests`; every inert one carries the task that wakes it and a guard that expires on a
+fact rather than a date** (ADR-0030). A tenancy rule reporting "no violations" without saying how
+many subjects it examined is treated as a finding, not as a pass — and so is an inert rule whose
+wake-up cannot fire.
 
 ### 5.4 Financial-correctness rules
 
