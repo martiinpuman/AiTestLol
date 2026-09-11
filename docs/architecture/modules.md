@@ -1,7 +1,9 @@
 # Module map — bounded contexts, contracts and allowed dependencies
 
-Status: accepted v1 · Author: architect · Date: 2026-09-11
+Status: accepted **v2** · Author: architect · Date: 2026-09-11
 Companion: `overview.md`, `solution-layout.md`, `../decisions/ADR-0007-multi-tenancy-database-per-tenant.md`, `../decisions/ADR-0008-country-package-contract.md`
+
+**Changes in v2** (2026-09-11, B-03 peer review finding **S-1**): §3 — the SharedKernel row no longer lists `IClock`; time is the BCL `TimeProvider`, consistent with `testing-strategy.md` §3 / rule S3 and ADR-0020.
 
 ---
 
@@ -69,7 +71,7 @@ flowchart BT
 
 | Module | Owns | Public contract | Notes |
 |---|---|---|---|
-| **SharedKernel** | `Money`, `Quantity`, `Percentage`, `DateRange`, `TenantId`, `CompanyId`, strongly-typed id primitives, `Result`/`Error`, `IClock` over `TimeProvider` | The whole assembly | No EF, no ASP.NET, no `DbContext`. A fitness test asserts it references nothing but the BCL. Deliberately small: every type here is a type nobody can ever change cheaply |
+| **SharedKernel** | `Money`, `Quantity`, `Percentage`, `DateRange`, `TenantId`, `CompanyId`, strongly-typed id primitives, `Result`/`Error` | The whole assembly | No EF, no ASP.NET, no `DbContext`. A fitness test asserts it references nothing but the BCL. Deliberately small: every type here is a type nobody can ever change cheaply. **No clock abstraction lives here.** Time is the BCL's `TimeProvider`, injected directly (`testing-strategy.md` §3 and rule S3, ADR-0020) — the kernel neither owns nor wraps it. Do not propose an `IClock`: a wrapper interface would stop `FakeTimeProvider` substituting, which is the only reason `Microsoft.Extensions.TimeProvider.Testing` is an approved dependency |
 | **Documents.Canonical** | The jurisdiction-neutral commercial document semantic model (`CommercialInvoice`, `CreditNote`, lines, allowances/charges, tax breakdown, `PayableRoundingAmount`), shaped after EN 16931 | The whole assembly | A deliberate shared kernel between Sales, Purchasing, DocumentExchange and every Country Package. Because packages depend on it, **changes here are core-contract changes** and follow ADR-0008 §3.1 SemVer rules |
 | **Countries.Contracts** | The ten extension-point interfaces, `CountryPackageManifest`, `AccountRole` registry | The whole assembly | The only core assembly a package may reference (ADR-0008 §3.1). Guarded by an approved-API snapshot test |
 

@@ -1,7 +1,9 @@
 # Testing strategy
 
-Status: accepted v1 · Author: architect · Date: 2026-09-11
+Status: accepted **v2** · Author: architect · Date: 2026-09-11
 Companion: `solution-layout.md` §5 (`verify.sh`), `modules.md` §6 (the dependency matrix these tests enforce), `../decisions/ADR-0007-multi-tenancy-database-per-tenant.md` §12
+
+**Changes in v2** (2026-09-11, B-03 peer review): §3 — a property test is only as arbitrary as its narrowest generator; the rule and the defect that taught it are recorded there.
 
 ---
 
@@ -35,7 +37,7 @@ The shape is deliberate. In an ERP the expensive defects are in **domain invaria
 
 - One test class per aggregate or value object; test names read as sentences: `Posting_an_unbalanced_entry_is_rejected`.
 - **Every invariant gets a test, including the ones that feel obvious.** `Money` addition across currencies throws. A `JournalEntry` whose debits and credits differ is rejected. A posting into a closed period is rejected. A `SalesOrder` line cannot be invoiced beyond its delivered quantity.
-- **Property-based tests** (FsCheck) for the arithmetic that must hold universally: for any set of lines, the sum of tax amounts equals the document tax total plus the rounding residual; a reversal of a posting always nets to zero; FIFO layer consumption never produces a negative layer. Financial correctness is quality attribute #1 and example-based tests systematically miss the boundary cases that matter in money arithmetic.
+- **Property-based tests** (FsCheck) for the arithmetic that must hold universally: for any set of lines, the sum of tax amounts equals the document tax total plus the rounding residual; a reversal of a posting always nets to zero; FIFO layer consumption never produces a negative layer. Financial correctness is quality attribute #1 and example-based tests systematically miss the boundary cases that matter in money arithmetic. **A property test is only as arbitrary as its narrowest generator, and the test must say which dimensions are genuinely arbitrary and which are a fixed list.** B-03's allocation property drew weights from ten short literals, so every product was exact and the law it asserted could never break; the arithmetic was wrong for one split in five and the test stayed green. Where a law can fail because of *precision* (ADR-0021 Consequences), the generator must produce values that exhaust it — weights from `decimal` division, mixed scale and magnitude — and you demonstrate the test failing against the reintroduced defect rather than asserting that it would.
 - **Time is injected.** `TimeProvider` everywhere, `FakeTimeProvider` in tests. A fitness test bans `DateTime.Now`/`UtcNow` in domain and application code (§5, rule S3).
 - Test data comes from **builders with sane defaults** (`ASalesOrder.WithLine(...).Build()`), never from shared mutable fixtures.
 
