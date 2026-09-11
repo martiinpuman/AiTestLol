@@ -97,3 +97,26 @@ Two habits regardless of tier: state a finding once, in the place it belongs, an
 that proves it next to it. A "Patterns noted" section earns its place only when the pattern is new —
 if it restates one already in this file's self-check list, cite it in a clause instead.
 
+
+## Keep the non-building roles busy
+
+**2026-09-11.** The product owner noticed there had been almost no visible UI progress and
+asked why more was not running in parallel. The answer was an orchestrator mistake, not a
+sequencing constraint.
+
+Every row from B-01 to B-15 is platform hardening, so no UI *code* ships until B-15 — that
+is the hardening-first ordering the human confirmed and it stands. But the `ui-designer`,
+`architect`, `project-manager` and `researcher` produce documents, not builds. **They do not
+compete for the four CPUs that developers and reviewers saturate**, and almost none of their
+work is blocked by the platform chain. Leaving them idle while three developers rebuild the
+same solution buys nothing and hides progress the human can actually see.
+
+The rule: **a developer or reviewer slot is contended; a docs-only slot is not.** Before
+ending any orchestration round, check whether the designer and the architect have something
+to do. They usually do — every review this iteration routed at least one question to the
+architect, and the design system has run three screens behind the backlog since it was
+written.
+
+Concurrency, restated: **up to six agents, of which at most four may build.** Reviews and
+developer tasks count against the four. Designers, architects, project-managers and
+researchers do not.
