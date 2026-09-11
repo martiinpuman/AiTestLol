@@ -308,7 +308,8 @@ public readonly record struct Money : IComparable<Money>
     /// <paramref name="weights"/> is empty, holds a negative weight, or is entirely zero.
     /// </exception>
     /// <exception cref="InvalidOperationException">
-    /// The amount names no currency, or is not already a whole number of minor units.
+    /// The amount names no currency, is not already a whole number of minor units, or — the case
+    /// that should be unreachable — the computed split fails to add back up to it.
     /// </exception>
     public IReadOnlyList<Money> Allocate(IReadOnlyList<decimal> weights)
     {
@@ -327,14 +328,15 @@ public readonly record struct Money : IComparable<Money>
                 $"policy, with Round(RoundingPolicy.CoreDefaultFor(currency))."));
         }
 
-        // From here to the sign being put back, every number is a whole one. The amount is a whole
-        // count of minor units by the precondition just checked, and the weights are scaled to
-        // whole numbers below, so each part's share is an integer division with an integer
-        // remainder. Nothing in this method can round, whatever precision a caller's weights carry.
         decimal scale = MinorUnitScale(Currency);
 
-        // The split runs on the magnitude and puts the sign back afterwards, so that a credit note
-        // is divided exactly like the invoice it reverses instead of down its own rounding path.
+        // Everything from here until the sign goes back on is a whole number. The amount is a whole
+        // count of minor units by the precondition just checked, and the weights are scaled to
+        // whole numbers below, so each part's share is an integer division leaving an integer
+        // remainder: nothing here can round, whatever precision a caller's weights carry.
+        //
+        // The split also runs on the magnitude and puts the sign back afterwards, so that a credit
+        // note is divided exactly like the invoice it reverses instead of down its own path.
         BigInteger totalMinorUnits = (BigInteger)(Math.Abs(Amount) * scale);
 
         BigInteger[] scaledWeights = ToCommonIntegerScale(weights);
