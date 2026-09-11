@@ -34,6 +34,27 @@ describes a design, open the named section — do not implement from this page's
 | A user-visible screen | `docs/design/components.md`, `docs/design/app-shell.md` | the component you are building, and its states |
 | What a feature is *for* | `docs/product/specs/` | the SPEC named in your brief |
 
+## What NOT to read
+
+`docs/` is 64 files and ~100 000 words. Reading more than your task needs costs time and tokens and
+makes you no better at the task. In particular:
+
+- **Do not read `docs/reviews/`.** It is ~16 000 words of past reviews. Everything durable in it has
+  been distilled into `CLAUDE.md`'s self-check list. The one exception: if a review *is* your brief —
+  you are reworking a task and the brief names `docs/reviews/<ID>.md` — read that one file.
+- **Do not read whole ADRs.** The table above names the sections. ADR-0007 alone is 6 900 words and
+  you almost certainly need three of its sections.
+- **Do not read other modules' documentation** to understand yours. If your task needs a contract
+  another module owns, the brief says so; if it does not and you think it should, ask rather than
+  reading your way to an answer.
+- **Do not read `docs/research/` or `docs/design/`** unless your task builds a screen or a Country
+  Package. They answer *what to build and why*, not *how*.
+- **Do not read `docs/ORCHESTRATION.md`.** It is the orchestrator's and reviewers' rules for
+  dispatching and reviewing; nothing in it changes what you build.
+
+A good rule: if you cannot say which acceptance criterion a document is helping you satisfy, stop
+reading it.
+
 **Your task's acceptance-criteria row in `solution-layout.md` §6 is a floor, not the contract.** The
 ADR it implements is the contract. A row narrower than its ADR has already let one blocker through to
 review — if you notice the gap, say so; that is an architecture finding, not a nit.
