@@ -1,10 +1,14 @@
 # Aurora.SharedKernel
 
 Tier 0 (`docs/architecture/modules.md` §3). Every module depends on this assembly, so this assembly
-depends on nothing but the BCL — no EF, no ASP.NET, no DI, no logging, no JSON. Two tests in
-`tests/unit/Aurora.SharedKernel.UnitTests/SharedKernelAssemblyTests.cs` assert that, and assert that
-no `double` or `float` appears anywhere in it (fitness rules L1 and F1; B-04 builds the
-solution-wide versions).
+depends on nothing but the BCL — no EF, no ASP.NET, no DI, no logging, no JSON — and no `double` or
+`float` appears anywhere in it.
+
+Both claims are enforced by `tests/Aurora.Architecture.Tests` (fitness rules **L1** and **F1**).
+L1 reads this project's declared `PackageReference` elements and its committed
+`packages.lock.json` as well as the emitted assembly references, so a package declared here and
+never used still fails. F1 reads the IL of every method body, so a `double` local or a `(double)`
+cast fails too — neither of which a rule over member signatures can see.
 
 **Do not add a `PackageReference` or a `ProjectReference` to this project.**
 

@@ -1,0 +1,196 @@
+using System;
+using System.Collections.Immutable;
+using System.Linq;
+using Aurora.Architecture.Tests.Metadata;
+
+namespace Aurora.Architecture.Tests.Rules;
+
+/// <summary>
+/// A <c>DbContext</c> that is not a tenant context, identified by the exact (full name, assembly)
+/// pair - the two identities a rule may key on because the code it judges cannot mint them
+/// (ADR-0032 §2, §4.3).
+/// </summary>
+internal sealed record NonTenantContext(string FullName, string AssemblyName)
+{
+    public bool Matches(ScannedType type) =>
+        string.Equals(type.FullName, FullName, StringComparison.Ordinal)
+        && string.Equals(type.AssemblyName, AssemblyName, StringComparison.Ordinal);
+}
+
+/// <summary>
+/// How the tenancy rules recognise the types ADR-0007 governs, and why each is matched the way it
+/// is.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <b>The principle (ADR-0032 §2):</b> a rule may only key on an identity the violating code cannot
+/// mint for itself. An exact assembly name and a full type name qualify - changing either is a diff
+/// a reviewer sees. A method name, an assembly-name prefix and a simple type name do not, and this
+/// task's re-review walked past one of each.
+/// </para>
+/// <para>
+/// <b>Two matching strategies for subjects, deliberately.</b> <c>DbContext</c> and
+/// <c>IHttpContextAccessor</c> exist today with known metadata names, so they are matched on the
+/// full name. <c>TenantScope</c> and <c>ITenantDbContextFactory&lt;&gt;</c> arrive with B-06 and
+/// their namespace is a decision that task has not made yet; ADR-0007 §3.4 says
+/// <c>Aurora.Platform.Tenancy.Contracts</c>, but a rule that guessed a namespace and guessed wrong
+/// would match nothing and report no violations - in green, forever. They are therefore matched on
+/// the <b>simple name</b>, which the ADR does fix. That is acceptable for a <i>subject</i>: a
+/// too-wide subject match produces a false positive, which fails loudly and is fixed (ADR-0032
+/// §4.2; §6 item 4 owns tightening it once B-06 fixes the namespaces).
+/// </para>
+/// <para>
+/// <b>Exemptions are exact.</b> The same width is fatal in an exemption, because a too-wide
+/// exemption fails silently: matched by simple name, any <c>CatalogDbContext</c> anywhere escaped
+/// T1, T2 and the inertness guard (re-review m-1). The catalog context is therefore exempt only as
+/// the exact (full name, assembly) pair B-05 declares; a look-alike is a tenant context, and a
+/// renamed or moved catalog context is one too, so either fails loudly instead of exempting
+/// nothing.
+/// </para>
+/// <para>
+/// <b>Allow-lists are segment-bounded prefixes, as an interim form.</b> A plain prefix let a new
+/// assembly authorise itself by choosing a name - <c>Aurora.Platform.TenancyBypass</c> passed both
+/// allow-lists (re-review m-2, executed). <see cref="IsWithin"/> refuses that while admitting the
+/// dotted segments below the prefix, which is where ADR-0007 §3.4 and ADR-0027 §1 declare the
+/// proof types and the factory interfaces (<c>Aurora.Platform.Tenancy.Contracts</c>). ADR-0032 §4.4
+/// replaces prefixes with exact names and is being revised over which names it must list; this
+/// form is a floor under that decision, not the decision, and README §6 records it.
+/// </para>
+/// </remarks>
+internal static class TenancyNames
+{
+    /// <summary>The EF Core base class every module context derives from.</summary>
+    public const string DbContext = "Microsoft.EntityFrameworkCore.DbContext";
+
+    /// <summary>
+    /// The interface every hosted service implements. A hosted service is a container singleton
+    /// whatever its registration is called, which is why T5 keys on this exact framework name and
+    /// not on a member name (re-review H-3).
+    /// </summary>
+    public const string HostedService = "Microsoft.Extensions.Hosting.IHostedService";
+
+    /// <summary>The framework base class of a background worker: implements <see cref="HostedService"/>, one hop away.</summary>
+    public const string BackgroundService = "Microsoft.Extensions.Hosting.BackgroundService";
+
+    /// <summary>ADR-0007 §3.4. Matched by simple name - see the remarks on this class.</summary>
+    public const string TenantScopeSimpleName = "TenantScope";
+
+    /// <summary>ADR-0027 §1: the DDL-path proof type, confined to a named allow-list of assemblies.</summary>
+    public const string TenantDatabaseHandleSimpleName = "TenantDatabaseHandle";
+
+    /// <summary>
+    /// Every type that proves "we know which tenant we are in": ADR-0007's <c>TenantScope</c>,
+    /// ADR-0027's <c>TenantDatabaseHandle</c>, and the <c>TenantAccess</c> base they share.
+    /// </summary>
+    /// <remarks>
+    /// The base type matters to T5. A singleton field typed <c>TenantAccess</c> holds one tenant's
+    /// proof exactly as a field typed <c>TenantScope</c> does, and a rule matching only the derived
+    /// name would miss it - which is the shape of defect this whole project exists to catch.
+    /// </remarks>
+    public static readonly ImmutableHashSet<string> TenantAccessSimpleNames = ImmutableHashSet.Create(
+        StringComparer.Ordinal,
+        TenantScopeSimpleName,
+        TenantDatabaseHandleSimpleName,
+        "TenantAccess");
+
+    /// <summary>ADR-0007 §4.1. The backtick-one suffix is metadata's spelling of one type parameter.</summary>
+    public const string TenantDbContextFactorySimpleName = "ITenantDbContextFactory`1";
+
+    /// <summary>
+    /// ADR-0027 §1's DDL-path sibling, which the ADR says carries "the same fitness rule as
+    /// ADR-0007 §4.2".
+    /// </summary>
+    public const string TenantMigrationContextFactorySimpleName = "ITenantMigrationContextFactory`1";
+
+    /// <summary>Both factory interfaces T3 confines to the tenancy assembly.</summary>
+    public static readonly ImmutableHashSet<string> TenantContextFactorySimpleNames = ImmutableHashSet.Create(
+        StringComparer.Ordinal,
+        TenantDbContextFactorySimpleName,
+        TenantMigrationContextFactorySimpleName);
+
+    /// <summary>
+    /// The one assembly in which the <c>AddDbContext</c> family may be called (ADR-0007 §4.2 as
+    /// amended by ADR-0032 §4.1 - the part of that ADR its review confirmed). An <b>exact</b> name,
+    /// because T2 keys on the call site's assembly and a prefix would be a name the call site could
+    /// choose. B-05 creates the project.
+    /// </summary>
+    public const string TenancyAssemblyName = "Aurora.Platform.Tenancy";
+
+    /// <summary>
+    /// The assembly-name prefix T3 and T6 allow-list, matched by <see cref="IsWithin"/> - the
+    /// assembly itself or a dotted segment below it (<c>Aurora.Platform.Tenancy.Contracts</c>),
+    /// never a name that merely starts with it (<c>Aurora.Platform.TenancyBypass</c>).
+    /// </summary>
+    /// <remarks>
+    /// <b>Interim, pending ADR-0032 §4.4.</b> This is a floor, not the decision: the ADR replaces
+    /// prefixes with exact assembly names, and its first draft is being revised over which names
+    /// it must list. The segment-bounded form refuses the executed bypass (re-review m-2) and
+    /// admits the contracts assembly that draft wrongly omitted, so it is strictly better than a
+    /// plain prefix under either outcome - but it still lets any
+    /// <c>Aurora.Platform.Tenancy.Anything</c> authorise itself, one segment further down, which
+    /// only an exact list closes. Whoever implements the ADR replaces this, and the tests that pin
+    /// it, with the exact set.
+    /// </remarks>
+    public const string TenancyAssemblyPrefix = "Aurora.Platform.Tenancy";
+
+    /// <summary>
+    /// Is <paramref name="assemblyName"/> the assembly <paramref name="prefix"/> names, or one in a
+    /// dotted segment below it? <c>Aurora.Platform.Tenancy.Contracts</c> is; <c>Aurora.Platform.TenancyBypass</c>
+    /// is not.
+    /// </summary>
+    public static bool IsWithin(string assemblyName, string prefix) =>
+        string.Equals(assemblyName, prefix, StringComparison.Ordinal)
+        || assemblyName.StartsWith(prefix + ".", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The catalog context's full name, where B-05 declares it
+    /// (<c>src/platform/Aurora.Platform.Tenancy/Catalog/CatalogDbContext.cs</c>).
+    /// </summary>
+    public const string CatalogDbContext = "Aurora.Platform.Tenancy.Catalog.CatalogDbContext";
+
+    /// <summary>
+    /// The one shared database's context, registered conventionally (ADR-0003 rule 3) and
+    /// therefore the one <c>DbContext</c> the tenancy rules exempt - as this exact pair and nothing
+    /// looser (ADR-0032 §4.3).
+    /// </summary>
+    /// <remarks>
+    /// If B-05 lands the context at another name or in another assembly, it is a tenant context
+    /// to every rule here: T1 fires on its public constructor and the inertness guard in
+    /// <c>RuleInventoryTests</c> turns red, and whoever integrates B-05 changes this pair - a
+    /// reviewable diff, not a silent widening. Any other type called <c>CatalogDbContext</c> - a
+    /// product catalog in some module, say - is a tenant context like every other
+    /// <c>DbContext</c>, and the same guard says so.
+    /// </remarks>
+    public static readonly NonTenantContext CatalogContext = new(CatalogDbContext, TenancyAssemblyName);
+
+    /// <summary>
+    /// Every <c>DbContext</c> that is <b>not</b> a tenant context: the catalog, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// This is the one way a <c>DbContext</c> escapes the tenancy rules, so it is a list of exact
+    /// pairs, kept to one entry, and asserted by a test. Adding to it is a reviewable diff
+    /// (ADR-0032 §9 names the case: a second shared store).
+    /// </remarks>
+    public static readonly ImmutableArray<NonTenantContext> NonTenantContexts = [CatalogContext];
+
+    /// <summary>Is this type one of the exempt pairs?</summary>
+    public static bool IsNonTenantContext(ScannedType type) => NonTenantContexts.Any(pair => pair.Matches(type));
+
+    /// <summary>
+    /// Every tenant <c>DbContext</c> in the population: every type whose base chain reaches
+    /// <c>DbContext</c> and that is not an exempt pair.
+    /// </summary>
+    public static ImmutableArray<ScannedType> TenantContextsIn(TypeIndex index) =>
+    [
+        .. index.All.Where(type => index.DerivesFrom(type, DbContext) && !IsNonTenantContext(type)),
+    ];
+
+    /// <summary>Does this type use name a tenant access proof - a scope, a handle, or their base?</summary>
+    public static bool MentionsTenantAccess(TypeUse use) =>
+        use.Names.Any(static name => TenantAccessSimpleNames.Contains(TypeIndex.SimpleNameOf(name)));
+
+    /// <summary>Does this type use name ADR-0027's DDL-path handle?</summary>
+    public static bool MentionsTenantDatabaseHandle(TypeUse use) =>
+        use.Names.Any(static name =>
+            string.Equals(TypeIndex.SimpleNameOf(name), TenantDatabaseHandleSimpleName, StringComparison.Ordinal));
+}
