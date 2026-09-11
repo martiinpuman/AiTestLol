@@ -77,3 +77,22 @@ ADR-0007 §11 gives two backup mechanisms: continuous cluster-level point-in-tim
 > *(Noted by the orchestrator: the recommendation had been shared-schema + row-level security. The human chose the stronger-isolation option. Consequences — per-tenant migration orchestration, connection pooling limits, and provisioning cost — are the architect's to design for, not to relitigate. See ADR on multi-tenancy.)*
 
 ---
+
+## 2026-09-11 — Session policy (OPEN, not blocking)
+
+**Q. How long should a signed-in session last in a product holding ledgers and payment data?**
+
+ADR-0029 §3 and ADR-0009 rule 3 currently set **8-hour sliding, 12-hour absolute, revalidated
+every 30 minutes** — meaning an idle user stays signed in for 8 hours, nobody stays signed in past
+12 regardless of activity, and a revoked role or suspended tenant takes effect within 30 minutes
+even inside a live Blazor circuit.
+
+These are architect defaults, not a product decision. The alternative an accountant-facing product
+often takes is a much shorter idle timeout — 30 to 60 minutes — on the grounds that an unattended
+workstation in a shared office is the realistic threat, not credential theft.
+
+> **What an answer changes:** the numbers only. No architecture changes either way, and the
+> mechanism is built to make them configurable. But it is cheap to change now and expensive once
+> tenants have habits, so it is worth asking before B-18.5 and B-18.6 are built.
+>
+> **Proceeding on the architect's defaults** unless the product owner says otherwise.
