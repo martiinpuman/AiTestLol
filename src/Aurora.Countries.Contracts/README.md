@@ -1,10 +1,13 @@
 # Aurora.Countries.Contracts
 
 Tier 0 (`docs/architecture/modules.md` §3). The ten extension points a Country Package implements,
-and the values those extension points are expressed in. **This is the only core assembly a Country
-Package may reference** (ADR-0008 §3.1) — `Aurora.Countries.Hosting` refuses to load a package that
-references any other `Aurora.*` assembly, and refuses it again at runtime if the package asks by
-name.
+and the values those extension points are expressed in. **A package may reference this assembly and
+the two tier-0 assemblies it is expressed in — `Aurora.SharedKernel` and
+`Aurora.Documents.Canonical` — and no other `Aurora.*` assembly.** The mechanism is
+`PackageAssemblyReferenceRule` in `Aurora.Countries.Hosting`: an allowlist of those three names,
+checked against the package's reference table from metadata before any of its code runs. ADR-0008
+§3.1 names only this assembly; `Money`, `DateRange` and the canonical documents the extension points
+are stated in live in the other two, so the rule as enforced admits those as well.
 
 Its public surface is a versioned contract. `PublicAPI.Shipped.txt` is the approved snapshot;
 `Microsoft.CodeAnalysis.PublicApiAnalyzers` fails the build (RS0016) on any public member missing

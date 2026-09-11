@@ -38,12 +38,16 @@ versions, resolved inside its own load context; and whatever each extension poin
 argument — a canonical document, a batch of payment instructions, an `IInterchangeSource` to pull
 from, a `Stream` to write to.
 
-**Cannot, by construction:** any other `Aurora.*` assembly. The reference rule refuses it from
-metadata before loading, and `CountryPackageLoadContext.Load` throws
-`PackageReferenceRefusedException` if a package asks for one by name at runtime — otherwise the
-default context would happily hand over the host's own copy. There is no `DbContext`, no connection
-string, no service provider and no tenant anywhere in the contract, so a package cannot reach a
-tenant the caller did not open.
+**Cannot declare:** a reference to any other `Aurora.*` assembly. `PackageAssemblyReferenceRule`
+refuses it from the package's metadata before any of its code runs, and that is the control that
+matters: a package that statically references core's internals is never executed.
+`CountryPackageLoadContext.Load` also throws `PackageReferenceRefusedException` when a package asks
+for such an assembly by name through its own context, so an implicit bind does not quietly fall
+through to the host's copy — but that override guards the implicit binding path only. Code that is
+already running can call `AssemblyLoadContext.Default` directly, in one line, and get the host's
+live assemblies; the override is a tripwire on the ordinary path, not a confinement boundary (see
+the next paragraph). There is no `DbContext`, no connection string, no service provider and no
+tenant anywhere in the contract, so a package cannot reach a tenant the caller did not open.
 
 **Cannot, because it is not built yet, but is not prevented either:** everything else a process can
 do. An `AssemblyLoadContext` is version isolation and unloadability, **not a sandbox**
