@@ -12,7 +12,7 @@
     aurora_app - so the tests exercise the privilege model the deployment will actually have,
     not the container's superuser.
 
-    CatalogSchemaAllowlist.cs is linked from the unit test project so the ADR-0007 9.3 guard
+    CatalogSchemaGuard.cs is linked from the unit test project so the ADR-0007 9.3 guard
     reads one allowlist whether it is checking the EF model (unit) or the migrated schema (here).
   -->
 
@@ -35,7 +35,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\unit\Aurora.Platform.Tenancy.UnitTests\CatalogSchemaAllowlist.cs" Link="CatalogSchemaAllowlist.cs" />
+    <Compile Include="..\..\unit\Aurora.Platform.Tenancy.UnitTests\CatalogSchemaGuard.cs" Link="CatalogSchemaGuard.cs" />
   </ItemGroup>
 
 </Project>
