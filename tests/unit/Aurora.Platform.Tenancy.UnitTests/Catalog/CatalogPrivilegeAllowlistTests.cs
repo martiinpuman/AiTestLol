@@ -11,10 +11,11 @@ namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 
 /// <summary>
 /// The privilege record, held to its own rules in verify.sh stage 6 with Docker stopped: it names
-/// every catalog table and nothing else, spells each grant the way the ACL reads back, names the
-/// component that needs each grant, and never lets the request path delete a row or rewrite one it
-/// is routed by. The integration test then holds the database to the record
-/// (<c>CatalogPrivilegeTests</c>).
+/// every catalog table and nothing else, decides the schema and every other object the oracle
+/// reads by a kind the oracle knows, spells each grant the way the ACL reads back, names the
+/// component that needs each grant, and never lets the request path delete a row, create or
+/// rewrite one it is routed by, or create in the schema. The integration test then holds the
+/// database to the record (<c>CatalogPrivilegeTests</c>).
 /// </summary>
 /// <remarks>
 /// Every test here is a check over static data, and each can fail in exactly one way: by the record
@@ -23,9 +24,16 @@ namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 /// </remarks>
 public sealed partial class CatalogPrivilegeAllowlistTests
 {
-    private static readonly IReadOnlyList<(string Table, AppRoleGrant Grant)> Recorded =
+    /// <summary>Every decision, tables and other objects alike, one row per grant.</summary>
+    private static readonly IReadOnlyList<(CatalogObject Object, AppRoleGrant Grant)> Recorded =
     [
-        .. CatalogSchemaAllowlist.AppRolePrivileges.SelectMany(table => table.Value.Select(grant => (table.Key, grant))),
+        .. CatalogSchemaAllowlist.AppRoleDecisions.SelectMany(decision => decision.Value.Select(grant => (decision.Key, grant))),
+    ];
+
+    /// <summary>The table decisions alone, by table name, for the rules that are about rows and columns.</summary>
+    private static readonly IReadOnlyList<(string Table, AppRoleGrant Grant)> RecordedOnTables =
+    [
+        .. Recorded.Where(r => r.Object.Kind == CatalogObject.Table).Select(r => (r.Object.Name, r.Grant)),
     ];
 
     private readonly ITestOutputHelper _output;
@@ -42,34 +50,56 @@ public sealed partial class CatalogPrivilegeAllowlistTests
     }
 
     [Fact]
+    public void The_schema_is_decided_and_every_other_object_decision_names_a_kind_the_oracle_reads()
+    {
+        // The oracle keys what it reads by kind - schema, sequence, function, procedure, type -
+        // so a decision recorded under a kind it never emits would be reported as an object that
+        // does not exist, and a table recorded here rather than in AppRolePrivileges would be
+        // reported twice. The schema is the one object of another kind the catalog has today,
+        // and the request path may use it and not create in it: CREATE on the schema is what let
+        // the second security re-review launder a write through an updatable view.
+        List<CatalogObject> objects = [.. CatalogSchemaAllowlist.AppRoleObjectPrivileges.Keys];
+        _output.WriteLine($"Checked {objects.Count} object decision(s) besides tables: {string.Join(", ", objects)}.");
+        objects.ShouldNotBeEmpty();
+
+        foreach (CatalogObject catalogObject in objects)
+        {
+            CatalogSchemaAllowlist.ObjectKinds.ShouldContain(catalogObject.Kind, $"{catalogObject} is recorded under a kind the oracle does not read");
+        }
+
+        CatalogSchemaAllowlist.AppRoleObjectPrivileges[new CatalogObject(CatalogObject.Schema, "catalog")]
+            .Select(grant => grant.Privilege).ShouldBe(["USAGE"]);
+    }
+
+    [Fact]
     public void Every_recorded_privilege_is_spelled_the_way_the_ACL_reads_back()
     {
-        // A table privilege is the upper-case word PostgreSQL's aclexplode returns; a column
-        // privilege is that word with the column in parentheses, no space. The integration test
-        // builds the same spelling from relacl and attacl, so any other form - "select", "UPDATE
-        // (state)", a stray "WITH GRANT OPTION" - could never match and would fail there as a
-        // privilege the role does not hold. Failing here is the cheaper place.
+        // A privilege is the upper-case word PostgreSQL's aclexplode returns; a column privilege
+        // is that word with the column in parentheses, no space. The integration test builds the
+        // same spelling from the ACL, so any other form - "select", "UPDATE (state)", a stray
+        // "WITH GRANT OPTION" - could never match and would fail there as a privilege the role
+        // does not hold. Failing here is the cheaper place.
         _output.WriteLine($"Checked the spelling of {Recorded.Count} recorded grants.");
         Recorded.ShouldNotBeEmpty();
 
-        foreach ((string table, AppRoleGrant grant) in Recorded)
+        foreach ((CatalogObject catalogObject, AppRoleGrant grant) in Recorded)
         {
-            PrivilegeLabel().IsMatch(grant.Privilege).ShouldBeTrue($"{grant.Privilege} on catalog.{table}");
+            PrivilegeLabel().IsMatch(grant.Privilege).ShouldBeTrue($"{grant.Privilege} on {catalogObject}");
         }
     }
 
     [Fact]
     public void Every_recorded_privilege_names_the_task_or_the_decision_that_needs_it()
     {
-        // The reviewer of the next catalog table has something to compare against only if each
+        // The reviewer of the next catalog object has something to compare against only if each
         // grant says who issues the statement: a backlog task (B-nn, B-nn.n, FOLLOWUP-nnn) or the
         // ADR section that specifies the component. A grant that names neither was not decided.
         _output.WriteLine($"Checked {Recorded.Count} recorded grants for a named component.");
         Recorded.ShouldNotBeEmpty();
 
-        foreach ((string table, AppRoleGrant grant) in Recorded)
+        foreach ((CatalogObject catalogObject, AppRoleGrant grant) in Recorded)
         {
-            NamedComponent().IsMatch(grant.NeededBy).ShouldBeTrue($"{grant.Privilege} on catalog.{table}: '{grant.NeededBy}'");
+            NamedComponent().IsMatch(grant.NeededBy).ShouldBeTrue($"{grant.Privilege} on {catalogObject}: '{grant.NeededBy}'");
         }
     }
 
@@ -77,7 +107,7 @@ public sealed partial class CatalogPrivilegeAllowlistTests
     public void A_column_privilege_names_a_column_the_table_has()
     {
         List<(string Table, string Column)> columnGrants =
-            [.. Recorded.Select(r => (r.Table, ColumnOf(r.Grant.Privilege))).Where(r => r.Item2 is not null).Select(r => (r.Table, r.Item2!))];
+            [.. RecordedOnTables.Select(r => (r.Table, ColumnOf(r.Grant.Privilege))).Where(r => r.Item2 is not null).Select(r => (r.Table, r.Item2!))];
 
         // The lifecycle columns of catalog.tenant are column grants, so this cannot be checking an
         // empty list.
@@ -125,7 +155,7 @@ public sealed partial class CatalogPrivilegeAllowlistTests
         // The request path therefore holds no INSERT on a routing table at all; the saga's writes
         // are another principal's.
         int examined = 0;
-        foreach ((string table, AppRoleGrant grant) in Recorded)
+        foreach ((string table, AppRoleGrant grant) in RecordedOnTables)
         {
             if (!CatalogSchemaAllowlist.RoutingColumns.TryGetValue(table, out IReadOnlySet<string>? routing))
             {

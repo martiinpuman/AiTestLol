@@ -32,12 +32,15 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// <b>Downwards:</b> <c>aurora_app</c> has no DDL and cannot touch the migrations history. But
 /// the routing decision lives in rows, not in the schema — which tenant a host resolves to, which
 /// cluster and database a tenant resolves to, which host a cluster is — so what matters is which
-/// rows it can write. It holds on each catalog table exactly what
-/// <c>CatalogSchemaAllowlist.AppRolePrivileges</c> records, read back from the ACL entry by entry,
-/// and that record lets it insert a tenant and a host, move a tenant's lifecycle columns and write
-/// <c>installed_package</c>: never write a cluster, never update a column a tenant or a host
-/// resolves by, never delete a row. The takeover the security re-review ran with the grants B-05
-/// first shipped is tried here, statement by statement, as the role.
+/// rows it can write. It holds on every object in <c>catalog</c> exactly what
+/// <c>CatalogSchemaAllowlist</c> records, read back from the ACL entry by entry — tables, columns,
+/// the schema, and the sequences, functions and types that do not exist yet but whose PostgreSQL
+/// defaults are open — and that record lets it read the routing decision, move a tenant's
+/// lifecycle columns and write <c>installed_package</c>: never create a tenant or a host, never
+/// write a cluster, never update a column a tenant or a host resolves by, never delete a row, never
+/// call a function no migration opened to it. The takeovers two security re-reviews ran — with the
+/// grants B-05 first shipped, then with <c>INSERT</c> alone, then through a <c>SECURITY DEFINER</c>
+/// function — are tried here, statement by statement, as the role.
 /// </description></item>
 /// <item><description>
 /// <b>Sideways:</b> on this fixture's cluster <c>aurora_app</c> can open the catalog and no other
@@ -62,35 +65,58 @@ public sealed class CatalogPrivilegeTests
     private const string InsufficientPrivilege = "42501";
 
     /// <summary>
-    /// Every ACL entry on every relation in <c>catalog</c> that reaches the app role: the
-    /// table-level entries of <c>pg_class.relacl</c> and the column-level entries of
-    /// <c>pg_attribute.attacl</c>, exploded one privilege per row, kept where the grantee is the
-    /// role itself, <c>PUBLIC</c>, or a role it inherits from. Reading the ACL rather than asking
-    /// <c>has_table_privilege</c> about a list of names is what closes the comparison: a column
-    /// grant, a privilege a later PostgreSQL release adds and a grant that arrives through another
-    /// role are all entries, and every entry the record does not name is a difference. The
-    /// relation kinds are every kind a table privilege applies to, and the LEFT JOIN keeps a
-    /// relation with no entry at all in the result, so a table the role cannot touch is still a
-    /// row the record has to account for.
+    /// Every ACL entry on every object in schema <c>catalog</c> that reaches the app role — the
+    /// schema itself (<c>pg_namespace.nspacl</c>), its tables and sequences
+    /// (<c>pg_class.relacl</c>) and their columns (<c>pg_attribute.attacl</c>), its functions and
+    /// procedures (<c>pg_proc.proacl</c>) and its types (<c>pg_type.typacl</c>) — exploded one
+    /// privilege per row, kept where the grantee is the role itself, <c>PUBLIC</c>, or a role the
+    /// app role is a member of by any route: inherited, reachable by <c>SET ROLE</c>, or neither
+    /// (<c>pg_has_role … 'MEMBER'</c>; <c>'USAGE'</c> alone was blind to a membership granted
+    /// <c>WITH INHERIT FALSE, SET TRUE</c>, the second security re-review's M-3). A <c>NULL</c> ACL
+    /// is read as what it means — the owner default for that object class, <c>acldefault()</c> —
+    /// rather than as no entries, because for a function and a type that default includes
+    /// <c>PUBLIC</c>. Reading the ACL rather than asking <c>has_*_privilege</c> about a list of
+    /// names is what closes the comparison: a column grant, a privilege a later PostgreSQL release
+    /// adds and a grant that arrives through another role are all entries, and every entry the
+    /// record does not name is a difference. The LEFT JOIN keeps an object with no entry at all in
+    /// the result, so an object the role cannot touch is still a row the record has to account
+    /// for. Not read here: <c>pg_default_acl</c>, which has no object until one is created —
+    /// <c>The_catalog_sets_exactly_one_default_privilege…</c> reads it on its own.
     /// </summary>
     private const string AclEntriesSql =
-        "WITH relation AS (" +
-        "  SELECT c.oid, c.relname, c.relacl FROM pg_class c" +
-        "  JOIN pg_namespace n ON n.oid = c.relnamespace" +
-        "  WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p', 'v', 'm', 'f'))," +
-        " entry AS (" +
-        "  SELECT r.relname, acl.privilege_type, NULL::text AS column_name, acl.grantee, acl.is_grantable" +
-        "  FROM relation r CROSS JOIN LATERAL aclexplode(r.relacl) AS acl" +
+        "WITH object AS (" +
+        "  SELECT CASE WHEN c.relkind = 'S' THEN 'sequence' ELSE 'table' END AS kind, c.relname::text AS name, c.oid AS reloid," +
+        "         COALESCE(c.relacl, acldefault((CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END)::\"char\", c.relowner)) AS acl" +
+        "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace" +
+        "  WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')" +
         "  UNION ALL" +
-        "  SELECT r.relname, acl.privilege_type, a.attname::text, acl.grantee, acl.is_grantable" +
-        "  FROM relation r" +
-        "  JOIN pg_attribute a ON a.attrelid = r.oid AND a.attnum > 0 AND NOT a.attisdropped" +
+        "  SELECT CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END," +
+        "         p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', NULL::oid," +
+        "         COALESCE(p.proacl, acldefault('f'::\"char\", p.proowner))" +
+        "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'catalog'" +
+        "  UNION ALL" +
+        "  SELECT 'type', t.typname::text, NULL::oid, COALESCE(t.typacl, acldefault('T'::\"char\", t.typowner))" +
+        "  FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace" +
+        "  WHERE n.nspname = 'catalog' AND t.typcategory <> 'A'" +
+        "    AND (t.typrelid = 0 OR EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))" +
+        "  UNION ALL" +
+        "  SELECT 'schema', n.nspname::text, NULL::oid, COALESCE(n.nspacl, acldefault('n'::\"char\", n.nspowner))" +
+        "  FROM pg_namespace n WHERE n.nspname = 'catalog')," +
+        " entry AS (" +
+        "  SELECT o.kind, o.name, acl.privilege_type, NULL::text AS column_name, acl.grantee, acl.is_grantable" +
+        "  FROM object o CROSS JOIN LATERAL aclexplode(o.acl) AS acl" +
+        "  UNION ALL" +
+        "  SELECT o.kind, o.name, acl.privilege_type, a.attname::text, acl.grantee, acl.is_grantable" +
+        "  FROM object o" +
+        "  JOIN pg_attribute a ON a.attrelid = o.reloid AND a.attnum > 0 AND NOT a.attisdropped" +
         "  CROSS JOIN LATERAL aclexplode(a.attacl) AS acl)" +
-        " SELECT r.relname, e.privilege_type, e.column_name, e.is_grantable," +
-        "        CASE WHEN e.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(e.grantee) END" +
-        " FROM relation r" +
-        " LEFT JOIN entry e ON e.relname = r.relname" +
-        "   AND (e.grantee = 0 OR pg_has_role(@role, e.grantee, 'USAGE'))";
+        " SELECT o.kind, o.name, e.privilege_type, e.column_name, e.is_grantable," +
+        "        CASE WHEN e.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(e.grantee) END," +
+        "        CASE WHEN e.grantee = 0 THEN true ELSE pg_has_role(@role, e.grantee, 'USAGE') END," +
+        "        CASE WHEN e.grantee = 0 THEN true ELSE pg_has_role(@role, e.grantee, 'SET') END" +
+        " FROM object o" +
+        " LEFT JOIN entry e ON e.kind = o.kind AND e.name = o.name" +
+        "   AND (e.grantee = 0 OR pg_has_role(@role, e.grantee, 'MEMBER'))";
 
     private readonly CatalogDatabaseFixture _catalog;
     private readonly ITestOutputHelper _output;
@@ -102,22 +128,26 @@ public sealed class CatalogPrivilegeTests
     }
 
     [Fact]
-    public async Task The_app_role_holds_exactly_the_table_privileges_the_allowlist_records_and_nothing_on_any_other_catalog_table()
+    public async Task The_app_role_holds_exactly_the_privileges_the_allowlist_records_and_nothing_on_any_other_catalog_object()
     {
         await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
         HeldPrivileges held = await PrivilegesHeldAsync(connection, null);
 
-        List<string> differences = Differences(held.ByRelation, CatalogSchemaAllowlist.AppRolePrivileges);
+        List<string> differences = Differences(held.ByObject, CatalogSchemaAllowlist.AppRoleDecisions);
 
         // Say what was inspected, not only that it matched, so a pass is not indistinguishable
         // from a query that returned no rows (CLAUDE.md self-check 2). It cannot pass on nothing:
-        // a query that returned no entries would report every recorded privilege as not held.
+        // a query that returned no entries would report every recorded privilege as not held, and
+        // every kind is counted, zeros included, so a kind the query stopped reading shows as 0.
         _output.WriteLine(
-            $"Read {held.AclEntries} ACL entries reaching {CatalogDatabaseFixture.AppRole} across {held.ByRelation.Count} catalog relations "
-            + $"(pg_class.relacl and pg_attribute.attacl); it holds {held.ByRelation.Sum(relation => relation.Value.Count)} distinct privileges.");
+            $"Read {held.AclEntries} ACL entries reaching {CatalogDatabaseFixture.AppRole} across {held.ByObject.Count} catalog objects "
+            + $"({held.CountByKind()}) from pg_namespace.nspacl, pg_class.relacl, pg_attribute.attacl, pg_proc.proacl and pg_type.typacl, "
+            + $"a NULL ACL read as the owner default; it holds {held.ByObject.Sum(o => o.Value.Count)} distinct privileges.");
 
         differences.ShouldBeEmpty(string.Join(Environment.NewLine, differences));
-        held.ByRelation.Count.ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
+        held.ByObject.Count.ShouldBe(CatalogSchemaAllowlist.AppRoleDecisions.Count);
+        held.ByObject.Keys.Count(o => o.Kind == CatalogObject.Table).ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
+        held.ByObject.Keys.ShouldContain(new CatalogObject(CatalogObject.Schema, "catalog"));
     }
 
     [Fact]
@@ -134,6 +164,13 @@ public sealed class CatalogPrivilegeTests
         // without naming it; and a grant the role could pass on. The column grant, MAINTAIN and
         // PUBLIC are the security re-review's H-1: each one left the seven-privilege enumeration
         // this oracle replaced reporting a perfect match.
+        //
+        // And the object classes that are not tables, where the second security re-review found
+        // the oracle blind (H-5, L-1): a function - closed, because the migration's one default
+        // privilege revokes PUBLIC's EXECUTE from every function aurora_migrator creates, yet still
+        // an object the record must decide; a function opened to the role by name; a sequence
+        // granted to the role; a type, whose PostgreSQL default is USAGE to PUBLIC and which no
+        // default here closes; and CREATE on the schema itself.
         string arrival = Unique.Identifier("drift");
         foreach (string sql in new[]
                  {
@@ -144,6 +181,13 @@ public sealed class CatalogPrivilegeTests
                      $"GRANT MAINTAIN ON catalog.subscription TO {CatalogDatabaseFixture.AppRole}",
                      "GRANT SELECT ON catalog.installed_package TO PUBLIC",
                      $"GRANT TRIGGER ON catalog.installed_package TO {CatalogDatabaseFixture.AppRole} WITH GRANT OPTION",
+                     $"CREATE FUNCTION catalog.{arrival}_fn() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+                     $"CREATE FUNCTION catalog.{arrival}_open() RETURNS int LANGUAGE sql AS 'SELECT 1'",
+                     $"GRANT EXECUTE ON FUNCTION catalog.{arrival}_open() TO {CatalogDatabaseFixture.AppRole}",
+                     $"CREATE SEQUENCE catalog.{arrival}_seq",
+                     $"GRANT USAGE ON SEQUENCE catalog.{arrival}_seq TO {CatalogDatabaseFixture.AppRole}",
+                     $"CREATE TYPE catalog.{arrival}_t AS ENUM ('a')",
+                     $"GRANT CREATE ON SCHEMA catalog TO {CatalogDatabaseFixture.AppRole}",
                  })
         {
             await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -151,11 +195,11 @@ public sealed class CatalogPrivilegeTests
         }
 
         List<string> differences = Differences(
-            (await PrivilegesHeldAsync(connection, transaction)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges);
+            (await PrivilegesHeldAsync(connection, transaction)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions);
 
         await transaction.RollbackAsync();
 
-        differences.Count.ShouldBe(7, string.Join(Environment.NewLine, differences));
+        differences.Count.ShouldBe(12, string.Join(Environment.NewLine, differences));
         differences.ShouldContain(d => d.Contains($"catalog.{arrival} exists but", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds TRUNCATE on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("records SELECT on catalog.tenant_host, which aurora_app does not hold", StringComparison.Ordinal));
@@ -163,19 +207,32 @@ public sealed class CatalogPrivilegeTests
         differences.ShouldContain(d => d.Contains("holds MAINTAIN on catalog.subscription, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds SELECT through PUBLIC on catalog.installed_package, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds TRIGGER WITH GRANT OPTION on catalog.installed_package, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains($"function catalog.{arrival}_fn() exists but", StringComparison.Ordinal) && d.EndsWith("holds []", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains($"function catalog.{arrival}_open() exists but", StringComparison.Ordinal) && d.EndsWith("holds [EXECUTE]", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains($"sequence catalog.{arrival}_seq exists but", StringComparison.Ordinal) && d.EndsWith("holds [USAGE]", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains($"type catalog.{arrival}_t exists but", StringComparison.Ordinal) && d.EndsWith("holds [USAGE through PUBLIC]", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds CREATE on schema catalog, which the allowlist does not record", StringComparison.Ordinal));
 
         // And once rolled back, the grants match again - the failure above was the drift, not the test.
-        Differences((await PrivilegesHeldAsync(connection, null)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
+        Differences((await PrivilegesHeldAsync(connection, null)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions).ShouldBeEmpty();
     }
 
-    [Fact]
-    public async Task A_privilege_that_reaches_the_app_role_through_another_role_is_reported_with_the_role_it_came_through()
+    [Theory]
+    [InlineData("", "")]
+    [InlineData(" WITH INHERIT FALSE, SET TRUE", " (SET ROLE)")]
+    [InlineData(" WITH INHERIT FALSE, SET FALSE", " (member, neither INHERIT nor SET)")]
+    public async Task A_privilege_that_reaches_the_app_role_through_another_role_is_reported_with_the_role_it_came_through(string membership, string route)
     {
         // GRANT REFERENCES ON catalog.tenant TO <role>; GRANT <role> TO aurora_app. The ACL names the
-        // other role, and aurora_app holds the privilege all the same, by inherited membership. The
-        // oracle has to follow membership, or this is the one grant that hides from it. Creating a
-        // role is cluster-level DDL none of the three roles may issue, so this fault alone is
-        // injected as the superuser, inside a transaction that is rolled back.
+        // other role, and aurora_app holds the privilege all the same - by inheritance with the
+        // default membership, or one SET ROLE later with INHERIT FALSE, SET TRUE, which is the
+        // shape the second security re-review used to take a tenant over while an oracle asking
+        // pg_has_role(..., 'USAGE') reported a perfect match (M-3). A membership that is neither
+        // inherited nor assumable grants nothing today and is reported anyway, because it is one
+        // ADMIN OPTION away from either. The oracle has to follow membership by every route, or
+        // this is the grant that hides from it. Creating a role is cluster-level DDL none of the
+        // three roles may issue, so this fault alone is injected as the superuser, inside a
+        // transaction that is rolled back.
         string role = Unique.Identifier("drift_role");
         await using NpgsqlConnection connection = await _catalog.OpenSuperuserConnectionAsync();
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
@@ -183,7 +240,7 @@ public sealed class CatalogPrivilegeTests
         foreach (string sql in new[]
                  {
                      $"CREATE ROLE {role}",
-                     $"GRANT {role} TO {CatalogDatabaseFixture.AppRole}",
+                     $"GRANT {role} TO {CatalogDatabaseFixture.AppRole}{membership}",
                      $"GRANT REFERENCES ON catalog.tenant TO {role}",
                  })
         {
@@ -192,15 +249,136 @@ public sealed class CatalogPrivilegeTests
         }
 
         List<string> differences = Differences(
-            (await PrivilegesHeldAsync(connection, transaction)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges);
+            (await PrivilegesHeldAsync(connection, transaction)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions);
 
         await transaction.RollbackAsync();
 
         differences.Count.ShouldBe(1, string.Join(Environment.NewLine, differences));
-        differences[0].ShouldContain($"holds REFERENCES through {role} on catalog.tenant, which the allowlist does not record");
+        differences[0].ShouldContain($"holds REFERENCES through {role}{route} on catalog.tenant, which the allowlist does not record");
 
         // Rolled back, neither the role nor its grant is left behind.
-        Differences((await PrivilegesHeldAsync(connection, null)).ByRelation, CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
+        Differences((await PrivilegesHeldAsync(connection, null)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_function_whose_ACL_is_null_reads_as_EXECUTE_through_PUBLIC_not_as_nothing()
+    {
+        // aclexplode(NULL) yields no rows, and a NULL ACL is not an empty one: it is the owner
+        // default, which for a function includes EXECUTE to PUBLIC. The migration's default
+        // privileges close the functions aurora_migrator creates; one created by anyone else -
+        // here the superuser, inside a transaction that is rolled back - keeps a NULL proacl, and
+        // the oracle has to materialise the default rather than read it as "holds nothing"
+        // (the second security re-review, H-5 and L-2).
+        string function = Unique.Identifier("drift_public");
+        await using NpgsqlConnection connection = await _catalog.OpenSuperuserConnectionAsync();
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
+
+        await using (var create = new NpgsqlCommand($"CREATE FUNCTION catalog.{function}() RETURNS int LANGUAGE sql AS 'SELECT 1'", connection, transaction))
+        {
+            await create.ExecuteNonQueryAsync();
+        }
+
+        await using (var acl = new NpgsqlCommand($"SELECT proacl IS NULL FROM pg_proc WHERE proname = '{function}'", connection, transaction))
+        {
+            ((bool)(await acl.ExecuteScalarAsync())!).ShouldBeTrue("the superuser's function carries no ACL of its own");
+        }
+
+        List<string> differences = Differences(
+            (await PrivilegesHeldAsync(connection, transaction)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions);
+
+        await transaction.RollbackAsync();
+
+        differences.Count.ShouldBe(1, string.Join(Environment.NewLine, differences));
+        differences[0].ShouldContain($"function catalog.{function}() exists but");
+        differences[0].ShouldEndWith("holds [EXECUTE through PUBLIC]");
+    }
+
+    [Fact]
+    public async Task A_function_in_the_catalog_is_closed_to_the_app_role_and_is_a_decision_the_record_has_to_make()
+    {
+        // The second security re-review's H-5. PostgreSQL's default for a function inverts its
+        // default for a table: a new function is EXECUTE to PUBLIC with no GRANT for a reviewer
+        // to notice, and a SECURITY DEFINER body runs as its owner - the schema owner - so one
+        // function in catalog handed aurora_app the column-level UPDATE it does not hold, while
+        // the oracle, reading tables only, reported a perfect match. ADR-0028 section 2 mechanism
+        // 3 already orders a function into catalog. Two things must hold from now on: a function
+        // a migration creates is 42501 for the role until that migration opens it by name, and it
+        // is an object the record has to decide - this one is not recorded, so the oracle says so.
+        // Committed rather than rolled back because the point is to call it as aurora_app from its
+        // own connection; the collection runs one test at a time, and it is dropped whatever happens.
+        DatabaseCluster cluster = Unique.Cluster();
+        Tenant acme = Unique.Tenant(cluster);
+        await _catalog.SeedAsync(catalog =>
+        {
+            catalog.DatabaseClusters.Add(cluster);
+            catalog.Tenants.Add(acme);
+        });
+
+        // A database of the attacker's naming rather than another tenant's, so that what refuses
+        // the call is the privilege and not ux_tenant_cluster_id_database_name.
+        string elsewhere = Tenant.DatabaseNameFor(Unique.TenantKey());
+        string function = Unique.Identifier("touch_activity");
+        await using NpgsqlConnection migrator = await _catalog.OpenMigratorConnectionAsync();
+        await CatalogDatabaseFixture.ExecuteAsync(
+            migrator,
+            $"CREATE FUNCTION catalog.{function}(uuid, text) RETURNS void LANGUAGE sql SECURITY DEFINER AS "
+            + "'UPDATE catalog.tenant SET database_name = $2 WHERE id = $1'");
+
+        try
+        {
+            await RefusedAsAppAsync(
+                "calling a function in catalog that no migration opened to the role",
+                $"SELECT catalog.{function}(@acme, @database)",
+                [("acme", acme.Id.Value), ("database", elsewhere)]);
+
+            await using CatalogDbContext reader = _catalog.OpenAsApp();
+            (await reader.Tenants.SingleAsync(t => t.Id == acme.Id)).DatabaseName.ShouldBe(acme.DatabaseName);
+
+            List<string> differences = Differences(
+                (await PrivilegesHeldAsync(migrator, null)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions);
+            differences.Count.ShouldBe(1, string.Join(Environment.NewLine, differences));
+            differences[0].ShouldContain($"function catalog.{function}(uuid, text) exists but");
+        }
+        finally
+        {
+            await CatalogDatabaseFixture.ExecuteAsync(migrator, $"DROP FUNCTION catalog.{function}(uuid, text)");
+        }
+    }
+
+    [Fact]
+    public async Task The_catalog_sets_exactly_one_default_privilege_and_it_closes_new_functions_to_PUBLIC()
+    {
+        // The one ALTER DEFAULT PRIVILEGES in the catalog, and why it is not the kind the
+        // migration refuses: it revokes. Without it every function a migration adds is open to
+        // the role before anyone decided, the opposite of the table rule. A default has no object
+        // until one is created, so pg_default_acl is invisible to the ACL oracle - the re-review
+        // re-introduced a table default and the oracle read the same 14 rows - and is read here on
+        // its own, every row of it for this database whatever its scope: exactly one, database-
+        // wide (a per-schema REVOKE cannot remove a built-in default), for the owner, for
+        // functions, and its ACL names nobody but the owner. A second row, whatever it grants and
+        // wherever it is scoped, fails this test.
+        await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT r.rolname, d.defaclobjtype::text, COALESCE(n.nspname, 'database-wide'), "
+            + "  (SELECT string_agg(CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END || '=' || a.privilege_type, ', ' ORDER BY a.privilege_type) "
+            + "   FROM aclexplode(d.defaclacl) a) "
+            + "FROM pg_default_acl d "
+            + "JOIN pg_roles r ON r.oid = d.defaclrole "
+            + "LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace",
+            connection);
+
+        List<(string Role, string ObjectType, string Scope, string Entries)> defaults = [];
+        await using (NpgsqlDataReader reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                defaults.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+            }
+        }
+
+        _output.WriteLine($"Read {defaults.Count} default privilege(s) in the catalog database: {string.Join("; ", defaults)}.");
+
+        defaults.ShouldBe([(CatalogDatabaseFixture.MigratorRole, "f", "database-wide", $"{CatalogDatabaseFixture.MigratorRole}=EXECUTE")]);
     }
 
     [Fact]
@@ -482,56 +660,66 @@ public sealed class CatalogPrivilegeTests
     }
 
     /// <summary>
-    /// What the ACL says the app role holds, relation by relation, and how many entries said so.
-    /// A relation with no entry is present with an empty set: it exists, and the record has to
-    /// say what was decided for it.
+    /// What the ACL says the app role holds, object by object, and how many entries said so. An
+    /// object with no entry is present with an empty set: it exists, and the record has to say
+    /// what was decided for it.
     /// </summary>
-    private sealed record HeldPrivileges(IReadOnlyDictionary<string, IReadOnlySet<string>> ByRelation, int AclEntries);
+    private sealed record HeldPrivileges(IReadOnlyDictionary<CatalogObject, IReadOnlySet<string>> ByObject, int AclEntries)
+    {
+        /// <summary>How many objects of each kind were read, every kind the oracle knows, zeros included.</summary>
+        public string CountByKind() =>
+            string.Join(", ", CatalogSchemaAllowlist.ObjectKinds.Prepend(CatalogObject.Table)
+                .Select(kind => $"{ByObject.Keys.Count(o => o.Kind == kind)} {kind}"));
+    }
 
     private static async Task<HeldPrivileges> PrivilegesHeldAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
     {
         await using var command = new NpgsqlCommand(AclEntriesSql, connection, transaction);
         command.Parameters.AddWithValue("role", CatalogDatabaseFixture.AppRole);
 
-        var held = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        var held = new Dictionary<CatalogObject, HashSet<string>>();
         int entries = 0;
         await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            string relation = reader.GetString(0);
-            if (!held.TryGetValue(relation, out HashSet<string>? privileges))
+            var catalogObject = new CatalogObject(reader.GetString(0), reader.GetString(1));
+            if (!held.TryGetValue(catalogObject, out HashSet<string>? privileges))
             {
                 privileges = new HashSet<string>(StringComparer.Ordinal);
-                held[relation] = privileges;
+                held[catalogObject] = privileges;
             }
 
-            if (reader.IsDBNull(1))
+            if (reader.IsDBNull(2))
             {
                 continue;
             }
 
             entries++;
             privileges.Add(Label(
-                privilege: reader.GetString(1),
-                column: reader.IsDBNull(2) ? null : reader.GetString(2),
-                grantable: reader.GetBoolean(3),
-                grantee: reader.GetString(4)));
+                privilege: reader.GetString(2),
+                column: reader.IsDBNull(3) ? null : reader.GetString(3),
+                grantable: reader.GetBoolean(4),
+                grantee: reader.GetString(5),
+                inherited: reader.GetBoolean(6),
+                settable: reader.GetBoolean(7)));
         }
 
         return new HeldPrivileges(
-            held.ToDictionary(pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value, StringComparer.Ordinal),
+            held.ToDictionary(pair => pair.Key, pair => (IReadOnlySet<string>)pair.Value),
             entries);
     }
 
     /// <summary>
-    /// One ACL entry, spelled the way <c>CatalogSchemaAllowlist.AppRolePrivileges</c> spells a
-    /// decision: <c>SELECT</c>; <c>UPDATE(column)</c> for a column grant; then
-    /// <c>WITH GRANT OPTION</c> if the role could pass it on, and <c>through PUBLIC</c> or
-    /// <c>through &lt;role&gt;</c> if it reaches the app role without naming it. The allowlist
-    /// records only the first two forms, so an entry in either of the others is always a
+    /// One ACL entry, spelled the way <c>CatalogSchemaAllowlist</c> spells a decision:
+    /// <c>SELECT</c>; <c>UPDATE(column)</c> for a column grant; then <c>WITH GRANT OPTION</c> if
+    /// the role could pass it on, and <c>through PUBLIC</c> or <c>through &lt;role&gt;</c> if it
+    /// reaches the app role without naming it — with <c>(SET ROLE)</c> when the membership is not
+    /// inherited but can be assumed, and <c>(member, neither INHERIT nor SET)</c> when it is
+    /// neither, because a membership that grants nothing today is still one a reviewer should see.
+    /// The allowlist records only the first two forms, so an entry in any other is always a
     /// difference — a privilege the request path should hold is granted to it, directly.
     /// </summary>
-    private static string Label(string privilege, string? column, bool grantable, string grantee)
+    private static string Label(string privilege, string? column, bool grantable, string grantee, bool inherited, bool settable)
     {
         var label = new StringBuilder(privilege);
 
@@ -548,6 +736,11 @@ public sealed class CatalogPrivilegeTests
         if (!string.Equals(grantee, CatalogDatabaseFixture.AppRole, StringComparison.Ordinal))
         {
             label.Append(" through ").Append(grantee);
+
+            if (!inherited)
+            {
+                label.Append(settable ? " (SET ROLE)" : " (member, neither INHERIT nor SET)");
+            }
         }
 
         return label.ToString();
@@ -555,20 +748,20 @@ public sealed class CatalogPrivilegeTests
 
     /// <summary>
     /// Every way what the app role holds can differ from what the allowlist records, each as a
-    /// sentence a reviewer can act on. Empty means the two agree, table by table, both ways.
+    /// sentence a reviewer can act on. Empty means the two agree, object by object, both ways.
     /// </summary>
     private static List<string> Differences(
-        IReadOnlyDictionary<string, IReadOnlySet<string>> held,
-        IReadOnlyDictionary<string, IReadOnlyList<AppRoleGrant>> recorded)
+        IReadOnlyDictionary<CatalogObject, IReadOnlySet<string>> held,
+        IReadOnlyDictionary<CatalogObject, IReadOnlyList<AppRoleGrant>> recorded)
     {
         List<string> differences = [];
 
-        foreach ((string table, IReadOnlySet<string> privileges) in held.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        foreach ((CatalogObject catalogObject, IReadOnlySet<string> privileges) in held.OrderBy(pair => pair.Key.ToString(), StringComparer.Ordinal))
         {
-            if (!recorded.TryGetValue(table, out IReadOnlyList<AppRoleGrant>? grants))
+            if (!recorded.TryGetValue(catalogObject, out IReadOnlyList<AppRoleGrant>? grants))
             {
                 differences.Add(
-                    $"catalog.{table} exists but CatalogSchemaAllowlist.AppRolePrivileges records no decision for it; "
+                    $"{catalogObject} exists but CatalogSchemaAllowlist.{catalogObject.Record} records no decision for it; "
                     + $"{CatalogDatabaseFixture.AppRole} holds [{string.Join(", ", privileges.Order(StringComparer.Ordinal))}]");
                 continue;
             }
@@ -577,18 +770,18 @@ public sealed class CatalogPrivilegeTests
 
             foreach (string privilege in privileges.Except(decided).Order(StringComparer.Ordinal))
             {
-                differences.Add($"{CatalogDatabaseFixture.AppRole} holds {privilege} on catalog.{table}, which the allowlist does not record");
+                differences.Add($"{CatalogDatabaseFixture.AppRole} holds {privilege} on {catalogObject}, which the allowlist does not record");
             }
 
             foreach (string privilege in decided.Except(privileges).Order(StringComparer.Ordinal))
             {
-                differences.Add($"the allowlist records {privilege} on catalog.{table}, which {CatalogDatabaseFixture.AppRole} does not hold");
+                differences.Add($"the allowlist records {privilege} on {catalogObject}, which {CatalogDatabaseFixture.AppRole} does not hold");
             }
         }
 
-        foreach (string table in recorded.Keys.Except(held.Keys).Order(StringComparer.Ordinal))
+        foreach (CatalogObject catalogObject in recorded.Keys.Except(held.Keys).OrderBy(o => o.ToString(), StringComparer.Ordinal))
         {
-            differences.Add($"the allowlist records catalog.{table}, which does not exist in the migrated schema");
+            differences.Add($"the allowlist records {catalogObject}, which does not exist in the migrated schema");
         }
 
         return differences;

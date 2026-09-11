@@ -227,11 +227,11 @@ namespace Aurora.Platform.Tenancy.Migrations
             // without them fails here, loudly, rather than serving a catalog the application
             // cannot reach.
             //
-            // One grant per table, and no ALTER DEFAULT PRIVILEGES, on purpose. A default would
-            // hand every table a later migration creates the same privileges before anyone
-            // decided - on the append-only tables of ADR-0007 section 9.2 that is DELETE on an audit
-            // trail, which ADR-0004 rule 5 forbids - and it is permanent: a table created while
-            // the default was in force keeps the grant after the default is removed. So each
+            // One grant per table, and no ALTER DEFAULT PRIVILEGES that grants, on purpose. Such a
+            // default would hand every table a later migration creates the same privileges before
+            // anyone decided - on the append-only tables of ADR-0007 section 9.2 that is DELETE on
+            // an audit trail, which ADR-0004 rule 5 forbids - and it is permanent: a table created
+            // while the default was in force keeps the grant after the default is removed. So each
             // future catalog table grants exactly what it means in the migration that creates it
             // and records the decision in CatalogSchemaAllowlist.AppRolePrivileges; a forgotten
             // grant is a 42501 at first use, a forgotten record fails CatalogPrivilegeTests.
@@ -263,6 +263,32 @@ namespace Aurora.Platform.Tenancy.Migrations
             migrationBuilder.Sql("GRANT SELECT ON catalog.tenant_host TO aurora_app;");
             migrationBuilder.Sql("GRANT SELECT ON catalog.subscription TO aurora_app;");
             migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE ON catalog.installed_package TO aurora_app;");
+
+            // Functions invert the table rule. PostgreSQL grants EXECUTE on a new function to
+            // PUBLIC, so a function a later migration adds to catalog - ADR-0028 section 2
+            // mechanism 3 puts the append-only trigger function here - is open to aurora_app with
+            // no GRANT statement for a reviewer to notice, and a SECURITY DEFINER body runs as the
+            // schema owner, which walks around every grant above (the second security re-review,
+            // H-5). This is the one default privilege the catalog sets, and it is the opposite
+            // kind from the one the paragraph above refuses: it revokes. Every function
+            // aurora_migrator creates in this database from now on starts closed to PUBLIC, the
+            // way a table does, and stays closed if this default is ever removed. A migration that
+            // means to open one grants EXECUTE to aurora_app by name and records it in
+            // CatalogSchemaAllowlist.AppRoleObjectPrivileges. A trigger function needs no such
+            // grant: PostgreSQL checks EXECUTE when the trigger is created, not when it fires, so
+            // the trigger fires for aurora_app while aurora_app cannot call the function directly.
+            // A function created by any other role keeps PostgreSQL's default, and
+            // CatalogPrivilegeTests reads a null ACL as that default rather than as nothing, so it
+            // reports EXECUTE through PUBLIC and fails until the function is closed or decided.
+            //
+            // Database-wide, not IN SCHEMA catalog, and not by oversight: a per-schema default is
+            // added to the global one, so a per-schema REVOKE can only undo a per-schema GRANT and
+            // leaves the built-in EXECUTE to PUBLIC exactly where it was - the statement succeeds,
+            // stores nothing, and changes nothing (PostgreSQL, ALTER DEFAULT PRIVILEGES, Notes).
+            // Default privileges are per database, so this reaches every function aurora_migrator
+            // creates in the catalog database and nothing on any other. The_catalog_sets_exactly_
+            // one_default_privilege_and_it_closes_new_functions_to_PUBLIC reads the row back.
+            migrationBuilder.Sql("ALTER DEFAULT PRIVILEGES FOR ROLE aurora_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;");
         }
 
         /// <inheritdoc />

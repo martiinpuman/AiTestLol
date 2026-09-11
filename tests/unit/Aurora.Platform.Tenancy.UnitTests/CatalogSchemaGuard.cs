@@ -22,6 +22,34 @@ public sealed record CatalogColumn(string Table, string Column, string StoreType
 public sealed record AppRoleGrant(string Privilege, string NeededBy);
 
 /// <summary>
+/// One object in schema <c>catalog</c> that carries an ACL of its own, by the kind the ACL lives
+/// on: <see cref="Table"/> (every relation a table privilege applies to — table, partitioned
+/// table, view, materialized view, foreign table), <c>sequence</c>, <c>function</c>,
+/// <c>procedure</c>, <c>type</c>, or the <see cref="Schema"/> itself. This is the key both the
+/// record and <c>CatalogPrivilegeTests</c>' oracle use, so an object of one kind can never be
+/// mistaken for an object of another with the same name. A function's name carries its identity
+/// arguments, as PostgreSQL spells an overload: <c>touch_activity(uuid)</c>.
+/// </summary>
+public sealed record CatalogObject(string Kind, string Name)
+{
+    public const string Table = "table";
+    public const string Schema = "schema";
+
+    public static CatalogObject TableNamed(string name) => new(Table, name);
+
+    /// <summary>The record in <see cref="CatalogSchemaAllowlist"/> that decides this object.</summary>
+    public string Record =>
+        Kind == Table ? nameof(CatalogSchemaAllowlist.AppRolePrivileges) : nameof(CatalogSchemaAllowlist.AppRoleObjectPrivileges);
+
+    public override string ToString() => Kind switch
+    {
+        Table => $"catalog.{Name}",
+        Schema => $"schema {Name}",
+        _ => $"{Kind} catalog.{Name}",
+    };
+}
+
+/// <summary>
 /// ADR-0007 §9.3 as a mechanism: <em>the catalog holds no tenant business data</em>.
 /// </summary>
 /// <remarks>
@@ -382,6 +410,61 @@ public static class CatalogSchemaAllowlist
             ],
             ["__EFMigrationsHistory"] = [],
         };
+
+    /// <summary>
+    /// The kinds of object in <c>catalog</c> besides tables that carry an ACL of their own, and
+    /// that the oracle therefore reads: the schema (<c>pg_namespace.nspacl</c>), sequences
+    /// (<c>pg_class.relacl</c>), functions and procedures (<c>pg_proc.proacl</c>) and types
+    /// (<c>pg_type.typacl</c>). Spelled the way <see cref="CatalogObject.Kind"/> spells them.
+    /// </summary>
+    public static readonly IReadOnlySet<string> ObjectKinds = Set(CatalogObject.Schema, "sequence", "function", "procedure", "type");
+
+    /// <summary>
+    /// What <c>aurora_app</c> may do to every object in <c>catalog</c> that is not a table, judged
+    /// by the same oracle as <see cref="AppRolePrivileges"/> and subject to the same rule: an object
+    /// without a row here fails <c>CatalogPrivilegeTests</c>, an entry a row does not name is a
+    /// difference. Today that is the schema itself.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Why this record exists at all: PostgreSQL's default for a function is the inverse of its
+    /// default for a table. A new table is closed to everyone but its owner; a new function is
+    /// <c>EXECUTE</c> to <c>PUBLIC</c>, with no <c>GRANT</c> statement for a reviewer to notice, and
+    /// a <c>SECURITY DEFINER</c> body runs as the schema owner — so one function in <c>catalog</c>
+    /// handed the request path the column-level <c>UPDATE</c> it does not hold, while an oracle that
+    /// read tables only reported a perfect match (the second security re-review, H-5). A type's
+    /// default is <c>USAGE</c> to <c>PUBLIC</c> the same way. The migration closes the function
+    /// default for everything <c>aurora_migrator</c> creates (<c>ALTER DEFAULT PRIVILEGES … REVOKE
+    /// EXECUTE ON FUNCTIONS FROM PUBLIC</c>, the one default the catalog sets, and it revokes); the
+    /// oracle reads a <c>NULL</c> ACL as the owner default it means, so a function created by any
+    /// other role reads as <c>EXECUTE through PUBLIC</c> and fails.
+    /// </para>
+    /// <para>
+    /// So a function a migration adds — ADR-0028 §2 mechanism 3's trigger that raises on the
+    /// append-only tables is the first — is recorded here as <c>[]</c> when it stays closed, which
+    /// a trigger function can: PostgreSQL checks <c>EXECUTE</c> when the trigger is created, not
+    /// when it fires. A function the request path is meant to call is recorded as <c>EXECUTE</c>
+    /// with the caller named, and the migration grants it to <c>aurora_app</c> by name. A type is
+    /// recorded once its migration has revoked <c>PUBLIC</c>'s <c>USAGE</c> and granted the role's.
+    /// </para>
+    /// </remarks>
+    public static readonly IReadOnlyDictionary<CatalogObject, IReadOnlyList<AppRoleGrant>> AppRoleObjectPrivileges =
+        new Dictionary<CatalogObject, IReadOnlyList<AppRoleGrant>>
+        {
+            [new(CatalogObject.Schema, "catalog")] =
+            [
+                new("USAGE", "every request: the schema every catalog table lives in (ADR-0007 §9.1); nothing on the request path creates in it"),
+            ],
+        };
+
+    /// <summary>
+    /// <see cref="AppRolePrivileges"/> and <see cref="AppRoleObjectPrivileges"/> as one map, keyed
+    /// the way the oracle keys what it reads from the database.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<CatalogObject, IReadOnlyList<AppRoleGrant>> AppRoleDecisions =
+        AppRolePrivileges.Select(table => (Object: CatalogObject.TableNamed(table.Key), Grants: table.Value))
+            .Concat(AppRoleObjectPrivileges.Select(other => (Object: other.Key, Grants: other.Value)))
+            .ToDictionary(decision => decision.Object, decision => decision.Grants);
 
     private static HashSet<string> Set(params string[] values) => new(values, StringComparer.Ordinal);
 }
