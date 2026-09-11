@@ -76,6 +76,51 @@ Only senior developers change src/, tests/ and scripts/. Other roles write only 
 - **This project develops on the branch `claude/multi-tenant-saas-erp-pv2nap`.** Wherever these documents say "main", it means that branch. Never push to any other branch.
 - Never force-push, never rewrite history, never commit secrets or .env files.
 
+## Self-check before you submit (developers)
+
+Every task reviewed so far was rejected on the first pass, and all three rejections were the same
+three shapes. Check your own work against them before handing it over — a reviewer finding these is a
+wasted round trip.
+
+1. **Does any comment, name or doc claim behaviour that nothing actually produces?**
+   B-01 shipped a `.csproj` comment asserting `dotnet test` never targeted a project. It did, and the
+   run aborted. The claim and the mechanism that produces it must sit together, and if you cannot
+   point at the mechanism, delete the claim.
+2. **Can each check you added report that it measured nothing?**
+   B-02's unit-test stage printed `PASS` while executing zero tests. A stage, assertion or gate that
+   reports success without a count cannot distinguish "all good" from "nothing ran". Attach the
+   number — tests executed, packages checked, rules asserted — and make it visible.
+3. **Can the test you wrote actually fail?**
+   B-03's property test for "the parts always add up" drew weights from ten hand-picked literals, so
+   the arithmetic was always exact and the law could never break. Arbitrary in name, enumerated in
+   fact. For any property test, state in the test itself which input dimensions are genuinely
+   arbitrary and which are a fixed list — then go and break the code to watch the test fail.
+
+The general rule behind all three: **a mechanism that cannot fail is not a check**, and the more
+universal its name sounds, the more it will be trusted. Demonstrate the failure, do not assert it.
+
+Two more, learned the same way:
+- **`decimal` is exact until it is not, and it does not tell you.** Multiplication and division round
+  silently past 28–29 significant digits. Any money algorithm that multiplies an amount by a
+  caller-supplied factor and then relies on the result being a whole number of minor units must work
+  in integers (`System.Numerics.BigInteger` is BCL and free at tier 0) and verify its own
+  postcondition before returning.
+- **Inject a fault from inside the system under test, not from outside on a timer.** A `sleep` racing
+  a build is flaky on a different machine; a hook that fires at a chosen point is deterministic.
+
+## Review tiers
+
+Peer review is required by the Definition of Done, but its depth is proportionate to risk.
+
+| Tier | What it covers | Process |
+|---|---|---|
+| **Full** | Money, the ledger, tax, tenancy and isolation, authentication and authorization, migrations, anything a Country Package can influence | Implement → review → rework → **re-review by a second reviewer** → merge. No shortcuts. |
+| **Standard** | Everything else that ships behaviour: modules, screens, APIs, background jobs | Implement → review → rework → **the orchestrator verifies the fixes** and merges, re-reviewing only if the fixes were substantial or the reviewer asked for a second look |
+| **Light** | Scaffolding, build configuration, tooling, docs-only changes | Implement → review → orchestrator verifies and merges |
+
+The tier is named in the task brief. When in doubt, go up a tier — and a reviewer may escalate a task
+it was given at a lower tier by saying so in the verdict.
+
 ## Definition of Done (per task)
 1. All acceptance criteria in the spec are met and covered by tests.
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
