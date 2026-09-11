@@ -1,66 +1,68 @@
 # State
 
-**Phase:** build (bootstrap B1–B4 complete)
-**Milestone:** M1 — walking skeleton (B-01 … B-15)
+**Phase:** build · **Milestone:** M1 walking skeleton (B-01 … B-15)
 **Integration branch:** `claude/multi-tenant-saas-erp-pv2nap` · draft PR #1 tracks it
-**Last iteration:** 3 (2026-09-11)
+**Last iteration:** 4 (2026-09-11)
 
 ## Product in one line
 A multi-tenant SaaS ERP for SMBs with a country-agnostic core, where every jurisdiction-specific rule ships as an installable **Country Package**.
 
-## Locked technical parameters
-Decided by the human; agents may not revisit these (`docs/HUMAN_INBOX.md`).
+## Locked by the human (agents may not revisit — `docs/HUMAN_INBOX.md`)
 .NET 10 LTS · C# · EF Core · PostgreSQL · Blazor Server (`InteractiveServer`) ·
 **database per tenant** + one shared catalog database · country-agnostic core.
+Also decided 2026-09-11: **hardening-first ordering kept** (no business module before B-15 is green);
+**reviews tiered by risk** (`CLAUDE.md`); **Fable for development**, Opus for review and architecture.
 
 ## Verified environment (do not re-verify)
-.NET SDK 10.0.401 at `/usr/share/dotnet` · Npgsql EF Core 10.0.3 · Testcontainers.PostgreSql 4.15.0 ·
-postgres:17-alpine · xunit 2.9.3 with `xunit.runner.visualstudio` **3.1.4** (the runner major need not
-match the framework major from 3.0 onward — verified by running a passing and a failing test).
-Run `source scripts/dev-env.sh` before any `dotnet` command; `scripts/bootstrap-env.sh` rebuilds a
-fresh container.
+.NET SDK 10.0.401 · Npgsql EF Core 10.0.3 · Testcontainers.PostgreSql 4.15.0 · postgres:17-alpine ·
+xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework major from 3.0 on).
+`source scripts/dev-env.sh` before any `dotnet`; `scripts/bootstrap-env.sh` rebuilds a fresh container.
 
-## Done
-- **B1–B4 bootstrap:** research (9 files), design system (tokens with a computed WCAG audit, prototypes),
-  architecture (**26 ADRs**, module map, solution layout, testing strategy, scalability, dependencies),
-  planning (roadmap, glossary, SPEC-001, SPEC-002, 29-task backlog).
-- **B-01 solution skeleton — merged.** 9 projects, Release build clean at 0 warnings, a
-  `packages.lock.json` per project. Reviewed twice: CHANGES_REQUESTED for a solution-wide red
-  `dotnet test`, then APPROVE.
+## Done and merged
+- **B-01 solution skeleton** — 9 projects, Release clean at 0 warnings, lock file per project.
+- **B-02 `scripts/verify.sh`** — the quality gate: stages 0–3, 6, 11, plus `verify-selftest.sh`, a
+  16-case harness that injects a defect, asserts the gate fails naming the right stage, and reverts.
+  Stage 6 reports its executed-test count and fails below a floor, so PASS can never again mean
+  "measured nothing".
+- **B-03 `Aurora.SharedKernel`** — Money, Currency, Quantity, Percentage, DateRange, typed ids,
+  Result. **208 tests.** Raised the stage-6 floor from 0 to 200.
+- Architecture: **26 ADRs**, module map, solution layout, testing strategy, scalability, dependencies.
+- Research (9 files), design system with a computed WCAG audit and HTML prototypes, roadmap,
+  glossary, SPEC-001/002, 29-task backlog.
 
-## In flight
-- **B-02 `verify.sh`** — `task/B-02`, in rework after CHANGES_REQUESTED (`docs/reviews/B-02.md`).
-  Stages 0–3, 6, 11 work and a self-test harness proves each one fails when it should. The gating fix:
-  stage 6 reports PASS when zero tests execute and has no way to notice. Also fixing m-1 (no self-test
-  for the stage 11 tree guard), m-2 (the tree guard never runs when an earlier stage fails), m-3 (the
-  offline case can now cover the whole gate).
-- **B-03 `Aurora.SharedKernel`** — `task/B-03`, 14 commits, **203 tests passing**, 0 warnings, no
-  `double`/`float`. Under peer review (the first reviewer was killed by a usage limit mid-review).
+## In flight (four developers)
+| Task | What | Model | Notes |
+|---|---|---|---|
+| **B-05** | Catalog database, `CatalogDbContext`, the tenant registry | opus | Resuming 24 recovered commits. 3 build errors to close: `CatalogDbContext` is `internal` and the test fixture exposes it publicly — a deliberate decision, not a quick fix |
+| **B-04** | Solution-wide architecture fitness rules | opus | Every rule must be proven to fail; some are inert until B-06 brings `TenantScope` |
+| **B-12** | Country Package contracts + hosting | opus | The extension model's first real test |
+| **B-02-FU** | Quality-gate follow-ups (m-6, n-7, n-8, n-6) | fable | Two were flagged "before B-11 starts" |
 
 ## Known risks
-1. **Usage limits kill agents mid-task**, repeatedly. Mitigation is working: developers commit as soon
-   as work compiles, and files already written always survive. Always read what exists and resume from
-   it — never discard sound partial work, and never re-run a task from scratch.
-2. **Database-per-tenant is operationally heavy.** ADR-0007 caps the design at 1 000 tenants per
-   cluster and ~25 000 total, and names `ITenantConnectionResolver` as the single seam for a cheaper
-   tier later.
-3. **Stage 4 of `verify.sh` is unimplemented and its spec was wrong** — it would have failed on ~57
-   legitimately-acquired transitive packages. ADR-0026 replaced it with a two-tier gate. **B-11 must
-   implement that**, not the original rule.
-4. **The Country Package extension model is still unproven** — B-12/B-13 are the first real test.
+1. **Usage limits kill agents mid-task, repeatedly** (five times so far). Mitigation works: developers
+   commit as soon as work compiles, and nothing has been lost. **A completion notice can badly
+   understate what an agent did** — B-05's showed one sentence while its branch held 24 commits.
+   Always check the branch before concluding nothing happened.
+2. **Fable has its own, tighter quota.** Three concurrent Fable agents exhausted it in under a minute.
+   Prefer one or two; fall back to Opus on a rate limit rather than leaving the graph idle.
+3. **B-11 must implement ADR-0026's two-tier dependency gate**, not the original §1 rule — the
+   original would fail on ~57 legitimately-acquired transitive packages.
+4. **Database-per-tenant is operationally heavy.** ADR-0007 caps the design at 1 000 tenants per
+   cluster, ~25 000 total, with `ITenantConnectionResolver` as the seam for a cheaper tier later.
+5. **The Country Package model is still unproven** — B-12 and B-13 are the first real test.
 
 ## Exact next action
-1. When the B-02 rework returns, re-review it, merge, and mark B-02 done.
-2. When the B-03 review returns, act on its verdict; merge only on APPROVE. B-03 is the financial core,
-   so a CHANGES_REQUESTED there is worth taking slowly.
-3. Then **B-04** (architecture fitness tests) and **B-05** (catalog database — the first task that
-   touches PostgreSQL for real). They are in different projects and parallel-safe.
-4. Architect follow-ups outstanding: reconcile `solution-layout.md` §6 so stage 6 belongs to B-02 and
-   B-11 owns 4, 5, 7–10 (review S-1); and resolve `modules.md` §3 saying "IClock over TimeProvider"
-   against ADR-0020 and `testing-strategy.md`, which both say `TimeProvider` directly.
+1. Integrate the four in-flight tasks as they return. B-04, B-05 and B-12 are **Full** tier
+   (fitness rules, tenancy, the package boundary); B-02-FU is **Light**.
+2. Then **B-06** (tenancy core — `TenantScope`, `ITenantConnectionResolver`, the structural guarantee
+   that no `DbContext` exists without a resolved tenant) once B-05 merges. Full tier.
+3. **B-07 provisioning is the highest-risk task in the milestone.** The architect found its old
+   acceptance row was satisfiable by a saga that, on replay, silently adopts another tenant's
+   database — cross-tenant exposure through a green row. The row is now widened; its reviewer should
+   try hardest to break step 2's adoption rule and §8's guard that `DROP DATABASE` is never automatic.
 
 ## Open questions for the human (none blocking)
 Q5 tenant scale · Q6 one entity filing in two jurisdictions · **Q7 attempt the NZ IRD sandbox
-registration** (the only one needing action in the real world) · Q8 24-hour single-tenant recovery
-point · Q9 how much of the data grid is v1 · Q10 ownership of a generated file in an architect-owned
-folder. Each already has a decision recorded, chosen to be the cheapest to reverse.
+registration** (the only one needing real-world action) · Q8 24-hour single-tenant recovery point ·
+Q9 how much of the data grid is v1 · Q10 ownership of a generated file in an architect-owned folder.
+Each already has a decision recorded, chosen to be the cheapest to reverse.
