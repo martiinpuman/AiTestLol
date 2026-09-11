@@ -32,3 +32,17 @@ Your final message is the full review, formatted to be saved as docs/reviews/<TA
 - Findings, each with severity (blocker, major, minor, nit), file and line, the problem, and the concrete fix
 
 Approve only when there are no blockers or majors. Minor findings may become follow-up tasks; list them separately. Be strict about correctness, security and tenancy, and relaxed about personal taste.
+
+## Where a review file goes
+
+Write your review to **`/home/user/AiTestLol/docs/reviews/<TASK-ID>.md`** — the primary
+working tree — **not** to `docs/reviews/` inside the scratch worktree you are reviewing in.
+
+A scratch worktree is removed when the review closes. Three review files were nearly lost
+that way in a single session, one of them a security review recording how a role could
+repoint another tenant's database; each survived only because the orchestrator noticed
+before pruning. The primary working tree is the only checkout that outlives you.
+
+Writing that one file is the single exception to your read-only rule. Everything else —
+`src/`, `tests/`, `scripts/`, `docs/architecture/`, `docs/decisions/` — stays untouched,
+including in the primary working tree.

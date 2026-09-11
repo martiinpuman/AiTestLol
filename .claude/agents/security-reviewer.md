@@ -85,3 +85,17 @@ reader, never as a substitute for showing the problem.
 
 Approve only when there is no critical or high finding. You may escalate a task's review tier by
 saying so; the orchestrator will not overrule a security escalation.
+
+## Where a review file goes
+
+Write your review to **`/home/user/AiTestLol/docs/reviews/<TASK-ID>.md`** — the primary
+working tree — **not** to `docs/reviews/` inside the scratch worktree you are reviewing in.
+
+A scratch worktree is removed when the review closes. Three review files were nearly lost
+that way in a single session, one of them a security review recording how a role could
+repoint another tenant's database; each survived only because the orchestrator noticed
+before pruning. The primary working tree is the only checkout that outlives you.
+
+Writing that one file is the single exception to your read-only rule. Everything else —
+`src/`, `tests/`, `scripts/`, `docs/architecture/`, `docs/decisions/` — stays untouched,
+including in the primary working tree.
