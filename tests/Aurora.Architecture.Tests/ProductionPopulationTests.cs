@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.IO;
 using System.Linq;
 using Aurora.Architecture.Tests.Fixtures;
 using Aurora.Architecture.Tests.Metadata;
@@ -40,6 +41,54 @@ public sealed class ProductionPopulationTests
         SolutionLayout.ProductionAssemblies.Length.ShouldBe(
             SolutionLayout.ProductionProjects.Length,
             "every project under src/ contributes exactly one assembly to the population");
+    }
+
+    [Fact]
+    public void Nothing_under_src_is_filtered_out_of_the_population()
+    {
+        // The test above compares two numbers derived from the same discovered list, so it cannot
+        // see a project the discovery never listed. This enumeration is independent of
+        // SolutionLayout and applies no filter, and the two must agree exactly. B-04's re-review
+        // (H-1) found that a path filter here made a production project under any directory named
+        // Fixtures/ invisible to every rule, with nothing reporting it; the filter is gone, and this
+        // is what stops one coming back.
+        string srcRoot = Path.Combine(SolutionLayout.RepositoryRoot, "src");
+
+        string[] everyProjectFile =
+        [
+            .. Directory.EnumerateFiles(srcRoot, "*.csproj", SearchOption.AllDirectories)
+                .Select(static path => Path.GetRelativePath(SolutionLayout.RepositoryRoot, path).Replace('\\', '/'))
+                .OrderBy(static path => path, StringComparer.Ordinal),
+        ];
+
+        string[] discovered =
+        [
+            .. SolutionLayout.ProductionProjects
+                .Select(static project => project.RelativePath)
+                .OrderBy(static path => path, StringComparer.Ordinal),
+        ];
+
+        everyProjectFile.Length.ShouldBeGreaterThan(0, "src/ holds the projects the rules run over");
+        discovered.ShouldBe(
+            everyProjectFile,
+            "every .csproj under src/ must be in the population; one that is not is invisible to "
+            + "every rule and reports nothing");
+    }
+
+    [Fact]
+    public void The_project_fixtures_are_written_outside_the_repository()
+    {
+        // The population is every .csproj under src/, unfiltered. That is only safe because the
+        // deliberately-violating project fixtures FixtureProjectTree writes are never under the
+        // repository root - a premise this asserts rather than assumes.
+        using var tree = new FixtureProjectTree();
+        ProjectFile fixture = tree.Add("Aurora.Fixture.Probe");
+
+        Path.GetFullPath(fixture.FullPath)
+            .StartsWith(Path.GetFullPath(SolutionLayout.RepositoryRoot), StringComparison.Ordinal)
+            .ShouldBeFalse(
+                $"the project fixture was written to {fixture.FullPath}, inside the repository, where "
+                + "an unfiltered population would pick it up as production code");
     }
 
     [Fact]

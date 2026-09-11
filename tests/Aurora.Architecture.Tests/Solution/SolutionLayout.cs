@@ -12,10 +12,15 @@ namespace Aurora.Architecture.Tests.Solution;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What counts as production code:</b> every <c>.csproj</c> under <c>src/</c>. Not a hand-kept
-/// list, so a module added tomorrow is covered by every rule without anyone remembering to add it
-/// - and not a glob over build output either, because an assembly nobody built would then simply
-/// vanish from the population and every rule would report "no violations" over the smaller set.
+/// <b>What counts as production code:</b> every <c>.csproj</c> under <c>src/</c>, with no filter
+/// of any kind. Not a hand-kept list, so a module added tomorrow is covered by every rule without
+/// anyone remembering to add it - and not a glob over build output either, because an assembly
+/// nobody built would then simply vanish from the population and every rule would report "no
+/// violations" over the smaller set. There used to be a path filter here excluding any directory
+/// named <c>Fixtures/</c>; <c>docs/reviews/B-04-rereview.md</c> H-1 showed that a production
+/// project placed under such a directory vanished from every rule with nothing reporting it.
+/// <c>ProductionPopulationTests</c> now asserts, against an independent unfiltered enumeration,
+/// that nothing is excluded.
 /// </para>
 /// <para>
 /// <b>The anti-vacuity mechanism:</b> <see cref="ProductionAssemblies"/> throws when a project
@@ -27,12 +32,6 @@ namespace Aurora.Architecture.Tests.Solution;
 internal static class SolutionLayout
 {
     private const string SolutionFileName = "Aurora.sln";
-
-    /// <summary>
-    /// Path fragment marking fixture material that is deliberately excluded from project
-    /// discovery: the violating <c>.csproj</c> files the project-graph rules are proven against.
-    /// </summary>
-    public const string FixtureMarker = "/Fixtures/";
 
     private static readonly Lazy<ImmutableArray<ScannedAssembly>> LazyProductionAssemblies =
         new(ScanProductionAssemblies);
@@ -56,7 +55,7 @@ internal static class SolutionLayout
     /// <summary>Every project under <c>src/</c>.</summary>
     public static ImmutableArray<ProjectFile> ProductionProjects => LazyProductionProjects.Value;
 
-    /// <summary>Every project under <c>tests/</c>, fixture material excluded.</summary>
+    /// <summary>Every project under <c>tests/</c>.</summary>
     public static ImmutableArray<ProjectFile> TestProjects => LazyTestProjects.Value;
 
     /// <summary>Every project under <c>src/</c> and <c>tests/</c>.</summary>
@@ -150,7 +149,6 @@ internal static class SolutionLayout
         return
         [
             .. Directory.EnumerateFiles(root, "*.csproj", SearchOption.AllDirectories)
-                .Where(static path => !path.Replace('\\', '/').Contains(FixtureMarker, StringComparison.Ordinal))
                 .OrderBy(static path => path, StringComparer.Ordinal)
                 .Select(path => ProjectFile.Read(path, RepositoryRoot)),
         ];

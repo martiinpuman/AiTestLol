@@ -21,8 +21,8 @@ namespace Aurora.Architecture.Tests.Fixtures;
 /// <b>Why they cannot fail the build for everyone.</b> They are types, not tests: nothing executes
 /// them. They are invisible to every production rule because the production population is built
 /// from projects under <c>src/</c> (<see cref="Solution.SolutionLayout"/>) and this assembly is
-/// under <c>tests/</c>. <c>FixtureIsolationTests</c> asserts that separation rather than assuming
-/// it.
+/// under <c>tests/</c>. <c>ProductionPopulationTests</c> asserts that separation rather than
+/// assuming it.
 /// </para>
 /// </remarks>
 internal static class FixtureAssembly

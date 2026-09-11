@@ -97,10 +97,15 @@ stand-ins and point the fixtures at them**; `RuleInventoryTests` is what will re
 
 ## 4. The population, and why it cannot quietly shrink
 
-`SolutionLayout` builds the population from **every `.csproj` under `src/`** — not a hand-kept list,
-so a module added tomorrow is covered without anyone remembering, and not a glob over build output,
-because an assembly nobody built would then simply vanish from the population and every rule would
-report "no violations" over the smaller set.
+`SolutionLayout` builds the population from **every `.csproj` under `src/`, with no filter** — not a
+hand-kept list, so a module added tomorrow is covered without anyone remembering, and not a glob over
+build output, because an assembly nobody built would then simply vanish from the population and every
+rule would report "no violations" over the smaller set. `ProductionPopulationTests` asserts the
+"every" against an independent, unfiltered enumeration of `src/`, so a filter cannot come back
+quietly: the re-review of this task (H-1) showed that one excluding any directory named `Fixtures/`
+made a production project placed there invisible to every rule, with nothing reporting it. The
+project-file fixtures are written to a temporary directory outside the repository, and that too is
+asserted rather than assumed.
 
 It **throws**, rather than returning a partial population, when:
 
