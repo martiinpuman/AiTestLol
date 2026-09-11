@@ -40,10 +40,16 @@ export DOTNET_CLI_UI_LANGUAGE=en
 readonly FAIL_TAIL_LINES=40
 
 # The number of unit tests stage 6 must see execute before it is allowed to
-# report PASS. Zero today: the solution has no tests yet (B-03 lands the first
-# ones). Raise this in the same commit that adds them - a stage that measures
-# nothing must not be able to report PASS silently.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-0}"
+# report PASS. A stage that measures nothing must not be able to report PASS
+# silently.
+#
+# The standing rule for this number: what the suite actually runs, rounded DOWN
+# to the nearest ten. Not the exact count - an exact count turns every added test
+# into an edit of this file and gets deleted in frustration. The floor is here to
+# catch a whole assembly dropping out of Aurora.sln, a misspelled Category trait
+# or a discovery failure, all of which move the count by tens or to zero. Re-round
+# it whenever a test project joins or leaves Aurora.sln.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-200}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
@@ -141,14 +147,21 @@ Options:
                      Equivalent to AURORA_VERIFY_FAST=1.
   --no-docker        Skip stage 0's Docker check and the integration stage (8).
   --filter <expr>    VSTest filter expression, ANDed into the test stages (6-9).
+                     A filter narrow enough to select a handful of tests needs
+                     AURORA_MIN_UNIT_TESTS=0 with it, or stage 6's floor fails
+                     the run for having executed too few. That is the intended
+                     trade: the floor cannot tell a deliberate filter from a
+                     broken one.
   --stage <n>        Run one stage only. Assumes the stages before it have
                      already run in this working tree.
   -h, --help         Show this help.
 
 Environment:
   AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
-                          it may report PASS (default 0). The count is always
-                          printed in the summary, whatever the floor is.
+                          it may report PASS (default 200, the suite's count
+                          rounded down to the nearest ten). The count is always
+                          printed in the summary, whatever the floor is. Set it
+                          to 0 when running a deliberately narrow --filter.
 
 Exit codes:
   0  every stage that ran passed
@@ -486,7 +499,11 @@ stage_unit_tests() {
     return 1
   fi
 
-  if (( executed < MIN_UNIT_TESTS )); then
+  # Base ten, explicitly. The ^[0-9]+$ validation above accepts "08", which bash
+  # otherwise reads as octal: the arithmetic errors, the comparison is false, and
+  # the stage reports PASS having executed nothing - the exact failure the floor
+  # exists to prevent, reached through the check that was meant to prevent it.
+  if (( executed < 10#${MIN_UNIT_TESTS} )); then
     note ""
     note "verify: stage 6 executed ${executed} test(s), below the required minimum of ${MIN_UNIT_TESTS}."
     note "        The filter applied was:"
