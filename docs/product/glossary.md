@@ -44,6 +44,8 @@ Terms are business definitions: what the word means to the person running the bu
 
 **Quantity** — A number of something together with the Unit of Measure it is counted in. Exactly like Money, a quantity in this product is never a bare number: 10 is not a quantity, 10 pieces is. Quantities counted in different units are never added together or compared, because ten pieces plus two kilograms is not twelve of anything; converting between units always needs the item's own conversion factor. A quantity may be negative — a return, a stock issue and a write-off are all normal business.
 
+**Residency Region** — The part of the world a Tenant's data is allowed to live in, chosen when the tenant is created because some customers are required by law or by their own policy to keep their records in a particular country. The region a tenant declares and the region its database actually sits in are checked against each other rather than trusted: a tenant cannot be moved onto a machine outside its region, even by mistake.
+
 **Reversal** — A new Journal Entry (or a full document reversal) that exactly cancels out a previous posting, used whenever a posted financial record turns out to be wrong. The original record is never edited or deleted; the reversal and the original both remain visible, so the full history of what was recorded — and why it changed — is always reconstructable.
 
 **Role** — A named set of Permissions that a tenant can assign to a person, optionally limited to one or more Companies (for example, "Bookkeeper" in Company A only). Some roles come built in (an "Owner" role that can do everything); a tenant may also define its own roles to match how it actually organizes work.
@@ -54,10 +56,16 @@ Terms are business definitions: what the word means to the person running the bu
 
 **Stock** — The quantity of a physical Item that a business actually holds, at a given location, at a given moment — together with what that quantity is worth in money. Every time stock physically moves (goods come in, goods ship out, a count finds a discrepancy), both the quantity and its financial value change together, and that value change is what flows into the general ledger as the cost of the goods sold.
 
+**Subscription** — What a Tenant is entitled to for a stretch of time: which plan they are on and how many people may use the system. A tenant has a history of subscriptions rather than one line that gets edited, so a question about what the customer was paying for last March can still be answered; an upgrade ends the current subscription and starts the next one the following day, and a tenant never holds two subscriptions covering the same day.
+
 **Tax Point Date** — The specific date used to decide which tax rule and which tax rate apply to a transaction. Because tax rates change over time, printing an invoice from two years ago must always reproduce the rate that applied on that invoice's own tax point date — never today's rate.
 
 **Tax Registration** — A formal record that a Company is registered with a specific tax authority (for example, for GST or VAT), including the registration's own identifying number and the rules that follow from it. A company may hold more than one tax registration over time or across jurisdictions, even though most companies in Aurora ERP's first release have exactly one.
 
 **Tenant** — One paying customer of Aurora ERP: one subscription, one completely private and isolated system, one set of installed Country Packages. Everything a tenant does — every Company, every record, every user — lives inside that tenant's own system and is never visible to, or reachable from, any other tenant's system, under any circumstance.
+
+**Tenant Key** — The short, readable name a Tenant is known by — `acme-trading` — used in the web address they sign in at and in every operational conversation about them. It is not the tenant's identity: a customer may be renamed, and everything the system stores about them keeps pointing at the same tenant regardless. A key is never handed to a second customer, even years after the first one leaves.
+
+**Tenant Lifecycle** — The stages a Tenant passes through, from the moment someone signs up to the moment their data is destroyed: being set up, failed to set up, trading normally, suspended (readable but read-only, after non-payment or at the customer's request), blocked (served a maintenance page because the system cannot currently trust that tenant's data is where it should be), having their data exported on the way out, awaiting deletion at an agreed date, and finally deleted — leaving only a record that the customer existed and when. Suspension and pending deletion are reversible; deletion is not.
 
 **Unit of Measure** — What a Quantity is counted in: pieces, kilograms, metres, litres, hours. Every item says which unit it is bought, held and sold in, and every quantity in the system carries its unit with it. Units are recorded using the international standard codes that electronic invoices require, so that a line sent to a customer's system means there what it meant here.

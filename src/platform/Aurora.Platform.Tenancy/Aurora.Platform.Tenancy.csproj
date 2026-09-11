@@ -11,9 +11,12 @@
     This is the only module allowed to build a connection string (modules.md 4), which is why it
     references the Npgsql provider directly rather than through a separate Infrastructure project.
 
-    Everything here is internal except the DI extension. The two test assemblies below see the
-    internals so they can exercise the context and the entities without widening the public
-    surface - the public surface of a platform module is its Contracts assembly.
+    Everything here is internal except AddCatalogDatabase() and the migration classes, which
+    `dotnet ef migrations add` scaffolds public and EF finds by attribute rather than by
+    accessibility. CatalogContextAccessibilityTests asserts exactly that set and fails on anything
+    else - the public surface of a platform module is its Contracts assembly. The two test
+    assemblies below see the internals so they can exercise the context and the entities without
+    widening that surface.
   -->
 
   <PropertyGroup>
