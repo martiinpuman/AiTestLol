@@ -30,8 +30,6 @@ namespace Aurora.Architecture.Tests.Metadata;
 /// </remarks>
 internal static class AssemblyScanner
 {
-    private const string CompilerGeneratedAttribute = "System.Runtime.CompilerServices.CompilerGeneratedAttribute";
-
     private static readonly Dictionary<int, OpCode> OpCodeTable = BuildOpCodeTable();
 
     public static ScannedAssembly Read(string assemblyPath)
@@ -97,8 +95,7 @@ internal static class AssemblyScanner
                         !signature.Header.IsInstance);
                 }),
             ],
-            Methods: [.. definition.GetMethods().Select(m => ReadMethod(peReader, reader, m))],
-            IsCompilerGenerated: HasCompilerGeneratedAttribute(reader, definition.GetCustomAttributes()));
+            Methods: [.. definition.GetMethods().Select(m => ReadMethod(peReader, reader, m))]);
     }
 
     private static ScannedMethod ReadMethod(
@@ -362,22 +359,6 @@ internal static class AssemblyScanner
             default:
                 return null;
         }
-    }
-
-    private static bool HasCompilerGeneratedAttribute(
-        MetadataReader reader,
-        CustomAttributeHandleCollection attributes)
-    {
-        foreach (CustomAttributeHandle handle in attributes)
-        {
-            CustomAttribute attribute = reader.GetCustomAttribute(handle);
-            if (NameOfTypeHandle(reader, attribute.Constructor) == CompilerGeneratedAttribute)
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /// <summary>
