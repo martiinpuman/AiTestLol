@@ -135,6 +135,39 @@ At Standard and Light, a reviewer who finds something that smells like a Full-ti
 escalate rather than quietly doing a Full review — say so in the verdict and let the orchestrator
 decide. Depth that nobody asked for is depth nobody budgeted for.
 
+### Reviewers write their own review file
+
+A review is saved at `docs/reviews/<TASK-ID>.md` (or `<TASK-ID>-rereview.md`). **The reviewer writes
+that file itself**, with a heredoc, and returns to the orchestrator only:
+
+- the verdict,
+- a one-line summary of each blocker and major,
+- the gate result,
+- anything the orchestrator must route to another role.
+
+Do not return the full review text. It was being written once by the reviewer, read once by the
+orchestrator, and written again to the file — three times the tokens for one document, and the
+orchestrator's copy was the one that could drift from the file.
+
+Reviewers still change nothing else. Writing under `docs/reviews/` is the single exception to the
+read-only rule, and it exists so a review cannot be lost or garbled in transit. A reviewer that edits
+anything under `src/`, `tests/`, `scripts/`, `docs/architecture/` or `docs/decisions/` has broken the
+rule that a review may never quietly change the code it approves.
+
+### Length is part of the job
+
+A finding is worth what it changes, not what it weighs.
+
+| Tier | Target |
+|---|---|
+| **Full** | As long as the findings require. Evidence for a blocker is never cut. |
+| **Standard** | ~800 words. Verdict, the top three risks and how you executed them, findings. |
+| **Light** | ~300 words. Verdict, gate result, findings. |
+
+Two habits regardless of tier: state a finding once, in the place it belongs, and put the evidence
+that proves it next to it. A "Patterns noted" section earns its place only when the pattern is new —
+if it restates one already in this file's self-check list, cite it in a clause instead.
+
 ## Definition of Done (per task)
 1. All acceptance criteria in the spec are met and covered by tests.
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
