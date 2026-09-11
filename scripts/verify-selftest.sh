@@ -15,7 +15,8 @@
 #
 # This is deliberately NOT a stage of verify.sh. It costs one full gate run per
 # case, and it mutates the working tree while it runs - which is precisely what
-# a gate must never do. Run it when verify.sh itself changes.
+# a gate must never do. Run it when verify.sh itself changes; name one or more
+# cases on the command line to run only those while working on one.
 #
 # Covers stages 0-3, 6 and 11 (task B-02). Stages 4, 5 and 7-10 arrive with
 # B-11; dependencies.md 1 rule 4 already demands six such cases for stage 4
@@ -49,13 +50,15 @@ mkdir -p -- "${BACKUP_DIR}"
 
 if [[ -t 1 ]]; then
   C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_DIM=$'\033[2m'
-  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'
+  C_RED=$'\033[31m'; C_GREEN=$'\033[32m'; C_YELLOW=$'\033[33m'
 else
-  C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''
+  C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''; C_YELLOW=''
 fi
 
 CASES_RUN=0
 CASES_FAILED=0
+CASES_SKIPPED=0
+SKIPPED_CASES=()
 CASE_NAME=""
 CASE_LOG=""
 RUN_RC=0
@@ -128,6 +131,16 @@ fail_case() {
   return 1
 }
 
+# A case this machine cannot run says so and is tallied apart from the passes.
+# A full score has to mean every property demonstrated - not all but one, plus
+# one that was never checked and counted as though it had been.
+skip_case() {
+  printf '    %sSKIP%s %s\n' "${C_YELLOW}" "${C_RESET}" "$*"
+  CASES_SKIPPED=$(( CASES_SKIPPED + 1 ))
+  SKIPPED_CASES+=("${CASE_NAME} - $*")
+  return 0
+}
+
 case_begin() {
   CASE_NAME="$1"
   CASES_RUN=$(( CASES_RUN + 1 ))
@@ -194,6 +207,20 @@ assert_summary_row() {
   printf '    summary row:%s\n' "${row}"
 }
 
+# The count in stage 6's Note column, as a whole number. A substring check is
+# not enough here: "209 test(s) executed" is also the tail of "2209 test(s)
+# executed", which is precisely the row a broken counter produces - so the
+# number is anchored on the whitespace before it. Found by breaking the
+# counter and watching the substring version pass.
+assert_executed_count() {
+  local expected="$1" row
+  row="$(grep -E '^ 6[[:space:]]' -- "${VERIFY_DIR}/summary.txt" 2>/dev/null | head -n 1 || true)"
+  [[ -n "${row}" ]] || fail_case "no summary row for stage 6" || return 1
+  grep -qE "[[:space:]]${expected} test\(s\) executed" <<<"${row}" \
+    || fail_case "stage 6 row does not say ${expected} test(s) executed:${row}" || return 1
+  printf '    stage 6 executed exactly %s test(s)\n' "${expected}"
+}
+
 # A usage error is exit 2, distinct from a stage failure (exit 1), so a script
 # that wraps the gate can tell "I called it wrong" from "the code is broken".
 assert_usage_error() {
@@ -202,6 +229,15 @@ assert_usage_error() {
   grep -qF -- "${needle}" "${CASE_LOG}" \
     || fail_case "expected '${needle}' in the output" || return 1
   printf '    exit 2: %s\n' "${needle}"
+}
+
+# The summary table and anything printed beneath it come from the exit
+# handler to stdout, which run_verify captures in CASE_LOG.
+assert_output_contains() {
+  local needle="$1"
+  grep -qF -- "${needle}" "${CASE_LOG}" \
+    || fail_case "expected '${needle}' in the output" || return 1
+  printf '    output says: %s\n' "${needle}"
 }
 
 assert_stage_log_contains() {
@@ -235,11 +271,29 @@ assert_nothing_ran_after() {
 # The count in stage 6's row is asserted here rather than only in the case that
 # makes it fail: it is printed on every run precisely so that a stage which
 # measured nothing cannot look like a stage on which everything passed.
+#
+# The number itself is kept: two later cases need to know how many tests a full
+# run executes on this tree, and reading it from the baseline is what lets them
+# keep discriminating as the suite grows instead of expiring at a literal.
+BASELINE_EXECUTED=""
+
 case_baseline() {
   case_begin "baseline: a clean tree passes, and stage 6 says how many tests ran"
   run_verify
   assert_pass || return 0
   assert_summary_row 6 "PASS" "test(s) executed" || return 0
+  BASELINE_EXECUTED="$(executed_count_from_summary)"
+}
+
+# The count stage 6 printed in its summary row; empty if the row has none.
+executed_count_from_summary() {
+  grep -E '^ 6[[:space:]]' -- "${VERIFY_DIR}/summary.txt" 2>/dev/null \
+    | grep -Eo '[0-9]+ test\(s\) executed' | grep -Eo '^[0-9]+' || true
+}
+
+require_baseline_count() {
+  [[ -n "${BASELINE_EXECUTED}" ]] \
+    || fail_case "the baseline case did not record an executed-test count" || return 1
 }
 
 case_any_cwd() {
@@ -315,7 +369,7 @@ PY
 case_offline() {
   case_begin "5.1 the whole gate runs with no network egress at all"
   if ! unshare -n true >/dev/null 2>&1; then
-    printf '    SKIP: this kernel or user cannot create a network namespace\n'
+    skip_case "this kernel or user cannot create a network namespace"
     return 0
   fi
   write_loopback_helper
@@ -409,6 +463,18 @@ case_build_msbuild_warning() {
   assert_nothing_ran_after 3 || return 0
 }
 
+# The summary line stage 3 reads is the console logger's. MSBuild's terminal
+# logger prints no such line, and a build that warns still exits 0 under it -
+# so with the terminal logger on, a check that treated a missing line as "no
+# warnings" would read nothing and call the build clean. It has to notice.
+case_build_warning_summary_missing() {
+  case_begin "stage 3: a build log with no warning summary is not a clean build"
+  VERIFY_ENV=(MSBUILDTERMINALLOGGER=on)
+  run_verify --stage 3
+  assert_fail_stage 3 || return 0
+  assert_stage_log_contains 3 "no MSBuild warning summary" || return 0
+}
+
 case_unit_test_failure() {
   case_begin "stage 6: a unit test that asserts and loses"
   local src="tests/Aurora.Architecture.Tests/VerifySelfTestProbe.cs"
@@ -461,7 +527,91 @@ case_unit_tests_vacuous() {
   assert_fail_stage 6 || return 0
   assert_stage_log_contains 6 "below the required minimum of 1" || return 0
   assert_stage_log_contains 6 "ZzzNoSuchTestExists" || return 0
-  assert_summary_row 6 "FAIL" "0 test(s) executed" || return 0
+  assert_summary_row 6 "FAIL" || return 0
+  assert_executed_count 0 || return 0
+}
+
+# The floor is compared in base ten, explicitly (10# in verify.sh). Without
+# that, a zero-padded AURORA_MIN_UNIT_TESTS is octal to bash: "0300" is 192, a
+# suite of 208 clears it, and the gate prints RESULT: PASS with no error output
+# at all - a floor the developer meant as 300, silently read as 192. The case
+# above sets the floor to 1, which is not zero-padded, so it could not tell.
+#
+# The probe is derived from the count the baseline observed rather than fixed
+# at "0300": its base-ten reading is above that count, so the gate as written
+# must fail, and its octal reading is at or below it, so the gate with 10#
+# removed would pass. A literal would stop discriminating - silently - the day
+# the suite grew past it. Both readings are printed so the choice is checkable.
+case_unit_tests_floor_is_read_in_base_ten() {
+  case_begin "stage 6: a zero-padded floor is read in base ten, not octal"
+  require_baseline_count || return 0
+  local probe
+  probe="$(octal_ambiguous_floor_above "${BASELINE_EXECUTED}")" \
+    || { fail_case "no zero-padded floor separates base ten from octal above ${BASELINE_EXECUTED} tests"; return 0; }
+  printf '    probe %s: %d in base ten (> %d executed), %d in octal (<= %d)\n' \
+    "${probe}" "$(( 10#${probe} ))" "${BASELINE_EXECUTED}" "$(( 8#${probe} ))" "${BASELINE_EXECUTED}"
+  VERIFY_ENV=("AURORA_MIN_UNIT_TESTS=${probe}")
+  run_verify
+  assert_fail_stage 6 || return 0
+  assert_stage_log_contains 6 "below the required minimum of ${probe}" || return 0
+  assert_summary_row 6 "FAIL" || return 0
+  assert_executed_count "${BASELINE_EXECUTED}" || return 0
+}
+
+# The count is read from the TRX <Counters> element and from nothing else in
+# the file. The same file carries captured test output verbatim, so a test
+# that prints a counter lookalike must add exactly one to the count - the one
+# test that it is - and not the number it printed.
+case_unit_tests_count_ignores_test_output() {
+  case_begin "stage 6: test output that looks like a counter is not counted"
+  require_baseline_count || return 0
+  local src="tests/Aurora.Architecture.Tests/VerifySelfTestProbe.cs"
+  stage_file "${src}"
+  cat >"${REPO_ROOT}/${src}" <<'CSHARP'
+using Xunit;
+using Xunit.Abstractions;
+
+namespace Aurora.Architecture.Tests;
+
+/// <summary>
+/// Injected by scripts/verify-selftest.sh and deleted again in the same step.
+/// </summary>
+public sealed class VerifySelfTestProbe
+{
+    private readonly ITestOutputHelper _output;
+
+    public VerifySelfTestProbe(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    [Fact]
+    public void PrintsACounterLookalike()
+    {
+        _output.WriteLine("<Counters total=\"1000\" executed=\"1000\" /> executed=\"1000\"");
+    }
+}
+CSHARP
+  run_verify
+  assert_pass || return 0
+  assert_summary_row 6 "PASS" || return 0
+  assert_executed_count "$(( BASELINE_EXECUTED + 1 ))" || return 0
+}
+
+# The smallest zero-padded value whose base-ten reading exceeds N while its
+# octal reading does not. Digits 0-7 only, so bash accepts it as octal without
+# an error - the silent variant, which is the one worth guarding against. No
+# such value exists below N = 8; then this prints nothing and fails.
+octal_ambiguous_floor_above() {
+  local n="$1" d
+  for (( d = n + 1; d <= n * 10 + 10; d++ )); do
+    [[ "${d}" =~ ^[0-7]+$ ]] || continue
+    if (( 8#${d} <= n )); then
+      printf '0%s' "${d}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 # Stage 11 enforces 5.1's central promise - the gate never mutates what it
@@ -469,18 +619,60 @@ case_unit_tests_vacuous() {
 # closure, which is the code most likely to regress it. The probe is an MSBuild
 # target that writes an untracked file during stage 3's build, so the mutation
 # lands at a point in the run this case decides rather than on a timer.
+MUTATION_PROBE="GATE_MUTATION_PROBE.txt"
+
+# Appends that target to Aurora.Web.csproj. Extra task XML, if given, goes into
+# the same target ahead of the write, so one injection can also make the build
+# warn - a stage that fails and mutates in the same breath.
+inject_mutation_target() {
+  local extra="${1:-}"
+  local proj="src/hosts/Aurora.Web/Aurora.Web.csproj"
+  stage_file "${proj}"
+  stage_file "${MUTATION_PROBE}"
+  local target
+  target='  <Target Name="AuroraSelfTestMutation" AfterTargets="Build">\n'
+  target+="${extra}"
+  target+='    <WriteLinesToFile File="$(MSBuildThisFileDirectory)../../../'"${MUTATION_PROBE}"'" Lines="verify-selftest" Overwrite="true" />\n'
+  target+='  </Target>\n\n</Project>'
+  sed -i "s|^</Project>|${target}|" -- "${REPO_ROOT}/${proj}"
+}
+
 case_summary_tree_guard() {
   case_begin "stage 11: a stage that writes into the repository it measures"
-  local proj="src/hosts/Aurora.Web/Aurora.Web.csproj"
-  local probe="GATE_MUTATION_PROBE.txt"
-  stage_file "${proj}"
-  stage_file "${probe}"
-  sed -i 's|^</Project>|  <Target Name="AuroraSelfTestMutation" AfterTargets="Build">\n    <WriteLinesToFile File="$(MSBuildThisFileDirectory)../../../GATE_MUTATION_PROBE.txt" Lines="verify-selftest" Overwrite="true" />\n  </Target>\n\n</Project>|' \
-    -- "${REPO_ROOT}/${proj}"
+  inject_mutation_target
   run_verify
   assert_fail_stage 11 || return 0
-  assert_stage_log_contains 11 "${probe}" || return 0
+  assert_stage_log_contains 11 "${MUTATION_PROBE}" || return 0
   assert_summary_row 11 "FAIL" "working tree changed" || return 0
+}
+
+# The exit handler's half of the same guard. --stage 3 leaves stage 11 marked
+# SKIP and the stage loop exits 0, so only the exit handler can turn the drift
+# into a failure - the one path in the gate that converts a passing run into a
+# failing one. It has to name stage 11 in the headline and write the log the
+# summary points at, saying which path wrote it.
+case_summary_tree_guard_from_exit_handler() {
+  case_begin "stage 11: the guard still fires when --stage leaves stage 11 unrun"
+  inject_mutation_target
+  run_verify --stage 3
+  assert_fail_stage 11 || return 0
+  assert_stage_log_contains 11 "working-tree guard, run from the exit handler" || return 0
+  assert_stage_log_contains 11 "${MUTATION_PROBE}" || return 0
+  assert_summary_row 11 "FAIL" "working tree changed" || return 0
+}
+
+# Drift on a run that already failed elsewhere is reported, not promoted: the
+# stage the developer has to fix stays the headline, and the drift is an
+# advisory beneath the table. Both halves are asserted, because losing either
+# is a regression - the advisory turning into a second failure, or vanishing.
+case_summary_tree_drift_beside_earlier_failure() {
+  case_begin "stage 11: drift beside an earlier failure is reported, not promoted"
+  inject_mutation_target '    <Warning Text="verify-selftest: deliberate MSBuild warning" />\n'
+  run_verify
+  assert_fail_stage 3 || return 0
+  assert_output_contains "Also: the working tree changed while the gate ran" || return 0
+  assert_output_contains "${MUTATION_PROBE}" || return 0
+  assert_nothing_ran_after 3 || return 0
 }
 
 # 5.3. Each of these is a way of calling the gate wrongly, and each must be
@@ -549,13 +741,39 @@ CASES=(
   case_format_violation
   case_build_compiler_warning
   case_build_msbuild_warning
+  case_build_warning_summary_missing
   case_unit_test_failure
   case_unit_test_host_aborts
   case_unit_tests_vacuous
+  case_unit_tests_floor_is_read_in_base_ten
+  case_unit_tests_count_ignores_test_output
   case_summary_tree_guard
+  case_summary_tree_guard_from_exit_handler
+  case_summary_tree_drift_beside_earlier_failure
   case_usage_errors
   case_option_skips_are_declared
 )
+
+# Every case costs at least one gate run, so a developer working on one of
+# them can name the ones to run instead of paying for all of them:
+#   scripts/verify-selftest.sh case_unit_tests_vacuous case_summary_tree_guard
+# The cases that call verify.sh --stage assume a full run has already restored
+# and built the tree - the same assumption --stage itself documents - so a
+# subset that starts with one of those needs a full case, or verify.sh, first.
+if (( $# > 0 )); then
+  for wanted in "$@"; do
+    found=0
+    for case_fn in "${CASES[@]}"; do
+      [[ "${case_fn}" == "${wanted}" ]] && { found=1; break; }
+    done
+    if (( found == 0 )); then
+      printf 'verify-selftest: no case named "%s". Cases:\n' "${wanted}" >&2
+      printf '  %s\n' "${CASES[@]}" >&2
+      exit 2
+    fi
+  done
+  CASES=("$@")
+fi
 
 # case_end, not the case bodies, owns the restore: a case that fails an
 # assertion half way through must still hand the next one a clean tree.
@@ -564,15 +782,33 @@ for case_fn in "${CASES[@]}"; do
   case_end
 done
 
+# The tally counts what was demonstrated. A skipped case is neither a pass nor
+# a failure, and it is named, so a perfect score cannot hide an unchecked
+# property behind the total.
+print_skipped_cases() {
+  local entry
+  for entry in ${SKIPPED_CASES[@]+"${SKIPPED_CASES[@]}"}; do
+    printf '%s   skipped: %s%s\n' "${C_YELLOW}" "${entry}" "${C_RESET}"
+  done
+}
+
+CASES_PASSED=$(( CASES_RUN - CASES_FAILED - CASES_SKIPPED ))
+SKIPPED_SUFFIX=""
+if (( CASES_SKIPPED > 0 )); then
+  SKIPPED_SUFFIX=", ${CASES_SKIPPED} skipped"
+fi
+
 printf '\n'
 if (( CASES_FAILED == 0 )); then
-  printf '%s%s%d/%d cases behaved as specified.%s\n' \
-    "${C_BOLD}" "${C_GREEN}" "${CASES_RUN}" "${CASES_RUN}" "${C_RESET}"
+  printf '%s%s%d/%d cases behaved as specified%s.%s\n' \
+    "${C_BOLD}" "${C_GREEN}" "${CASES_PASSED}" "${CASES_RUN}" "${SKIPPED_SUFFIX}" "${C_RESET}"
+  print_skipped_cases
   printf '%sworking tree: back to the state the run started from.%s\n' \
     "${C_DIM}" "${C_RESET}"
   exit 0
 fi
 
-printf '%s%s%d of %d cases did not behave as specified.%s\n' \
-  "${C_BOLD}" "${C_RED}" "${CASES_FAILED}" "${CASES_RUN}" "${C_RESET}"
+printf '%s%s%d of %d cases did not behave as specified%s.%s\n' \
+  "${C_BOLD}" "${C_RED}" "${CASES_FAILED}" "${CASES_RUN}" "${SKIPPED_SUFFIX}" "${C_RESET}"
+print_skipped_cases
 exit 1
