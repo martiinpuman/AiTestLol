@@ -108,6 +108,15 @@ done < <(git worktree list --porcelain | awk '/^worktree /{print $2}')
 [ "${stale}" -eq 0 ] && say "none stale"
 echo
 
+# 3b. Two in-flight branches changing the same file is a merge conflict scheduled for
+#     later, and hand-resolution has already introduced a defect into a third document.
+echo "file claims"
+bash scripts/file-claims.sh 2>/dev/null | grep -E 'CONTESTED|no file is claimed' | sed 's/^/  /' || true
+if ! bash scripts/file-claims.sh >/dev/null 2>&1; then
+  fail "$(bash scripts/file-claims.sh 2>/dev/null | tail -3 | head -1)"
+fi
+echo
+
 # 4. Dangling document references. The architect once shipped forward references
 #    to ADRs that did not exist yet; a reader following one finds nothing and
 #    cannot tell whether the document is missing or the reference is wrong.
