@@ -206,6 +206,20 @@ assert_summary_row() {
   printf '    summary row:%s\n' "${row}"
 }
 
+# The count in stage 6's Note column, as a whole number. A substring check is
+# not enough here: "209 test(s) executed" is also the tail of "2209 test(s)
+# executed", which is precisely the row a broken counter produces - so the
+# number is anchored on the whitespace before it. Found by breaking the
+# counter and watching the substring version pass.
+assert_executed_count() {
+  local expected="$1" row
+  row="$(grep -E '^ 6[[:space:]]' -- "${VERIFY_DIR}/summary.txt" 2>/dev/null | head -n 1 || true)"
+  [[ -n "${row}" ]] || fail_case "no summary row for stage 6" || return 1
+  grep -qE "[[:space:]]${expected} test\(s\) executed" <<<"${row}" \
+    || fail_case "stage 6 row does not say ${expected} test(s) executed:${row}" || return 1
+  printf '    stage 6 executed exactly %s test(s)\n' "${expected}"
+}
+
 # A usage error is exit 2, distinct from a stage failure (exit 1), so a script
 # that wraps the gate can tell "I called it wrong" from "the code is broken".
 assert_usage_error() {
@@ -448,6 +462,18 @@ case_build_msbuild_warning() {
   assert_nothing_ran_after 3 || return 0
 }
 
+# The summary line stage 3 reads is the console logger's. MSBuild's terminal
+# logger prints no such line, and a build that warns still exits 0 under it -
+# so with the terminal logger on, a check that treated a missing line as "no
+# warnings" would read nothing and call the build clean. It has to notice.
+case_build_warning_summary_missing() {
+  case_begin "stage 3: a build log with no warning summary is not a clean build"
+  VERIFY_ENV=(MSBUILDTERMINALLOGGER=on)
+  run_verify --stage 3
+  assert_fail_stage 3 || return 0
+  assert_stage_log_contains 3 "no MSBuild warning summary" || return 0
+}
+
 case_unit_test_failure() {
   case_begin "stage 6: a unit test that asserts and loses"
   local src="tests/Aurora.Architecture.Tests/VerifySelfTestProbe.cs"
@@ -500,7 +526,8 @@ case_unit_tests_vacuous() {
   assert_fail_stage 6 || return 0
   assert_stage_log_contains 6 "below the required minimum of 1" || return 0
   assert_stage_log_contains 6 "ZzzNoSuchTestExists" || return 0
-  assert_summary_row 6 "FAIL" "0 test(s) executed" || return 0
+  assert_summary_row 6 "FAIL" || return 0
+  assert_executed_count 0 || return 0
 }
 
 # The floor is compared in base ten, explicitly (10# in verify.sh). Without
@@ -526,7 +553,48 @@ case_unit_tests_floor_is_read_in_base_ten() {
   run_verify
   assert_fail_stage 6 || return 0
   assert_stage_log_contains 6 "below the required minimum of ${probe}" || return 0
-  assert_summary_row 6 "FAIL" "${BASELINE_EXECUTED} test(s) executed" || return 0
+  assert_summary_row 6 "FAIL" || return 0
+  assert_executed_count "${BASELINE_EXECUTED}" || return 0
+}
+
+# The count is read from the TRX <Counters> element and from nothing else in
+# the file. The same file carries captured test output verbatim, so a test
+# that prints a counter lookalike must add exactly one to the count - the one
+# test that it is - and not the number it printed.
+case_unit_tests_count_ignores_test_output() {
+  case_begin "stage 6: test output that looks like a counter is not counted"
+  require_baseline_count || return 0
+  local src="tests/Aurora.Architecture.Tests/VerifySelfTestProbe.cs"
+  stage_file "${src}"
+  cat >"${REPO_ROOT}/${src}" <<'CSHARP'
+using Xunit;
+using Xunit.Abstractions;
+
+namespace Aurora.Architecture.Tests;
+
+/// <summary>
+/// Injected by scripts/verify-selftest.sh and deleted again in the same step.
+/// </summary>
+public sealed class VerifySelfTestProbe
+{
+    private readonly ITestOutputHelper _output;
+
+    public VerifySelfTestProbe(ITestOutputHelper output)
+    {
+        _output = output;
+    }
+
+    [Fact]
+    public void PrintsACounterLookalike()
+    {
+        _output.WriteLine("<Counters total=\"1000\" executed=\"1000\" /> executed=\"1000\"");
+    }
+}
+CSHARP
+  run_verify
+  assert_pass || return 0
+  assert_summary_row 6 "PASS" || return 0
+  assert_executed_count "$(( BASELINE_EXECUTED + 1 ))" || return 0
 }
 
 # The smallest zero-padded value whose base-ten reading exceeds N while its
@@ -672,10 +740,12 @@ CASES=(
   case_format_violation
   case_build_compiler_warning
   case_build_msbuild_warning
+  case_build_warning_summary_missing
   case_unit_test_failure
   case_unit_test_host_aborts
   case_unit_tests_vacuous
   case_unit_tests_floor_is_read_in_base_ten
+  case_unit_tests_count_ignores_test_output
   case_summary_tree_guard
   case_summary_tree_guard_from_exit_handler
   case_summary_tree_drift_beside_earlier_failure

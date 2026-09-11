@@ -20,6 +20,14 @@
 
 set -Eeuo pipefail
 
+# now_ms reads EPOCHREALTIME, which bash 5.0 introduced; the stage tables are
+# associative arrays (4.0). On an older bash - macOS ships 3.2 - the run would
+# otherwise die on an unbound variable before it had named a single stage.
+if (( BASH_VERSINFO[0] < 5 )); then
+  printf 'verify: bash 5.0 or newer is required; this is bash %s.\n' "${BASH_VERSION}" >&2
+  exit 2
+fi
+
 # ---------------------------------------------------------------------------
 # Location. The gate always operates on the repository it lives in, whatever
 # the caller's working directory is (5.1).
@@ -166,7 +174,7 @@ Environment:
 Exit codes:
   0  every stage that ran passed
   1  a stage failed - the summary names it
-  2  usage error
+  2  usage error, or a bash older than 5.0
 
 Output goes to artifacts/verify/: one log per stage, the .trx files, and
 summary.txt. The script writes nowhere else and never modifies a tracked file:
@@ -437,12 +445,16 @@ stage_build() {
 # TreatWarningsAsErrors in Directory.Build.props promotes compiler, analyzer
 # and code-style warnings to errors, but not every MSBuild- or NuGet-level
 # warning. 5.2 says stage 3 fails on *any* warning, so the MSBuild summary
-# line is checked too. A missing summary line is not itself a failure: this
-# check only ever adds failures the primary mechanism did not catch.
+# line is checked too - and it has to be there. A log without one is not a
+# build without warnings but a build this check could not read: MSBuild's
+# terminal logger prints no such line, and a build that warned still exits 0
+# under it, so a missing line would leave this check reporting nothing and
+# passing.
 assert_no_build_warnings() {
-  local n
+  local n summaries=0
   while read -r n; do
     [[ -n "${n}" ]] || continue
+    summaries=$(( summaries + 1 ))
     if (( 10#${n} > 0 )); then
       note ""
       note "verify: the build reported ${n} warning(s). Warnings are errors in this"
@@ -450,6 +462,16 @@ assert_no_build_warnings() {
       return 1
     fi
   done < <(grep -Eo '^[[:space:]]*[0-9]+ Warning\(s\)' "${STAGE_LOG}" | grep -Eo '[0-9]+' || true)
+  if (( summaries == 0 )); then
+    note ""
+    note "verify: the build log has no MSBuild warning summary ('N Warning(s)'), so stage 3"
+    note "        cannot tell a clean build from one whose warnings it never saw. The console"
+    note "        logger prints that line and the terminal logger does not: check"
+    note "        MSBUILDTERMINALLOGGER and any -tl/--tl option reaching dotnet build."
+    return 1
+  fi
+  note ""
+  note "MSBuild warning summary: ${summaries} line(s) read, 0 warning(s)"
   return 0
 }
 
@@ -520,8 +542,15 @@ stage_unit_tests() {
 # assembly into --results-directory, each carrying a <Counters executed="N"/>
 # element; an assembly whose filter matched nothing still writes one, with zero.
 # Read with grep, so the gate keeps its "nothing beyond sed/grep/awk/diff/git"
-# property. The leading-space anchor is load-bearing: notExecuted="0" is a
-# different counter that an unanchored pattern would also match.
+# property.
+#
+# The match is scoped to the <Counters element, and that scope is what makes
+# the count trustworthy: the same file carries captured test output verbatim
+# in <StdOut>, so a test that printed executed="1000" would otherwise be summed
+# as a counter. Captured output cannot open an element - its '<' is escaped to
+# &lt; - so only the element itself begins with '<Counters '. Within it, the
+# leading space anchors the attribute name. (notExecuted="0" was never the
+# concern: it is camelCase, and a case-sensitive executed=" does not match it.)
 count_executed_tests() {
   local trx n total=0
   for trx in "${VERIFY_DIR}"/*.trx; do
@@ -529,7 +558,7 @@ count_executed_tests() {
     while read -r n; do
       [[ -n "${n}" ]] || continue
       total=$(( total + 10#${n} ))
-    done < <(grep -o '[[:space:]]executed="[0-9]*"' -- "${trx}" | grep -o '[0-9]*' || true)
+    done < <(grep -o '<Counters [^>]*' -- "${trx}" | grep -o ' executed="[0-9]*"' | grep -o '[0-9]*' || true)
   done
   printf '%s' "${total}"
 }
