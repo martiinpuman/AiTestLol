@@ -37,6 +37,9 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     public const string PostgresImage = "postgres:17-alpine";
 
     public const string CatalogDatabaseName = "aurora_catalog";
+
+    /// <summary>The database <c>aurora_admin</c> issues <c>CREATE DATABASE</c> from (ADR-0007 §8 step 2).</summary>
+    public const string MaintenanceDatabaseName = "postgres";
     public const string AdminRole = "aurora_admin";
     public const string MigratorRole = "aurora_migrator";
     public const string AppRole = "aurora_app";
@@ -70,9 +73,20 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
             await ExecuteAsync(connection, $"CREATE ROLE {MigratorRole} LOGIN PASSWORD '{_migratorPassword}'");
             await ExecuteAsync(connection, $"CREATE ROLE {AppRole} LOGIN PASSWORD '{_appPassword}'");
             await ExecuteAsync(connection, $"GRANT {MigratorRole} TO {AdminRole}");
+
+            // PostgreSQL grants CONNECT on every database to PUBLIC by default, so a hardened
+            // cluster revokes it on the maintenance database too - otherwise aurora_app, which is
+            // meant to reach exactly one database, can also reach the one the provisioner issues
+            // CREATE DATABASE from (ADR-0004 rule 2, ADR-0007 4.4). Only an owner or a superuser
+            // can revoke it, and a REVOKE issued by anyone else is a *warning*, not an error: the
+            // statement appears to work and changes nothing. So this runs on the superuser
+            // connection, and CatalogPrivilegeTests asserts the effect by connecting rather than
+            // by trusting that the statement ran.
+            await ExecuteAsync(connection, $"REVOKE ALL ON DATABASE {MaintenanceDatabaseName} FROM PUBLIC");
+            await ExecuteAsync(connection, $"GRANT CONNECT ON DATABASE {MaintenanceDatabaseName} TO {AdminRole}");
         }
 
-        AdminMaintenanceConnectionString = As(superuser, AdminRole, _adminPassword, database: "postgres");
+        AdminMaintenanceConnectionString = As(superuser, AdminRole, _adminPassword, database: MaintenanceDatabaseName);
         await using (NpgsqlConnection connection = await OpenAsync(AdminMaintenanceConnectionString))
         {
             await ExecuteAsync(

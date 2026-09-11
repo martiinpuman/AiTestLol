@@ -10,9 +10,27 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// and cannot do, asserted by trying, not by reading the grant statements.
 /// </summary>
 /// <remarks>
-/// This is what "tenant isolation" means for a database that is shared by design: the request
-/// path can read and write registry rows and can change nothing about the schema that decides
-/// where every tenant's data lives.
+/// <para>
+/// <b>This is what the Definition of Done's "tenant isolation test" means for a database that is
+/// shared by design.</b> The catalog is the one store every tenant's request touches, so there is
+/// no tenant A row for a tenant B request to be kept out of; inventing a test that partitioned it
+/// would prove nothing. What is real isolation here is the blast radius of the role the request path
+/// holds, and there are two halves of it:
+/// </para>
+/// <list type="number">
+/// <item><description>
+/// <b>Sideways:</b> <c>aurora_app</c> has <c>CONNECT</c> on exactly one database (ADR-0007 §4.4),
+/// so a compromised or mis-routed request cannot reach another database on the cluster — which is
+/// the property that will carry the weight once every tenant has a database of its own.
+/// </description></item>
+/// <item><description>
+/// <b>Downwards:</b> <c>aurora_app</c> has no DDL, so it cannot alter the schema that decides
+/// where every tenant's data lives, and cannot touch the migrations history that records it.
+/// </description></item>
+/// </list>
+/// <para>
+/// Both are asserted by trying, as the role, not by reading the grant statements back.
+/// </para>
 /// </remarks>
 [Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
@@ -68,6 +86,25 @@ public sealed class CatalogPrivilegeTests
         await using var command = new NpgsqlCommand(sql, connection);
 
         PostgresException refused = await Should.ThrowAsync<PostgresException>(() => command.ExecuteNonQueryAsync());
+
+        refused.SqlState.ShouldBe(InsufficientPrivilege);
+    }
+
+    [Fact]
+    public async Task The_app_role_cannot_connect_to_any_other_database_on_the_cluster()
+    {
+        // ADR-0007 §4.4, and the closest thing the shared catalog has to a tenant-isolation test:
+        // the runtime role reaches one database and no other. The maintenance database is the one
+        // every cluster has and the one the provisioner connects to as aurora_admin (§8 step 2), so
+        // it is the honest thing to try to reach.
+        var elsewhere = new NpgsqlConnectionStringBuilder(_catalog.AppConnectionString)
+        {
+            Database = CatalogDatabaseFixture.MaintenanceDatabaseName,
+        }.ConnectionString;
+
+        await using var connection = new NpgsqlConnection(elsewhere);
+
+        PostgresException refused = await Should.ThrowAsync<PostgresException>(() => connection.OpenAsync());
 
         refused.SqlState.ShouldBe(InsufficientPrivilege);
     }
