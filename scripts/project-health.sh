@@ -79,6 +79,13 @@ while read -r path; do
     # A reviewer's detached scratch worktree. Transient by design and removed by
     # the reviewer; only worth reporting, never a broken invariant.
     say "${path} — reviewer scratch, in use or awaiting cleanup"
+  elif [[ "${br}" == worktree-agent-* ]] \
+       && [ -n "$(find "${path}" -maxdepth 1 -mmin -60 -print -quit 2>/dev/null)" ]; then
+    # An agent sits on its own worktree-agent-* branch until it checks out a task
+    # branch, so by ancestry it is indistinguishable from merged leftover — reporting
+    # it as one sent the orchestrator after a worktree that was simply starting up.
+    # Recent modification is the signal that separates the two.
+    say "${path} (${br}) — agent active in the last hour"
   elif git merge-base --is-ancestor "${br}" "${INTEGRATION}" 2>/dev/null; then
     fail "${path} (${br}) — its work is merged, prune it"
     stale=$((stale + 1))
