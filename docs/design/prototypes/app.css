@@ -238,7 +238,13 @@ a { color: var(--color-accent); }
   cursor: pointer; border: 1px solid transparent; white-space: nowrap;
   transition: background var(--duration-fast) var(--easing-standard);
 }
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn:disabled, .btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
+/* components.md §1 correction: aria-disabled (not the native `disabled`
+   attribute) is the mechanism for a disabled button whose reason must be
+   reachable by keyboard/screen-reader focus, not only mouse hover — native
+   `disabled` removes the element from the tab order, which defeats that
+   requirement outright. The click handler itself must check aria-disabled
+   and no-op, since the browser will not block the click for us here. */
 .btn-primary { background: var(--color-accent-solid); color: var(--color-text-on-accent); }
 .btn-primary:hover:not(:disabled) { background: var(--color-accent-solid-hover); }
 .btn-primary:active:not(:disabled) { background: var(--color-accent-solid-active); }

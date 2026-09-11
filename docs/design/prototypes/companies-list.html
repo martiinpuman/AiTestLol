@@ -109,9 +109,15 @@
             <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
             <button data-mode="system" onclick="setTheme('system')">System</button>
           </div>
-          <button class="btn btn-primary" id="new-company-btn" onclick="onNewCompanyClick()">
+          <button class="btn btn-primary" id="new-company-btn" onclick="onNewCompanyClick()" aria-describedby="new-company-reason">
             <span data-i18n="companies.newButton">+ New company</span>
           </button>
+          <!-- title alone is not reliably exposed to assistive tech on focus;
+               aria-describedby + a real (visually-hidden when not needed)
+               text node is the mechanism that actually backs the claim this
+               screen's spec makes ("a disabled control still carries a
+               reachable reason on focus, not only on mouse hover"). -->
+          <span id="new-company-reason" class="visually-hidden"></span>
         </div>
       </div>
 
@@ -316,16 +322,25 @@
     panels.forEach(function (p) { document.getElementById("content-" + p).hidden = (p === "no-access") || (p !== currentScenario); });
 
     var btn = document.getElementById("new-company-btn");
+    var reason = document.getElementById("new-company-reason");
     if (currentPersona === "viewer") {
-      btn.disabled = true;
+      // aria-disabled, not the native `disabled` attribute — see
+      // components.md §1's correction. The button stays focusable so a
+      // keyboard/screen-reader user can actually reach its reason.
+      btn.setAttribute("aria-disabled", "true");
       btn.title = t("companies.newButtonDisabledReason");
+      reason.textContent = t("companies.newButtonDisabledReason");
     } else {
-      btn.disabled = false;
+      btn.removeAttribute("aria-disabled");
       btn.removeAttribute("title");
+      reason.textContent = "";
     }
   }
 
   function onNewCompanyClick() {
+    // aria-disabled does not stop the click event the way native `disabled`
+    // would — the handler itself must check it (components.md §1 correction).
+    if (document.getElementById("new-company-btn").getAttribute("aria-disabled") === "true") return;
     showToast("success", t("companies.newButtonToast"));
   }
 
@@ -334,7 +349,8 @@
   // from inside its own completion hook).
   function previewLocale(loc) {
     try { localStorage.setItem("aurora-locale", loc); } catch (e) { /* ignore */ }
-    applyI18n(); // re-run [data-i18n-datetime] scan and static-string lookups
+    renderFooterCounts(); // must run BEFORE applyI18n() reads data-i18n-vars
+    applyI18n(); // re-runs [data-i18n-datetime] scan and static-string lookups
   }
 
   render();
