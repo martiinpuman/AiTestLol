@@ -27,8 +27,9 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// across tenants" a property of the type system rather than a rule to remember — a module cannot
 /// write a query over the tenant registry at all. Routing rows are read by the resolver (B-06),
 /// which <c>modules.md</c> §4 makes the only code allowed to build a connection string. The two
-/// test assemblies see it through <c>InternalsVisibleTo</c>, and
-/// <c>CatalogContextAccessibilityTests</c> in the unit suite fails if it ever becomes public.
+/// test assemblies see it through <c>InternalsVisibleTo</c>. Publishing this type alone does not
+/// compile — its <c>DbSet</c>s name internal entities — and <c>CatalogContextAccessibilityTests</c>
+/// fails on the first entity or value object published to make it compile.
 /// </para>
 /// <para>
 /// <b>It holds no tenant business data</b> (ADR-0007 §9.3): a test over the model, and one over

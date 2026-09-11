@@ -23,8 +23,16 @@ namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 /// </para>
 /// <para>
 /// So the whole catalog namespace stays internal and the assembly's public surface is the DI
-/// extension alone. Flip <c>internal sealed class CatalogDbContext</c> to <c>public</c> and
-/// <see cref="The_tenancy_assembly_publishes_only_its_DI_extension"/> fails naming it.
+/// extension alone.
+/// </para>
+/// <para>
+/// <b>Two layers, and the first is the compiler.</b> Flipping <c>CatalogDbContext</c> alone to
+/// <c>public</c> does not build: its <c>DbSet&lt;Tenant&gt;</c> and the other four are CS0053,
+/// "property type is less accessible", because the entities are internal too. The step the
+/// compiler <em>does</em> allow is publishing a type further down — an entity, a value object —
+/// one at a time, until the context can follow. That is what
+/// <see cref="The_tenancy_assembly_publishes_only_its_DI_extension"/> is for, and it fails on the
+/// first such type: made <c>public</c>, <c>TenantHost</c> is reported as an unexpected export.
 /// </para>
 /// </remarks>
 public sealed class CatalogContextAccessibilityTests
