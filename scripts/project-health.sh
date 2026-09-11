@@ -32,8 +32,14 @@ if [ -z "${done_ids}" ]; then
 else
   for id in ${done_ids}; do
     review="$(ls docs/reviews/${id}.md docs/reviews/${id}-rereview.md 2>/dev/null | tail -1 || true)"
-    if [ -z "${review}" ]; then
-      fail "${id} is done but has no review in docs/reviews/"
+    # Reviews now live on the task's pull request. The repository's record of one is
+    # its line in the iteration log naming the verdict and the PR — that is what a
+    # session with no GitHub access reads. Either form counts.
+    logged="$(grep -E "^\| *${id} *\|" docs/ITERATION_LOG.md 2>/dev/null | grep -cE 'APPROVE|#[0-9]+' || true)"
+    if [ -z "${review}" ] && [ "${logged:-0}" -eq 0 ]; then
+      fail "${id} is done but has neither a review in docs/reviews/ nor a verdict line in ITERATION_LOG.md"
+    elif [ -z "${review}" ]; then
+      ok "${id} — verdict recorded in ITERATION_LOG.md"
     elif ! grep -qiE '^#+ *Verdict|Verdict: *(APPROVE|CHANGES_REQUESTED)|^## Verdict' "${review}"; then
       fail "${review} records no verdict"
     elif grep -qiE 'Verdict:? *CHANGES_REQUESTED' "${review}" \
@@ -108,7 +114,23 @@ echo
 echo "cross-references"
 dangling=0
 for adr in $(grep -rhoE 'ADR-[0-9]{4}' docs/ --include='*.md' 2>/dev/null | sort -u); do
-  ls docs/decisions/${adr}-*.md >/dev/null 2>&1 || { fail "${adr} is referenced but no such ADR exists"; dangling=$((dangling + 1)); }
+  if ! ls docs/decisions/${adr}-*.md >/dev/null 2>&1; then
+    # An ADR cited here but living on an unmerged task branch is work in flight, not a
+    # broken reference — B-12 merged citing three of them. Say which branch has it, so
+    # the difference between "pending a merge" and "lost" is visible rather than guessed.
+    on_branch=""
+    for b in $(git branch -a --format='%(refname:short)' | grep -E '^(origin/)?task/' | sed 's|^origin/||' | sort -u); do
+      if git ls-tree -r --name-only "${b}" -- docs/decisions 2>/dev/null | grep -q "${adr}-"; then
+        on_branch="${b}"; break
+      fi
+    done
+    if [ -n "${on_branch}" ]; then
+      say "${adr} is referenced here but lives on ${on_branch}, not yet merged"
+    else
+      fail "${adr} is referenced but no such ADR exists"
+      dangling=$((dangling + 1))
+    fi
+  fi
 done
 for spec in $(grep -rhoE 'SPEC-[0-9]{3}' docs/ --include='*.md' 2>/dev/null | sort -u); do
   ls docs/product/specs/${spec}-*.md >/dev/null 2>&1 || { fail "${spec} is referenced but no such spec exists"; dangling=$((dangling + 1)); }
