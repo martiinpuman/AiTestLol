@@ -168,6 +168,28 @@ Two habits regardless of tier: state a finding once, in the place it belongs, an
 that proves it next to it. A "Patterns noted" section earns its place only when the pattern is new —
 if it restates one already in this file's self-check list, cite it in a clause instead.
 
+## Starting a dependent task before its predecessor merges
+
+A dependent task used to wait for its predecessor to be reviewed **and** merged, which put a whole
+review's latency on the critical path. It may now start earlier, under conditions:
+
+**Allowed** when the dependent task is **Standard** or **Light** tier, and the predecessor's branch is
+**gate-green** — `./scripts/verify.sh` passes on it — even though its review is still open. Branch from
+the predecessor's `task/<ID>`, not from the integration branch, and say in the first commit message
+which branch you are stacked on.
+
+**Never** when either task is **Full** tier. Tenancy, money, the ledger, tax, auth and migrations wait
+for a merged predecessor. The whole point of a Full review is that the design may still change, and
+rebuilding on a design that moved is more expensive than the wait.
+
+**Whoever starts early owns the rebase.** When the predecessor merges, rebase onto the integration
+branch and re-run the gate before handing over. If the predecessor's review forces a change that
+invalidates your work, that is the cost of starting early — say so plainly rather than patching around
+it.
+
+The orchestrator decides and names this in the brief. Absent an explicit instruction, wait for the
+merge.
+
 ## Definition of Done (per task)
 1. All acceptance criteria in the spec are met and covered by tests.
 2. scripts/verify.sh passes on the task branch rebased on the integration branch.
