@@ -3,6 +3,8 @@
 Status: accepted **v3** · Author: architect · Date: 2026-09-11
 Companion: `modules.md`, `testing-strategy.md`, `dependencies.md`, `../decisions/ADR-0007-...`, `../decisions/ADR-0008-...`
 
+**Changes in v5** (2026-09-11, answering three review escalations): §6.2 records the acceptance criteria that change because **ADR-0028 Amendment 1** replaced §2 of that ADR, and two new rows that follow from **ADR-0029** and **ADR-0030**. §6 and §6.1 are unchanged except where §6.2 says it overrides them.
+
 **Changes in v4** (2026-09-11, answering the project-manager's four questions on the B-06/B-07/B-08/B-13 split): §6.1 below records the dependency corrections that follow from **ADR-0027** (the DDL path is separate from the application data path) and the two new bootstrap rows that follow from **ADR-0028** (the tenant audit store). The §6 table rows themselves are unchanged; §6.1 overrides their **Depends on** column where it says so.
 
 **Changes in v3** (2026-09-11, B-02 and B-03 peer review findings **S-1**/**S-2**): stage 6 now belongs to **B-02** (stages 0–3, 6, 11) and B-11 owns stages 4, 5, 7–10; §5.2 stage 6 and §5.3 record the executed-test floor and `AURORA_MIN_UNIT_TESTS`; §6 gains a standing note that an acceptance-criteria row is a floor and its ADR is the contract, and the **B-03, B-04, B-05, B-06, B-07, B-08** rows are widened to the ADR sections they implement.
@@ -57,6 +59,7 @@ src/
 
 tests/
   Aurora.TestKit/                               # fixtures, builders, the two-tenant fixture
+  Aurora.Countries.TestKit/                     # CountryPackageContractTests<TPackage> (ADR-0030 §5, §6.2 item 3)
   Aurora.Architecture.Tests/                    # fitness tests — no database, fast
   unit/         Aurora.Modules.<M>.UnitTests/
   integration/  Aurora.Modules.<M>.IntegrationTests/
@@ -257,3 +260,57 @@ These override the **Depends on** column above and in `../BACKLOG.md`. Reasons a
 | **B-16.2** | `[Auditable]` interceptor and the raw-write ban | The `SaveChangesInterceptor` writing before/after for `[Auditable]` entities in the caller's transaction; fitness rule failing `ExecuteUpdate`/`ExecuteDelete` on an `[Auditable]` entity, with a deliberately-violating fixture; a counted assertion of how many entity types the interceptor actually covered, so "zero auditable entities" cannot report success. Tier **Full** | B-16.1, B-06.3 |
 
 B-15.1 gains **B-16.2** as a dependency: its "audit annotation" acceptance criterion has nothing to annotate against until the interceptor exists.
+
+> **The append-only half of the B-16.1 row above is overridden by §6.2 item 1** (ADR-0028 Amendment 1). The statement it quotes — `ALTER DEFAULT PRIVILEGES … REVOKE UPDATE, DELETE` — is a no-op on PostgreSQL 17.11, and the probe it asks for passes against that no-op. Do not implement the row as written here or as transcribed in `../BACKLOG.md`.
+
+
+---
+
+### 6.2 Corrections and new rows (v5, 2026-09-11)
+
+These follow **ADR-0028 Amendment 1**, **ADR-0029** and **ADR-0030**, all written the same day in response to the B-04, B-05 security and B-12 reviews. Where an item overrides §6, §6.1 or a `../BACKLOG.md` row it says so. The architect does not edit the backlog; the project-manager transcribes these. **Row numbers here follow `../BACKLOG.md`'s split of the architect's single B-16 row — B-16.1 schema and append-only enforcement, B-16.2 the writer and hash chain, B-16.3 the `[Auditable]` interceptor — not §6.1's two-row form above.**
+
+#### 1. B-16.1 — the append-only acceptance criteria, re-specified
+
+**Overrides** the append-only half of §6.1's B-16.1 row and of `../BACKLOG.md`'s B-16.1 row. The partitioning half of both is unchanged. Reason: ADR-0028 §2 named a statement that does nothing, and the criterion built on it could not fail. ADR-0028 Amendment 1 carries the executed evidence; this is the row form.
+
+| # | Criterion | What makes it a real check |
+|---|---|---|
+| 1 | Schema `audit`; `audit.audit_event` RANGE-partitioned monthly on `occurred_at`; a `DEFAULT` partition; every primary key and unique constraint includes `occurred_at`; the next two months pre-created by the platform job; a health check asserts the `DEFAULT` partition is empty | Unchanged from §6.1 |
+| 2 | `aurora_app` holds **exactly** `SELECT, INSERT` on `audit.audit_event` | Compare the **ACL** — `aclexplode(pg_class.relacl)` plus `pg_attribute.attacl`, entries for `aurora_app` **and** `PUBLIC` — against the recorded decision, **not** `has_table_privilege`, which is blind to a column-level grant and short by `MAINTAIN` on PostgreSQL 17 (`../reviews/security-B-05.md` H-1). Then, **connected as `aurora_app`**, execute `UPDATE` and `DELETE` and expect SQLSTATE `42501` |
+| 3 | `ALTER DEFAULT PRIVILEGES FOR ROLE aurora_migrator IN SCHEMA audit GRANT SELECT, INSERT ON TABLES TO aurora_app` — a **positive grant**, replacing the `REVOKE` the old row quoted | Two assertions, both required: (a) `pg_default_acl` holds exactly one row for (`aurora_migrator`, `audit`, object type `r`) with ACL `{aurora_app=ar/aurora_migrator}`; (b) a table created in `audit` **after** the migration gives `aurora_app` exactly `{SELECT, INSERT}` — the `INSERT` **succeeds** and the `UPDATE`/`DELETE` return `42501`. **The `INSERT` half is not optional:** a probe that only checks "`UPDATE` is refused" passes against the no-op, because a new table grants `aurora_app` nothing at all |
+| 4 | `BEFORE UPDATE OR DELETE … FOR EACH ROW` trigger on the **partitioned parent**, raising `42501` | Probed **as `aurora_migrator`**, the owner whom privileges do not restrain: through the parent **and** directly against a partition. Plus: create a partition *after* the trigger exists and probe it, because the guarantee for next month's partition is that the trigger is cloned on creation |
+| 5 | `BEFORE TRUNCATE … FOR EACH STATEMENT` on the parent, **and attached by the partition-creation job to every partition it creates** | Truncate triggers are **not** cloned to partitions — verified on 17.11: `TRUNCATE audit.audit_event` was refused while `TRUNCATE audit.audit_event_2026_09` succeeded and emptied the table. The test truncates a **job-created** partition as the owner and expects `42501`. Without the job half, criterion 5 is a claim about the parent only |
+| 6 | Every privilege and trigger probe reports **how many** relations, roles and ACL entries it compared, and fails on zero | `CLAUDE.md` self-check #2. A privilege test that found no relations must not print PASS |
+| 7 | **No part of this row touches the `catalog` schema** | The old row's "the same three-way retrofit is applied to `catalog.operator_audit_event` and `catalog.erasure_replay_log`" is **withdrawn**: neither table exists, no task creates them, and B-05 did not. When the row that creates them is written, it carries criteria 2 and 4 and records the privilege decision in `CatalogSchemaAllowlist.AppRolePrivileges` with the writer named. Criterion 3 is **not** applied to `catalog`, whose tables legitimately need `UPDATE` |
+
+**Two additions to B-16.2** (the writer and hash chain), for the same reason: its tamper test gains (a) disable the trigger as the owner, edit a row, re-enable, and assert `VerifyAsync` reports the break; and (b) drop a partition and assert the same. These are the cases the trigger cannot prevent, so the chain is what covers them.
+
+**One limitation that needs a row of its own, not a sentence:** the hash chain does not detect truncation of the **tail** — removing the most recent rows leaves an internally consistent chain. ADR-0018's daily job writing the chain head to `catalog.operator_audit_event` is the answer, and nothing schedules it. Carry it as a follow-up (the project-manager assigns the id), depending on the row that creates `catalog.operator_audit_event`.
+
+#### 2. Remove the ArchUnitNET package pins (ADR-0029) — **Light** tier
+
+A developer task, small and mechanical:
+
+- delete the `TngTech.ArchUnitNET` and `TngTech.ArchUnitNET.xUnit` `PackageVersion` lines from `Directory.Packages.props`;
+- in `tests/Aurora.Architecture.Tests/Aurora.Architecture.Tests.csproj`, update the comment that cites ADR-0020's ArchUnitNET choice so it cites **ADR-0029** instead — the deviation is no longer a deviation;
+- no other code change, and no rule changes.
+
+Acceptance: `scripts/verify.sh` green with its stage-6 count unchanged, and a search for `ArchUnit` across `src/`, `tests/` and `Directory.Packages.props` returns nothing. **Sequence it after B-04 merges** — the rework owns that `.csproj` right now.
+
+#### 3. New row — `Aurora.Countries.TestKit` and `CountryPackageContractTests<TPackage>` (ADR-0030 §5) — **Full** tier
+
+| Task | Acceptance criteria | Depends on |
+|---|---|---|
+| `tests/Aurora.Countries.TestKit`: the package contract test base | The ten cases of ADR-0008 §10 as a `CountryPackageContractTests<TPackage>` base class in its own assembly — **not** in `Aurora.TestKit`, which every module's integration tests reference and which must not acquire the package host. Built whole: the three install cases (`Install_does_not_alter_core_ddl`, `Install_uninstall_round_trip`, `Install_into_a_live_tenant_with_existing_data`) are what give the base class its value, so the metadata-only half is not shipped alone. The first subclass is the first reference package; until one exists, the base class is exercised by the B-12 fixture package. Plus a fitness rule asserting every package assembly under `src/packages/` has exactly one subclass — **inert** until a package project exists, so it is registered in the `Inert` table of `tests/Aurora.Architecture.Tests` with this row's id and an inertness guard that fails when a package assembly appears without a subclass | B-13.2, B-12 |
+
+#### 4. The B-12 rework carries the ADR-0030 contract edits — no new row
+
+Six items, all inside the branch already in rework. Listed here because two of them enlarge it and the orchestrator's size check should see them:
+
+1. §3.1's allowlist sentence in `src/Aurora.Countries.Contracts/README.md` and its `.csproj` comment restated to the three-assembly form, **plus** the derived-set test (the allowlist equals the contract's own `Aurora.*` references plus the contract itself).
+2. A `coreContractRange` lacking either bound makes the manifest **invalid**, enforced where the manifest is constructed; `CoreContractGate` keeps the same check with the same message; `CoreContractGateTests`' `("1.0.0", "1.4.0")` row becomes a refusal case, joined by `"[1.0.0, )"` and `"(, )"`.
+3. `IStatutoryReportDefinition.VersionAsOf(CompanyId, TaxRegistrationId, DateOnly)`, with `PublicAPI.Shipped.txt` moved with it. **Enlarges the rework.**
+4. The registration-keyed slot registry, its written exception list (`ITaxCategoryMapping.DefaultCodeFor` goes in it, with the follow-up id), and a fixture interface written to break the rule. **Enlarges the rework.**
+5. A second fixture package that **uses a type from** an `Aurora.*` assembly not on the allowlist, and a test watching the loader refuse it before loading. It must *use* the type: an unused `ProjectReference` is not emitted into the assembly, so a fixture that merely declares one would pass and prove nothing (ADR-0030 §2).
+6. A second fixture whose `ICountryPackage.Manifest` disagrees with its embedded resource in one field, so the ADR-0008 §3.2 agreement check can fail (`../reviews/B-12.md` m2).
