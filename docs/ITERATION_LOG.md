@@ -205,3 +205,36 @@ them, so a session with no GitHub access can still find the verdict and what it 
 | ARCH-CORRECTIONS | #6 | APPROVE (second reviewer, Full) | senior-reviewer | Reproduced all ten PostgreSQL behaviours the ADR-0028 amendment claims, against 17.11 — the REVOKE form leaves `pg_default_acl` empty and permits a later GRANT; the positive grant constrains a table created afterwards; the row trigger is cloned to a new partition and the truncate trigger is not; event triggers need a superuser this project does not define. Two rounds of new majors, both false claims *introduced by the fixes* — the second in text the first fix commit had just added. Verified the collateral check by hand: all 12 references to ADR-0008's own §6.1/§6.2 byte-identical to base after the renumbering. GitHub refused `APPROVE` with `403: Submitting APPROVE reviews is not permitted for this session type` — a session-policy restriction, not an authorship one, so the verdict is in the review body. |
 | B-05 | #3 | APPROVE (third security reviewer, Full) | security-reviewer | Re-ran all nineteen attack shapes from both earlier rounds; every one returns `42501` except `UPDATE … RETURNING database_name`, which crosses no privilege. Re-derived all three counted assertions against its own cluster and found them exact. Verified by execution on PG 17.11 that the per-schema `ALTER DEFAULT PRIVILEGES … REVOKE` form stores nothing — independently re-confirming ADR-0028 §2's second mechanism as a permanent no-op on a third cluster. Four mediums remain, none blocking, now recorded as FOLLOWUP-010…013 rather than routed a fourth time. Gate PASS at 603 unit tests on the merged tree (B-05 alone 371, B-12 alone 440), integration 54/54. |
 | B-04 | #8 | APPROVE (third reviewer, Full) | senior-reviewer | Executed eight fault injections rather than re-deriving the author's table: ghost `.csproj` under `src/Fixtures/` (21 of 136 red unbuilt, F1 reporting its `double` when built, against 42/42 green before the fix), `TMPDIR` inside the repo, the cross-assembly base walk, the plain-prefix and exact-list faults, the hosted set dropped, the simple-name catalog exemption, and the pre-rework argument-keyed T2. **Could not break** three things it tried: a hosted service reached through `IPlatformJob : IHostedService`, one implementing `IHostedLifecycleService`, and ADR-0032's sanctioned open-generic factory registration. Accepted the interim tenancy prefix on the explicit condition that it does not survive B-07 (FOLLOWUP-018). Gate PASS at 736 on the merged tree; floor re-rounded 600 → 730. PR #2 was closed in favour of #8: its head was the pre-rework branch, which diverged from the rework lineage when the author rebased, and force-pushing is a hard limit. |
+
+## Iteration 6 — 2026-09-12
+
+**Three merges: B-12, B-05, B-04, plus the ADR corrections.** Every one took two or three reworks and a
+reviewer who reproduced rather than accepted. The hardening floor is now five of its tasks complete.
+
+**What the reviews found that reading would not have.** A privilege oracle blind to column-level grants
+and to PG 17's `MAINTAIN`. Then `INSERT` reproducing a whole tenant takeover with no `UPDATE` and no
+`DELETE`. Then a `SECURITY DEFINER` function bypassing the *replacement* oracle, because a function's
+default ACL is `EXECUTE TO PUBLIC` and it did not read `pg_proc`. A production `.csproj` under any
+directory named `Fixtures/` vanishing from every architecture rule with the suite green at 42/42. And an
+assembly-name check using `Ordinal` where the .NET loader binds case-insensitively.
+
+**Process defects found and mechanised this iteration:**
+- Two PRs showed **pre-rework code for hours** because the reworks lived on `-rework2` branches. B-05
+  fast-forwarded; B-04 had diverged and could not, so PR #2 was closed and #8 opened from the branch
+  holding the work — force-pushing is a hard limit and hand-merging two rebased copies is what already
+  put a defect in a third document.
+- **Routings were evaporating.** B-05's third security reviewer reported three of its routings as being
+  made for the third time. Now `FOLLOWUP-010`…`025`, and transcription is a step in the merge procedure.
+  Three of the first rows cited the wrong ADR sections and had to be corrected — a pointer that does not
+  resolve is not a transcription.
+- **Removing an agent's worktree makes it unresumable.** Cost a resume: a one-test follow-up went to a
+  cold agent instead of the one that wrote the mechanism.
+- A **session rate limit killed three agents mid-task**; all three resumed from disk with context.
+
+**Two new rules earned, both about mechanisms that cannot fail** — the project's oldest theme, one level
+up each time. *A demonstration that cannot fail is not a demonstration*: ADR-0032's fault "proved" a rule
+while merely moving the report from one clause to another. *A floor set below the narrowing it detects,
+detects nothing*: T15's floor of 3 was satisfied by three unrelated calls.
+
+**Next:** confirm and merge ADR-0032; close ADR-0029's five highs, then dispatch the front of the B-17
+chain (B-03.1, B-17.1, B-17.2), which is ready as written.
