@@ -1,7 +1,9 @@
 # Solution layout and the `scripts/verify.sh` spec
 
-Status: accepted **v3** · Author: architect · Date: 2026-09-11
+Status: accepted **v5** · Author: architect · Date: 2026-09-11
 Companion: `modules.md`, `testing-strategy.md`, `dependencies.md`, `../decisions/ADR-0007-...`, `../decisions/ADR-0008-...`
+
+**Changes in v5** (2026-09-11, closing the identity/authorization gap the project-manager flagged twice): new **§6.2** specifies the nine bootstrap rows that build ADR-0009's sign-in stack and ADR-0010's permission evaluation, and new **§6.3** records the dependency edges that change as a result. Both follow **ADR-0029**. §6 and §6.1 are unchanged; §6.3 overrides their **Depends on** column where it says so.
 
 **Changes in v4** (2026-09-11, answering the project-manager's four questions on the B-06/B-07/B-08/B-13 split): §6.1 below records the dependency corrections that follow from **ADR-0027** (the DDL path is separate from the application data path) and the two new bootstrap rows that follow from **ADR-0028** (the tenant audit store). The §6 table rows themselves are unchanged; §6.1 overrides their **Depends on** column where it says so.
 
@@ -257,3 +259,148 @@ These override the **Depends on** column above and in `../BACKLOG.md`. Reasons a
 | **B-16.2** | `[Auditable]` interceptor and the raw-write ban | The `SaveChangesInterceptor` writing before/after for `[Auditable]` entities in the caller's transaction; fitness rule failing `ExecuteUpdate`/`ExecuteDelete` on an `[Auditable]` entity, with a deliberately-violating fixture; a counted assertion of how many entity types the interceptor actually covered, so "zero auditable entities" cannot report success. Tier **Full** | B-16.1, B-06.3 |
 
 B-15.1 gains **B-16.2** as a dependency: its "audit annotation" acceptance criterion has nothing to annotate against until the interceptor exists.
+
+**Still open after v4, closed in §6.2/§6.3 below:** nothing here builds sign-in or permission evaluation, and `B-07.3` seeds an `access` schema no row creates. See §6.2.
+
+---
+
+### 6.2 The identity and authorization rows (v5, 2026-09-11)
+
+`ADR-0029` closes the gap the project-manager flagged twice: **nothing in `B-01` … `B-15` builds sign-in or permission evaluation**, while SPEC-001 AC-5, SPEC-001 BR-1, SPEC-002 BR-3/BR-4 and `B-15.2`'s endpoint authorization all presuppose both — and `B-07.3` seeds roles, the permission catalogue and the administrator Membership into an `access` schema **no row creates**, for a reader that does not exist. Read ADR-0029 before implementing any row below; as everywhere in §6, the criteria are a floor and the ADR is the contract.
+
+**Format note.** These rows are written as subsections with numbered criteria rather than as table cells. Nine rows of six criteria do not fit a table legibly, and the project-manager needs to transcribe them one by one. The summary table is the row; the subsection is its Spec column.
+
+| Row | Title | Module | Tier | Depends on | Parallel-safe with |
+|---|---|---|---|---|---|
+| **B-17.1** | Access: schema `access`, the permission catalogue and the per-tenant seeder | Platform/Access | Full | B-07.2 | B-16.1, B-13.1, B-08.1 — all four branch from B-07.2 into different project trees |
+| **B-17.2** | Access: permission evaluation, fail closed | Platform/Access | Full | B-17.1, B-06.3 | B-18.4, B-18.5 |
+| **B-17.3** | Access: `[RequiresPermission]`, the enforcement pipeline and fitness rule S1 | Platform/Access | Full | B-17.2, B-04, B-16.2 | B-18.6 |
+| **B-18.1** | Identity: catalog identity schema and the platform authentication trail | Platform/Identity | Full | **B-05** | Everything in the B-06/B-07 spine — this row is unblocked the moment B-05 merges |
+| **B-18.2** | Identity: ASP.NET Core Identity stores, hashing, lockout, Tenant Membership query | Platform/Identity | Full | B-18.1 | B-06.\*, B-07.\*, B-16.\* |
+| **B-18.3** | Identity: administrator invitation — issue and redeem | Platform/Identity | Full | B-18.2 | B-06.\*, B-07.1/.2, B-16.\* |
+| **B-18.4** | Web: tenant resolution pipeline and the `tid` cross-check | Aurora.Web / Tenancy | Full | B-06.3, B-18.1 | B-17.2, B-18.2, B-18.3 |
+| **B-18.5** | Identity: sign-in, sign-out, cookie configuration and the `tid` mint | Platform/Identity + Aurora.Web | Full | B-18.2, B-18.4, B-16.2 | B-17.2 |
+| **B-18.6** | Blazor: circuit tenant pinning and revalidation | Aurora.Web | Full | B-18.5 | B-17.3 |
+
+Every row is **Full** tier: `CLAUDE.md`'s Full list names tenancy and isolation, authentication and authorization outright, and there is no Standard-tier meat to isolate out of any of them. The numbering does not imply dispatch order — `B-17.1` and `B-18.3` both land **before** `B-07.3`, and the **Depends on** column is authoritative, exactly as `../BACKLOG.md`'s own preamble says.
+
+#### B-17.1 — Access: schema `access`, the permission catalogue and the per-tenant seeder
+
+ADR-0010 rules 1–4, ADR-0029 §1, §5; ADR-0027 §1 (context constructor), ADR-0028 (migration order).
+
+1. `Aurora.Platform.Access.Contracts` and `Aurora.Platform.Access` exist. `Permission` is a value object over a `module.resource.action` string with a validating constructor (a malformed name cannot be constructed); constants are `static readonly Permission` fields grouped per module, each carrying the description the role editor will render.
+2. Schema `access` in the tenant database: `access.permission` (the catalogue), `access.role` (with an `is_system` flag — system roles are not editable, ADR-0010 rule 3), `access.role_permission`, `access.role_assignment(user_id, role_id, company_id NULL)`. `AccessDbContext` sets `HasDefaultSchema("access")` with its migrations history table in `access`, and has exactly one `internal` constructor taking a `TenantAccess` (ADR-0027 §1); it is never registered in DI.
+3. `role_assignment.company_id` is a `CompanyId` with **no foreign key** to `organization.company` or to any other module's schema (`modules.md` §1.1), and a test asserts the `access` model maps no entity to any other schema (fitness rule M3).
+4. `access` joins the per-tenant migration order as `platform` → `audit` → `access` → module schemas → `pkg_*`, extending ADR-0028's order. The test reads the order actually executed against a migrated tenant database; asserting a list constant does not satisfy this.
+5. `IAccessSeeder.SeedAsync(TenantAccess, DbContext, CancellationToken)` is idempotent on natural keys: it upserts every code-declared permission into `access.permission`, seeds the built-in roles, and grants the built-in administrator role **every permission in the catalogue after the upsert** — so a permission declared after a tenant was provisioned reaches that tenant's administrator without a wildcard and without an `isAdministrator` branch (ADR-0029 §5). Tests: running it twice leaves every row count identical, and a permission added between two runs reaches the administrator role on the second.
+6. The catalogue assertion **reports a count** — how many declared permission constants were checked against the seeded catalogue — and fails below a floor, so a run that declared nothing cannot report success.
+
+*Size flag for the orchestrator's pre-dispatch check: projects, four entities, a migration, the seeder and its tests together sit near the ~400-line guideline. If it does not fit, split criterion 5 and 6 (the seeder) from criteria 1–4 (the schema).*
+
+#### B-17.2 — Access: permission evaluation, fail closed
+
+ADR-0029 §5, §6; ADR-0010 rules 2, 4, 6, 7; ADR-0012 §3.
+
+1. `IPermissionEvaluator.EvaluateAsync(ClaimsPrincipal, TenantScope, Permission, CompanyId?, ct)` returns `PermissionDecision` with exactly two constructible outcomes — `Granted(CompanyScope)` and `Denied(Reason)`. No nullable return, no third state, and `CompanyScope.Of` **throws on an empty collection** so an empty filter can never become "no filter".
+2. The `null` company scope of ADR-0010 rule 4 resolves per ADR-0029 §5, with one test each for: target matched by an explicit assignment; target matched only through a `null`-scoped assignment; target matched by neither (`Denied`); no target plus a `null`-scoped assignment (`Granted(AllCompaniesInTenant)`); no target plus explicit assignments (`Granted(Of(ids))`); assignments resolving to zero ids (`Denied`).
+3. **No hidden superuser.** A test declares a permission, seeds it into the catalogue, grants it to no role, and asserts the **built-in administrator is denied**. A second assertion proves no role name literal appears in the evaluator (ADR-0010 rule 2 applies to the evaluator first of all).
+4. The permission set is cached 60 s per `(tenant, user)` under a key produced by `TenantCacheKey.For(scope, …)` (ADR-0012 rule 1). Three tests: revoking through the real role-admin path denies on the **next** call with no time advanced; a revocation written directly to the database plus `FakeTimeProvider` +61 s denies; the same direct revocation at +59 s **still grants** — the third is what makes the 60 s claim falsifiable.
+5. **No decision is not a denial.** With the cache empty and the store faulted by a hook inside the evaluator's own data path (not by stopping a container), `EvaluateAsync` throws `PermissionEvaluationUnavailableException`; it never returns `Denied`, never serves an expired cache entry and never falls back to last-known-good. A counter increments.
+6. Evaluation reads no ambient state: a two-tenant test gives one user an assignment in tenant A only and asserts the same permission is denied when evaluated with tenant B's `TenantScope`, with the access context obtained through `ITenantDbContextFactory<AccessDbContext>` from the passed scope.
+
+#### B-17.3 — Access: `[RequiresPermission]`, the enforcement pipeline and fitness rule S1
+
+ADR-0010 rules 5, 10; ADR-0029 §5, §7, §8; ADR-0013 rule 3.
+
+1. `[RequiresPermission("…")]` on application-service request types, evaluated by a pipeline behaviour against the resolved `TenantScope` and principal **before the handler and before validation** — a test whose request fails both authorization and validation asserts the authorization outcome is returned, so an unauthorized caller cannot probe through validation messages.
+2. A request type reaching the pipeline **with no declaration** is refused at runtime, not passed: the behaviour throws and the response names no permission. The build gate (criterion 3) and this runtime gate fail in different ways on purpose.
+3. Fitness rule **S1** extended: every application-service request type carries a declaration, the rule **reports the number of types asserted** and fails below a floor, and a deliberately-undeclared fixture proves the rule fails when it should.
+4. Surface mapping, one test each with a distinct stable `type` URI (ADR-0013 rule 3): `Denied` → `403` naming the missing permission (ADR-0010 rule 10); anonymous → `401`; no-decision (undeclared request, no `TenantScope`) → `500` naming no permission; store unavailable → `503` with `Retry-After`.
+5. A denial raised by the pipeline writes exactly **one** tenant-side `audit.audit_event` (`access.permission.denied`, with permission, request type, actor, correlation) through `IAuditWriter` in the caller's transaction (B-16.2); a bare `IPermissionEvaluator` probe used to hide a UI control writes **none**. Both proven by counting rows, not by observing a log.
+6. One implementation covers both paths: the same guarded command invoked directly through its application service and through a minimal API endpoint produces identical outcomes (ADR-0010 rule 5 — "nowhere for the three to diverge" is a test, not a hope).
+
+#### B-18.1 — Identity: catalog identity schema and the platform authentication trail
+
+ADR-0029 §2, §7; ADR-0007 §9.2, §9.3; ADR-0028 §2.
+
+1. One additive EF migration on `CatalogDbContext` (expand-only, no destructive step — B-09's categories) adds `catalog.identity_credential` (password hash, security stamp, concurrency stamp, lockout end, access-failed count), `catalog.identity_invitation` (tenant, user, token hash, expires_at, redeemed_at) and `catalog.authentication_event` (ADR-0029 §7's columns), and points `catalog.identity_user.credential_ref` at `identity_credential`.
+2. `catalog.authentication_event` is append-only by all three mechanisms of ADR-0028 §2 applied **per table** — the `catalog` schema also holds mutable tables and cannot take a schema-wide policy — probed as `aurora_app` **and** as the owner role with `has_table_privilege` plus an executed `UPDATE` and an executed `DELETE` that both fail.
+3. `attempted_email_hash` is SHA-256 of the normalized email and the address itself is never stored: a test records an attempt for an unknown address and asserts no column of the resulting row contains it in any form.
+4. `IAuthenticationEventSink.WriteAsync(…)` writes exactly one row per call, and a forced write failure **surfaces** rather than being swallowed — ADR-0029 §7's "a sign-in that cannot be recorded does not happen" is enforced here and consumed in B-18.5.
+5. `AuroraClaimTypes` (with `tid` and `tkey`) lives in `Aurora.Platform.Identity.Contracts` as the single definition referenced by both the mint (B-18.5) and the cross-check (B-18.4).
+6. An integration test against a real PostgreSQL container applies the migration to a catalog created by B-05 and re-runs it with no effect.
+
+*This row owns the single catalog migration for all three tables. No other row may add a `CatalogDbContext` migration concurrently — the EF migration chain is the file conflict.*
+
+#### B-18.2 — Identity: ASP.NET Core Identity stores, hashing, lockout, Tenant Membership query
+
+ADR-0009 rule 1; ADR-0029 §2; ADR-0012 §3 as extended.
+
+1. `IUserStore`, `IUserPasswordStore`, `IUserEmailStore`, `IUserSecurityStampStore` and `IUserLockoutStore` over `CatalogDbContext`, wired with `AddIdentityCore<…>()`; hashing is the framework's `PasswordHasher<…>`, and a test asserts no type in the solution implements `IPasswordHasher<>` (ADR-0009: no custom password hashing, ever).
+2. `Microsoft.AspNetCore.Identity.EntityFrameworkCore` is **not** referenced and `IdentityDbContext` is not used (ADR-0029 §2) — asserted over the project's references, so a later `dotnet add package` under deadline fails the build rather than quietly reshaping the schema.
+3. Email is normalized in exactly one place and is globally unique: two users differing only by case or surrounding whitespace cannot both be created.
+4. Lockout is enforced through the framework's own sign-in path, driven by real failed attempts in the test rather than by setting the flag directly.
+5. `ITenantMembership` answers "is this user an active member of this tenant" from `catalog.user_tenant_membership` joined to `catalog.tenant.state`, cached 60 s under `c:member:{userId}` (ADR-0012 §3 as extended by ADR-0029 §4) and invalidated on membership change — proven by revoking a membership and asserting the next call does not serve the cached row.
+6. A user holding memberships in two tenants is a normal result, covered by a test, so SPEC-001 BR-6's external-accountant case is not designed out before it is scheduled.
+
+#### B-18.3 — Identity: administrator invitation — issue and redeem
+
+SPEC-001 BR-3, BR-4; ADR-0029 §7, §9. **Consumed by `B-07.3` (saga step 6).**
+
+1. `IAdministratorInvitation.IssueAsync(TenantId, UserId, ct)` is idempotent per `(tenant, user)`: a saga replay returns the existing unredeemed invitation and creates no second row.
+2. The token comes from `RandomNumberGenerator`, is at least 256 bits, is returned to the caller exactly once, and is stored only as a SHA-256 hash — a test asserts the stored value never equals the issued token.
+3. Redemption is single-use and time-boxed against `TimeProvider`: redeem-twice, redeem-after-expiry and redeem-with-a-wrong-token are each refused with the same generic outcome and each recorded in `catalog.authentication_event`.
+4. Redemption sets the password through `UserManager` and marks the invitation redeemed **in one transaction**; a forced failure of either leaves neither applied.
+5. Aurora staff never learn the credential (SPEC-001 BR-3): the token is never written to a log, a metric or an audit row. The test captures log output across a full issue-and-redeem cycle and fails if the token value appears anywhere in it.
+6. The redemption endpoint is on fitness rule S2's reviewed `[AllowAnonymous]` allow-list with its justification recorded in the allow-list file, not in a comment.
+
+#### B-18.4 — Web: tenant resolution pipeline and the `tid` cross-check
+
+ADR-0007 §3.2, §3.3; ADR-0029 §4. **This row is the tenancy control, not plumbing.**
+
+1. Middleware resolves the tenant by ADR-0007 §3.2 strategies 1 and 2 **only** — host header against `catalog.tenant_host`, then the `/t/{tenantKey}` path segment — through the existing catalog read path. `IHttpContextAccessor` appears here and in no other assembly (fitness rule T4).
+2. An authenticated principal's `tid` is compared with the resolved tenant **after** resolution and **before** `ITenantScopeFactory.OpenAsync`. A mismatch, **or an absent `tid`**, throws `TenantClaimMismatchException` and returns `403` Problem Details (`…/problems/tenant-mismatch`) naming neither tenant and not saying which side was wrong.
+3. **Counted zero.** The mismatch test asserts, through an instrumented resolver/scope factory, that the other tenant's database was resolved or connected exactly **0** times. A status-code assertion alone does not satisfy this criterion.
+4. `TenantClaimMismatchException` is **not** `TenantRoutingViolationException`: a mismatch must not mark a tenant `SchemaBlocked`, or a stale cookie becomes a denial-of-service against a tenant. The test reads `catalog.tenant.state` before and after and asserts it is unchanged.
+5. `tid` is a constraint, never a source: an authenticated request to a host that maps to no tenant returns `404` without consulting the claim; an anonymous request to a valid tenant host resolves the tenant and opens no `TenantScope`.
+6. Every refusal writes one `catalog.authentication_event` row and one `Warning` log carrying tenant and correlation ids and no personal data (ADR-0016), and nothing at all to any tenant's `audit.audit_event`.
+
+#### B-18.5 — Identity: sign-in, sign-out, cookie configuration and the `tid` mint
+
+ADR-0009 rules 1–4; ADR-0029 §3, §4, §6, §7, §8.
+
+1. `POST /sign-in` and `POST /sign-out` over real HTTP requests (ADR-0009 rule 2), antiforgery-protected, with `/sign-in` on fitness rule S2's reviewed `[AllowAnonymous]` allow-list.
+2. The cookie is `__Host-aurora.auth`: `Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, **no `Domain` attribute**, sliding 8 h and absolute 12 h — asserted by parsing the emitted `Set-Cookie` header, not by reading back the options object.
+3. `tid` is minted only after credentials verify **and** the Tenant Membership for the host-resolved tenant is `Active` **and** `catalog.tenant.state` is `Active`; its value is the host-resolved `TenantId` and never anything the client supplied. One refusal test per condition.
+4. **The replay test.** A cookie minted at tenant A's host is replayed verbatim at tenant B's host in a harness where both hosts **share one data-protection key ring** — and the harness asserts the ring is genuinely shared, because with separate rings the cookie merely fails to decrypt and the test would pass for the wrong reason. Assert `403` and a counted **0** connections to tenant B. A second test replays the same cookie against `/t/{b}/…` on a **single** host — the case the `__Host-` prefix does not cover, and the one that proves the check rather than the browser.
+5. Successful sign-in and sign-out each write one tenant-side `audit.audit_event` through `IAuditWriter` (B-16.2); every failed sign-in writes `catalog.authentication_event` and **nothing** tenant-side. Each case counts rows in **both** stores. A forced failure of the authentication-event write fails the sign-in (ADR-0029 §7).
+6. Fitness rules **S6** (the minted claim set equals a committed approved-claims file, contains no permission or role claim, and the test reports how many claim types it asserted) and **S7** (`AuroraClaimTypes.TenantId` is referenced only by this row's mint, B-18.4's cross-check and their test assemblies), each with a deliberately-violating fixture.
+
+#### B-18.6 — Blazor: circuit tenant pinning and revalidation
+
+ADR-0005 rule 2; ADR-0007 §3.3; ADR-0009 rule 3; ADR-0029 §4 checkpoints 2 and 3.
+
+1. A `CircuitHandler` pins the tenant resolved by the request that created the circuit and re-checks `tid` against it at creation **and** on every reconnect of a persisted circuit (ADR-0005's .NET 10 persisted circuit state). A mismatch aborts the circuit; it never downgrades it to anonymous-but-connected.
+2. `RevalidatingServerAuthenticationStateProvider` with a 30-minute interval (ADR-0009 rule 3) checks, on every tick: security stamp still current, Tenant Membership still `Active`, `catalog.tenant.state` still `Active`, and `tid` still equal to the pinned tenant.
+3. Revocation mid-session: with the circuit live, revoke the Tenant Membership through the real revocation path, advance `FakeTimeProvider` past the interval, and assert the circuit's principal is invalidated. The fault is injected inside the system under test — no `sleep` racing the revalidator.
+4. The same scenario at 29 minutes asserts the principal is **still** valid, so the interval is a claim that can fail rather than one that cannot.
+5. The pinned `TenantId` is added to the assertions behind fitness rules T5/T6 (nothing tenant-scoped captured in a singleton or in a serialized payload), with a deliberately-violating fixture.
+6. A component rendered after the creating HTTP request has completed still sees the pinned tenant, obtained without `IHttpContextAccessor` — the ADR-0007 §3.3 failure mode, reproduced as a passing test rather than described in prose.
+
+---
+
+### 6.3 Dependency edges that change (v5)
+
+These override the **Depends on** column in §6, §6.1 and `../BACKLOG.md` for the rows named. Reasons are in ADR-0029.
+
+| Row | Was | Is | Why |
+|---|---|---|---|
+| **B-07.3** | B-07.2 | **B-07.2, B-17.1, B-18.3** | Saga step 6 seeds roles, the permission catalogue and the administrator Role Assignment into schema `access`, which no row created, using a seeder no row wrote (B-17.1); and SPEC-001 BR-3's "working sign-in credential path for the first administrator" is the invitation issued in B-18.3. Calls `IAccessSeeder.SeedAsync` and `IAdministratorInvitation.IssueAsync`; it does not re-implement either |
+| **B-07.4** | B-07.3, B-13.2, B-16.2, B-06.3 | **+ B-18.5** | SPEC-001 AC-5's "*when* U signs in for the first time" needs a sign-in. B-07.4 exercises AC-5 at the HTTP level with a minimal two-tenant setup; BR-6's circuit-pinning half is proven in B-18.6 and the exhaustive isolation proof stays B-10's. B-07.4 does **not** gain B-17.3: BR-1's "authorized caller" is an operator, and ADR-0010 rule 8 puts operator access outside the tenant permission model — see the follow-up named in ADR-0029 §9 |
+| **B-15.1** | B-06.3, B-10, B-13.2, B-14, B-16.3 | **+ B-17.3** | SPEC-002 BR-3/AC-2's permission-gated create and BR-4's scoped list are the enforcement pipeline plus `CompanyScope`; without B-17.3 the row has nothing to declare a permission to |
+| **B-15.2** | B-15.1 | **+ B-18.5** | AC-1/AC-2/AC-9/AC-10 all begin with a signed-in caller |
+| **B-15.3** | B-15.2, DESIGN-001 | **+ B-18.6** | The UI path runs inside a circuit; the pinned tenant and the revalidating provider are what make it the same authorization story as the API path |
+| **B-04** | B-01, B-03 | unchanged | But note: S1's count, S6 and S7 are **extensions** of B-04's suite shipped by B-17.3 and B-18.5. B-04 must land before either; it already will |
+| **B-10** | B-07.4, B-06.3 | unchanged | It acquires the identity rows transitively through B-07.4 and needs nothing named directly |
+
+**What this does to the graph.** `B-18.1` depends on **B-05 alone** — it is the only new row with no dependency on the tenancy spine, and it opens the chain `B-18.1 → B-18.2 → B-18.3` that `B-07.3` now waits for. **Dispatch `B-18.1` as soon as `B-05` merges**: run cold, that three-row chain is the new critical path into `B-07.3`; run in parallel with `B-06.2`/`B-06.3`/`B-07.1`/`B-07.2`, it costs `B-07.3` nothing. `B-17.1` branches from `B-07.2` alongside `B-16.1`, `B-13.1` and `B-08.1`, so it joins the existing fan-out rather than lengthening it. `B-17.2` and `B-18.4` both open on `B-06.3` and are parallel with each other. Only **two** new rows touch the audit chain — `B-18.5` and `B-17.3`, both on `B-16.2` — because everything else in the set writes platform-side to `catalog.authentication_event` and never into a tenant's hash-chained log (ADR-0029 §7); that is what keeps seven of the nine rows free of the B-16 spine.

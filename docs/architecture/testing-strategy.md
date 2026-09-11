@@ -119,11 +119,13 @@ One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assembl
 
 | Id | Rule |
 |---|---|
-| S1 | Every application-service command type carries a permission declaration (ADR-0010) |
+| S1 | Every application-service command type carries a permission declaration (ADR-0010). The rule **reports how many types it asserted** and fails below a floor, and has a runtime counterpart: the enforcement pipeline refuses a request type with no declaration (ADR-0029 §5, §8) |
 | S2 | Every REST endpoint has an authorization attribute; anonymous access requires an explicit, reviewed `[AllowAnonymous]` on a short allow-list |
 | S3 | No `DateTime.Now`, `DateTime.UtcNow` or `DateTimeOffset.UtcNow` in `*.Domain` or `*.Application` — time comes from `TimeProvider` |
 | S4 | No interpolated or concatenated string reaches `FromSqlRaw`/`ExecuteSqlRaw` (Roslyn rule); parameterized APIs only |
 | S5 | No `[PersonalData]`-annotated property on a type that does not implement `IPseudonymisable`, unless listed in the reviewed exception file (ADR-0007 §11.5) |
+| S6 | The set of claim types minted at sign-in equals the committed approved-claims file, and no claim type in it is a permission or a role — permissions are read at evaluation time, never carried in a cookie or a token (ADR-0029 §6). Reports the number of claim types asserted |
+| S7 | `AuroraClaimTypes.TenantId` (the `tid` claim) is referenced only by the sign-in mint, the tenant-resolution cross-check and their test assemblies — a named allow-list in the shape of ADR-0027 §1's `TenantDatabaseHandle` rule (ADR-0029 §4) |
 | Q1 | No `ToListAsync`/`ToArrayAsync` on an `IQueryable` without a preceding `Take` (Roslyn heuristic; suppressions require a justification string and are reviewed) |
 | Q2 | Every module `DbContext` sets `QueryTrackingBehavior.NoTrackingWithIdentityResolution` as its default (ADR-0003 rule 4) |
 
