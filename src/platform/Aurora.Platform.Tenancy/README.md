@@ -38,9 +38,15 @@ so that the migration that adds it also adds the code that uses it:
 | `catalog.feature_flag`, `catalog.feature_flag_tenant_override` | Configuration platform module (ADR-0011) |
 | `quartz.*` | Jobs platform module (ADR-0014) — its own schema, not `catalog` |
 
-Whoever adds one must add its columns to `CatalogSchemaAllowlist` in the same commit, or the
-ADR-0007 §9.3 guard fails. That is the intended friction: the allowlist diff is where a reviewer
-sees a new catalog table arrive.
+Whoever adds one must, in the same commit, add its columns to `CatalogSchemaAllowlist.Columns` (or
+the ADR-0007 §9.3 guard fails) and record what `aurora_app` may do to it in
+`CatalogSchemaAllowlist.AppRolePrivileges`, granting exactly that in the migration that creates it.
+Nothing arrives by default: the catalog deliberately sets no `ALTER DEFAULT PRIVILEGES`, so a
+forgotten grant is a `42501` at first use and a forgotten record fails `CatalogPrivilegeTests`, which
+compares the record with the privileges PostgreSQL reports, table by table, both ways. An append-only
+table — `operator_audit_event`, `erasure_replay_log` — records `SELECT, INSERT` and nothing else
+(ADR-0004 rule 5). That is the intended friction: the two allowlist diffs are where a reviewer sees a
+new catalog table arrive, and what the request path may do to it.
 
 ---
 
@@ -103,14 +109,41 @@ is the one store shared by design, so there is no tenant A row for a tenant B re
 of, and a test that partitioned it would prove nothing. What is real here is the blast radius of the
 role the request path holds (`CatalogPrivilegeTests`, asserted by trying, as the role):
 
-- **Sideways** — `aurora_app` holds `CONNECT` on exactly one database (ADR-0007 §4.4), so a
-  compromised or mis-routed request cannot reach another database on the cluster. This is the
-  property that carries the weight once every tenant has a database of its own.
 - **Downwards** — `aurora_app` has no DDL and cannot touch `__EFMigrationsHistory`, so it cannot
-  alter the schema that decides where every tenant's data lives.
+  alter the schema that decides where every tenant's data lives. On each catalog table it holds
+  exactly what `CatalogSchemaAllowlist.AppRolePrivileges` records, and nothing on any other table:
+  the catalog sets no default privileges, so a table created without a grant of its own is closed to
+  the role — proved by trying, as the role.
+- **Sideways** — on the test fixture's cluster, `aurora_app` can open the catalog and no other
+  database that accepts connections (`template1` and the maintenance database included, enumerated
+  from `pg_database` rather than named). **That is a property of the databases, not of the role.**
+  ADR-0007 §4.4's "`CONNECT` on exactly one database" holds *under §3.5 stage 2*, which is not what
+  ships. Stage 1 — what ships — is one `aurora_app` login role per cluster with `GRANT CONNECT` on
+  every tenant database, and PostgreSQL grants `CONNECT` on every new database to `PUBLIC`. What
+  keeps the role out of a database today is §8 step 3 run on that database — `REVOKE ALL ON DATABASE
+  … FROM PUBLIC`, then an explicit `GRANT CONNECT` — and
+  `A_newly_created_database_is_open_to_the_app_role_until_section_8_step_3_hardens_it` shows the
+  before and after on a database created the way the provisioner will create one. What catches a
+  request that reaches the *wrong tenant's* database — which the role, by design, can — is §4.3's
+  connected-database identity check, which B-06 builds and nothing in this task tests.
 
-The per-tenant isolation contract of ADR-0007 §12.2 arrives with `Aurora.TestKit` (B-10), once there
-are two tenant databases to keep apart.
+### What B-07 must add
+
+Under stage 1 the role does not bound the blast radius; the identity check does. B-07, with B-10's
+`Aurora.TestKit`, therefore owes:
+
+1. The six §12.2 tests over two real tenant databases provisioned by the real saga, including the
+   deliberate mis-route asserting `TenantRoutingViolationException`. **Under §3.5 stage 1 that
+   mis-route test is *the* cross-tenant control**, because `aurora_app` legitimately holds `CONNECT`
+   on every tenant database.
+2. §8 step 3 asserted by its effect, not by reading the statements back: an ungranted role attempting
+   to connect and being refused — the lesson this task's own fixture taught, when a `REVOKE` issued
+   by a non-owner silently changed nothing — plus `DROP SCHEMA public` and `btree_gist`.
+3. The `pg_database` enumeration `CatalogPrivilegeTests` runs today, kept running once tenant
+   databases exist: the app role opens the catalog and the tenant databases it was granted, and
+   nothing else on the cluster.
+4. When §3.5 stage 2 lands — one `aurora_app_<tenantKey>` role per tenant database — the "`CONNECT`
+   on exactly one database" test that §4.4 will then justify.
 
 ---
 
@@ -124,5 +157,7 @@ dotnet test tests/integration/Aurora.Platform.Tenancy.IntegrationTests   # needs
 
 The integration project has one xUnit collection and therefore one `postgres:17-alpine` container.
 The fixture builds the cluster the way a deployment does — three roles, a database owned by
-`aurora_migrator`, migrations applied as `aurora_migrator`, tests talking to it as `aurora_app` — so
-the privilege model under test is the one that ships, not the container's superuser.
+`aurora_migrator`, migrations applied as `aurora_migrator`, tests talking to it as `aurora_app`, every
+other database on the cluster hardened per ADR-0007 §8 step 3 — so the privilege model under test is
+the one that ships, not the container's superuser, and what `CatalogPrivilegeTests` proves about the
+cluster is what a hardened cluster would show.
