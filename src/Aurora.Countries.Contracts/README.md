@@ -10,8 +10,10 @@ Its public surface is a versioned contract. `PublicAPI.Shipped.txt` is the appro
 `Microsoft.CodeAnalysis.PublicApiAnalyzers` fails the build (RS0016) on any public member missing
 from it, and `scripts/approve-contract-api.sh` is the deliberate step that puts one there — which is
 the moment a human decides the SemVer bump. `ContractPublicApiTests` compares the file with the
-assembly in both directions, so a stale line or an unapproved type fails even if the analyzer is
-removed.
+assembly **at type level** in both directions, so a new public type or a line naming a type that no
+longer exists fails whether or not the analyzer is still in the build. Member-level drift is the
+analyzer's job and only the analyzer's: remove the package and a changed signature stops being
+caught, which is why the test also asserts the file still holds the shape of a real snapshot.
 
 ## The core contract version
 
