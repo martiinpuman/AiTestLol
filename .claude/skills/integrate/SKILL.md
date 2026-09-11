@@ -75,6 +75,18 @@ transcript. If the item needs design, message the architect; if it needs a task,
 add a `FOLLOWUP-###` row naming the review and PR it came from; if it belongs to an
 existing row, edit that row. Then merge.
 
+## 4c. Do not remove a worktree you may still want the agent for
+
+`git worktree remove` on an agent's worktree makes that agent **unresumable** —
+"its worktree no longer exists" — and its context is gone with it. It cost a resume
+today: the branch was locked by a finished agent's worktree, the worktree was force-
+removed to free it, and the follow-up then had to be dispatched cold to an agent with
+no history of the task.
+
+Free a branch the cheap way instead: create your merge worktree from the branch you
+need and leave the agent's alone, or do the work on a detached checkout. Remove an
+agent's worktree only once its task is merged and closed.
+
 ## 5. Leave it consistent — all five, every time
 
 1. `docs/reviews/<ID>.md` exists and records the verdict.
