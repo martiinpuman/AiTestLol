@@ -6,9 +6,16 @@
     Money, Quantity, Percentage, DateRange, strongly-typed id primitives, Result/Error. See
     README.md in this folder for what each type is and the decisions behind it.
 
-    This assembly references nothing but the BCL. Do not add a PackageReference or a
-    ProjectReference here: SharedKernelAssemblyTests asserts both that and the absence of any
-    double/float, and B-04 adds the solution-wide fitness rules L1 and F1 over the same ground.
+    This assembly references nothing but the BCL, and no double or float appears anywhere in it -
+    not in a signature, not in a local, not in a cast inside a method body. Do not add a
+    PackageReference or a ProjectReference here.
+
+    The mechanism behind both claims is tests/Aurora.Architecture.Tests: rule L1 reads this
+    project's declared PackageReference elements and its committed packages.lock.json as well as
+    the assembly's emitted references, and rule F1 reads the IL of every method body. B-03 carried
+    narrower copies of both in its own test project; B-04 deleted them, because a second rule with
+    the same name and a smaller reach is a rule that gets trusted for what it does not do
+    (docs/reviews/B-03.md m-1 and m-3).
   -->
 
   <PropertyGroup>
