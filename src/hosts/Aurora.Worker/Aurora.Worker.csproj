@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+
+  <!--
+    The background host (docs/architecture/solution-layout.md 3): the Quartz scheduler, the outbox
+    dispatcher, the migration runner and the provisioning saga runner.
+
+    Same reference rules as Aurora.Web, and the same container image with a different entrypoint
+    (ADR-0025 1). Because the image is the ASP.NET Core runtime image, this host reaches the
+    hosting types through the shared framework rather than a NuGet package - the worker template's
+    Microsoft.Extensions.Hosting PackageReference would be a second copy of code the image already
+    carries, and is not an approved dependency in docs/architecture/dependencies.md.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Worker</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.Composition\Aurora.Composition.csproj" />
+  </ItemGroup>
+
+</Project>

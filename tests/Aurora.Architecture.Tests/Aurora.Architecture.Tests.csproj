@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Architecture fitness tests (docs/architecture/solution-layout.md 1, testing-strategy.md 5).
+
+    No database, no container, fast: verify.sh runs these as their own stage (7) so a layering
+    breach is reported as a layering breach rather than buried in a module's test output.
+
+    The rule set, its deliberately-violating fixtures and the TngTech.ArchUnitNET reference
+    arrive with task B-04.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Architecture.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+</Project>

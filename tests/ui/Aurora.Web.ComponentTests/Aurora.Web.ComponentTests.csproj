@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Blazor component tests (docs/architecture/solution-layout.md 1), run by bUnit.
+
+    Every test here is tagged [Trait("Category", "Ui")] so verify.sh stage 9 can select them and
+    stage 6 can exclude them - the unit stage must pass with Docker stopped.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Web.ComponentTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="bunit" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\hosts\Aurora.Web\Aurora.Web.csproj" />
+  </ItemGroup>
+
+</Project>

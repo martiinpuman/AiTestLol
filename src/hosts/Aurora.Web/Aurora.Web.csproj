@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    The web host (docs/architecture/solution-layout.md 3): Blazor Server (InteractiveServer),
+    the versioned REST API of ADR-0013, and webhooks.
+
+    May reference every module's .Contracts and Aurora.Composition; never a .Domain or an
+    .Infrastructure assembly (ADR-0005 rule 1, asserted by an architecture fitness test).
+
+    Ships from the same container image as Aurora.Worker with a different entrypoint, so the two
+    can never disagree about the application code or the schema they expect (ADR-0025 1).
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Web</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.Composition\Aurora.Composition.csproj" />
+  </ItemGroup>
+
+</Project>

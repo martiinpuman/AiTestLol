@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Shared test fixtures and builders (docs/architecture/solution-layout.md 1).
+
+    Home of TwoTenantDatabaseFixture and TenantIsolationContract<T> (B-10): one PostgreSQL
+    container per xUnit collection, two tenants provisioned through the real saga, and the six
+    mandatory isolation tests of ADR-0007 12.2.
+
+    This is a library, not a test project. It references xunit so it can define collection
+    fixtures for the projects that consume it, but it hosts no tests of its own and carries no
+    test runner. `IsTestProject=false` below is what keeps `dotnet test` from targeting it:
+    without that property the SDK still hands this assembly to VSTest, and the test host fails
+    to start because a library's output folder does not copy its NuGet dependencies alongside
+    it - which aborts the whole solution test run, not just this project.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.TestKit</RootNamespace>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+  </ItemGroup>
+
+</Project>

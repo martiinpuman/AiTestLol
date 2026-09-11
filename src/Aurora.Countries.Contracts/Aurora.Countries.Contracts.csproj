@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tier 0 - kernel (docs/architecture/modules.md 3).
+
+    The ten Country Package extension-point interfaces, CountryPackageManifest and the
+    AccountRole registry. This is the only core assembly a Country Package may reference
+    (ADR-0008 3.1), so its public surface is guarded by an approved-API snapshot test.
+
+    Content, and the snapshot test, arrive with task B-12.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Countries.Contracts</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.SharedKernel\Aurora.SharedKernel.csproj" />
+    <ProjectReference Include="..\Aurora.Documents.Canonical\Aurora.Documents.Canonical.csproj" />
+  </ItemGroup>
+
+</Project>
