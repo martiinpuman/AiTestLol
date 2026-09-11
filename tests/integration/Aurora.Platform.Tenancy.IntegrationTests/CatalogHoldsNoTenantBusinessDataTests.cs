@@ -6,6 +6,7 @@ using Aurora.Platform.Tenancy.Tests;
 using Npgsql;
 using Shouldly;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Aurora.Platform.Tenancy.IntegrationTests;
 
@@ -33,8 +34,13 @@ public sealed class CatalogHoldsNoTenantBusinessDataTests
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
     private readonly CatalogDatabaseFixture _catalog;
+    private readonly ITestOutputHelper _output;
 
-    public CatalogHoldsNoTenantBusinessDataTests(CatalogDatabaseFixture catalog) => _catalog = catalog;
+    public CatalogHoldsNoTenantBusinessDataTests(CatalogDatabaseFixture catalog, ITestOutputHelper output)
+    {
+        _catalog = catalog;
+        _output = output;
+    }
 
     [Fact]
     public async Task The_migrated_catalog_schema_holds_no_tenant_business_data()
@@ -44,11 +50,14 @@ public sealed class CatalogHoldsNoTenantBusinessDataTests
 
         IReadOnlyList<string> violations = CatalogSchemaGuard.Violations(columns, Allowlist);
 
-        // Say what was inspected, not only that it was clean: a query typo that returned no rows
-        // would already fail on the guard's stale-allowlist rule, and this number makes the pass
-        // legible in the test output (CLAUDE.md self-check 2).
-        columns.Count.ShouldBe(Allowlist.Sum(table => table.Value.Count));
+        // Say what was inspected, not only that it was clean, so a pass is not indistinguishable
+        // from a query that returned no rows (CLAUDE.md self-check 2).
+        _output.WriteLine(
+            $"ADR-0007 9.3 checked {columns.Count} columns across "
+            + $"{columns.Select(column => column.Table).Distinct(StringComparer.Ordinal).Count()} catalog tables.");
+
         violations.ShouldBeEmpty(string.Join(Environment.NewLine, violations));
+        columns.Count.ShouldBe(Allowlist.Sum(table => table.Value.Count));
     }
 
     [Fact]

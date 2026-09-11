@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Shouldly;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 
@@ -31,6 +32,10 @@ public sealed class CatalogHoldsNoTenantBusinessDataTests
                 new HashSet<string>(StringComparer.Ordinal) { "id", "email_normalized" }))
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
+    private readonly ITestOutputHelper _output;
+
+    public CatalogHoldsNoTenantBusinessDataTests(ITestOutputHelper output) => _output = output;
+
     [Fact]
     public void The_catalog_model_holds_no_tenant_business_data()
     {
@@ -39,11 +44,18 @@ public sealed class CatalogHoldsNoTenantBusinessDataTests
 
         IReadOnlyList<string> violations = CatalogSchemaGuard.Violations(columns, CatalogSchemaAllowlist.Columns);
 
-        // The count is the answer to "could this have measured nothing?" - an empty model would
-        // fail on the stale-allowlist rule, but saying the number here means a reader of the test
-        // output knows what was inspected.
-        columns.Count.ShouldBe(CatalogSchemaAllowlist.Columns.Sum(table => table.Value.Count));
+        // What was inspected, printed whether or not the rule held, so a pass is not indistinguishable
+        // from a model that produced nothing (CLAUDE.md self-check 2).
+        _output.WriteLine(
+            $"ADR-0007 9.3 checked {columns.Count} columns across "
+            + $"{columns.Select(column => column.Table).Distinct(StringComparer.Ordinal).Count()} catalog tables.");
+
         violations.ShouldBeEmpty(string.Join(Environment.NewLine, violations));
+
+        // Exact, and after the rule so that a violation is what a failure says. The rules already
+        // catch a missing or unexpected column; this catches the same column observed twice, which
+        // means the query that produced them is wrong.
+        columns.Count.ShouldBe(CatalogSchemaAllowlist.Columns.Sum(table => table.Value.Count));
     }
 
     [Fact]
