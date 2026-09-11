@@ -7,6 +7,39 @@ Newest entries at the top.
 
 ---
 
+## 2026-09-11 — Architecture bootstrap (OPEN)
+
+From: architect. These do not block work — each has a decision already made and recorded, chosen to be the cheapest to reverse. An answer would let us either confirm or simplify.
+
+**Q5. How many tenants should this design carry, and over what period?**
+ADR-0007 §6 caps the design at **1 000 tenants per PostgreSQL cluster and ~25 000 in total**, and states plainly that beyond ~25 000 — or if the median tenant's annual revenue falls below roughly ten times the cost of running a dedicated database — database-per-tenant stops being the right default for the long tail.
+> **Decision taken meanwhile:** design for 25 000, keep `ITenantConnectionResolver` as the single seam through which a cheaper shared-schema tier could later be added for small tenants. No work is wasted either way.
+> **What an answer changes:** if the plan is tens of thousands of small or free-tier tenants, we should schedule the tiered model now rather than discover the cost at 5 000 tenants.
+
+**Q6. Can one legal entity have tax obligations in more than one country at the same time?**
+Research found **no incumbent that does this cleanly** — Odoo needs a separate company per country, Business Central fixes the country per environment, SAP Business One fixes it when the database is created and never allows a change. There is no precedent to copy, so we decided it ourselves.
+> **Decision taken meanwhile (ADR-0008 §8, ADR-0023):** a tenant may hold **companies in different countries**, each with its own Country Package activated, and **installing a second Country Package into a live tenant is supported and tested** — which is the thing none of the incumbents do. What is deferred is one *single* legal entity filing in two jurisdictions at once (the EU One-Stop-Shop case). The schema and every contract signature already allow it: `Company` has 1..N tax registrations from the first migration. Only the behaviour and the UI are missing.
+> **Recommendation:** leave it out of v1. Building a multi-jurisdiction determination engine against zero validated demand is how an SMB ERP acquires an enterprise-sized tax module nobody asked for.
+> **What an answer changes:** if an early customer genuinely needs it, we schedule it as a milestone rather than retrofitting it — no data migration either way, which is why this option was chosen.
+
+**Q7. New Zealand as the first Country Package rests on one unverified assumption. Can we check it?**
+The researcher recommends New Zealand first (flat 15% GST, a publicly documented NZBN check digit with a free unauthenticated lookup API, the open PINT A-NZ e-invoicing profile, and Inland Revenue Gateway Services with **self-service** sandbox registration and no accreditation fee). The single risk is whether that registration turns out to require a New Zealand legal entity or in-country presence — the documentation does not mention one, but nobody has tried.
+> **Decision taken meanwhile:** proceed with New Zealand. If registration is refused, we switch to **Australia** (the researcher's second choice); the package contract is unchanged and the e-invoicing work transfers directly, because both use PINT A-NZ.
+> **What we would like:** someone to attempt the IRD sandbox registration before we spend engineering time building against it. This is the cheapest possible way to retire the risk.
+
+**Q8. Is a 24-hour recovery point for a single tenant acceptable to promise a customer?**
+ADR-0007 §11 gives two backup mechanisms: continuous cluster-level point-in-time recovery (recovery point ≤ 5 minutes, but restoring **one** tenant from it means restoring the whole cluster to a scratch server first — hours of work), and a nightly per-tenant dump (recovery point up to 24 hours, restore within about an hour).
+> **Decision taken meanwhile:** both mechanisms exist; the fast, routine path for "this tenant needs to be restored" is the nightly dump, i.e. **up to 24 hours of data could be lost** in that scenario. A quarterly restore drill is a standing operational task.
+> **What an answer changes:** if a customer contract needs better than 24 hours for a single-tenant restore, that tenant needs its own database cluster with its own write-ahead log stream. That is available (§2's large-tenant escape hatch) but it costs real money per tenant, so it should be a priced option rather than a default.
+
+**Q9. How much of the data grid is v1?**
+`docs/design/components.md` §8 specifies one grid used everywhere, with server-side paging and sorting, vertical **and horizontal** virtualization at 150 000 rows, cell-level keyboard navigation, column pinning, saved views and partial-failure reporting on bulk actions. No permissively licensed Blazor grid provides all of that, and the commercial suites that come closest are excluded by the "no spending, no sign-ups" limit.
+> **Decision taken meanwhile (ADR-0024):** build our own grid chrome on Microsoft's `QuickGrid` (MIT, part of ASP.NET Core) plus our design tokens, preceded by a **time-boxed spike proving 150 000 rows × 40 columns stays within the latency budget over a SignalR circuit**. Radzen (MIT) is the pre-cleared fallback if the spike fails.
+> **The honest cost:** the grid chrome — saved views, column settings, pinning, filter chips, bulk-action bar — is the single largest piece of UI work in the project and needs its own place in the roadmap, not a line inside "build the sales order screen".
+> **What an answer changes:** if saved views and column pinning can wait for v2, the first release gets materially cheaper. The architecture does not change either way.
+
+---
+
 ## 2026-09-10 — Bootstrap decisions (ANSWERED)
 
 **Q1. Market and compliance scope?**

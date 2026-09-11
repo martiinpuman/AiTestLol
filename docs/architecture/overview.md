@@ -68,7 +68,7 @@ flowchart TB
     TN[("Tenant DB N")]
   end
 
-  CACHE["HybridCache<br/>(in-memory, Redis-backed later)<br/>tenant-prefixed keys only"]
+  CACHE["HybridCache<br/>(in-memory; Valkey L2 later, ADR-0012)<br/>tenant-prefixed keys only"]
 
   BROWSER <-->|"WebSocket / SignalR"| WEB
   WEB --> CATALOG

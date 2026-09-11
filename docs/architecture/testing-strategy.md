@@ -1,0 +1,242 @@
+# Testing strategy
+
+Status: accepted v1 · Author: architect · Date: 2026-09-11
+Companion: `solution-layout.md` §5 (`verify.sh`), `modules.md` §6 (the dependency matrix these tests enforce), `../decisions/ADR-0007-multi-tenancy-database-per-tenant.md` §12
+
+---
+
+## 1. Principles
+
+1. **TDD is the process**: failing test, then code, then refactor (`CLAUDE.md`). Every acceptance criterion in a `SPEC-###` maps to at least one named test.
+2. **A test asserts behaviour, not implementation.** If a refactor that changes no behaviour breaks a test, that test was wrong.
+3. **Rules that matter are tests, not documents.** Every "must" in `modules.md`, ADR-0007 and ADR-0008 that can be checked mechanically has a fitness test. A rule enforced only by review is a rule that will be broken within three months of the team changing.
+4. **Every fitness test ships with a deliberately-violating fixture** proving it actually fails. A green rule that cannot fail is worse than no rule, because it is trusted.
+5. **A flaky test is a failing test.** Quarantine requires a backlog ID, a named owner and a seven-day limit. There is no long-term quarantine list.
+6. **Tests are deterministic.** No `DateTime.Now`, no `Random` without a fixed seed, no dependence on test execution order, no network beyond the local container.
+
+---
+
+## 2. The pyramid
+
+| Layer | Share | Per-test budget | Suite budget | What it covers |
+|---|---|---|---|---|
+| **Domain unit** | ~65% | < 20 ms | < 30 s | Aggregate invariants, value objects, money and rounding, state machines. No I/O of any kind |
+| **Application unit** | ~10% | < 50 ms | included above | Handler orchestration with in-memory fakes for other modules' contracts |
+| **Architecture fitness** | ~5% | — | < 30 s | §5. No database |
+| **Integration** | ~15% | < 2 s | < 5 min | Real PostgreSQL via Testcontainers: mapping, migrations, concurrency, transactions, outbox, tenant isolation, Country Package install |
+| **UI component** | ~4% | < 100 ms | < 60 s | bUnit: render, bind, validate, localize, accessibility attributes |
+| **End-to-end** | ~1% | — | — | Only the walking skeleton and one order-to-cash happy path. Deliberately tiny: e2e tests are the slowest and least specific way to learn a thing is broken |
+
+The shape is deliberate. In an ERP the expensive defects are in **domain invariants** (an unbalanced posting, a wrong rounding residual, a tax rate resolved as-of the wrong date) and in **boundaries** (tenant isolation, module leakage). Those are the two layers we over-invest in.
+
+---
+
+## 3. Domain unit tests
+
+- One test class per aggregate or value object; test names read as sentences: `Posting_an_unbalanced_entry_is_rejected`.
+- **Every invariant gets a test, including the ones that feel obvious.** `Money` addition across currencies throws. A `JournalEntry` whose debits and credits differ is rejected. A posting into a closed period is rejected. A `SalesOrder` line cannot be invoiced beyond its delivered quantity.
+- **Property-based tests** (FsCheck) for the arithmetic that must hold universally: for any set of lines, the sum of tax amounts equals the document tax total plus the rounding residual; a reversal of a posting always nets to zero; FIFO layer consumption never produces a negative layer. Financial correctness is quality attribute #1 and example-based tests systematically miss the boundary cases that matter in money arithmetic.
+- **Time is injected.** `TimeProvider` everywhere, `FakeTimeProvider` in tests. A fitness test bans `DateTime.Now`/`UtcNow` in domain and application code (§5, rule S3).
+- Test data comes from **builders with sane defaults** (`ASalesOrder.WithLine(...).Build()`), never from shared mutable fixtures.
+
+---
+
+## 4. Application and module integration tests
+
+Each module has an integration test project that exercises its handlers against a **real PostgreSQL database**, through the real tenant-scoped factory, with real migrations applied. Fakes are used only for *other modules'* contracts and for external systems.
+
+Minimum coverage per module:
+
+- Each command: happy path, each rejection, and **idempotency** where the command carries an idempotency key (financial documents — ADR-0013).
+- Each query: correct results, and a bounded result set (no unbounded materialization).
+- Mapping: every aggregate round-trips, including owned `Money` values landing in `numeric(19,4)` + `char(3)`.
+- Concurrency: an optimistic-concurrency conflict is detected and surfaced, not silently last-write-wins.
+- Outbox: the event row and the aggregate change commit in the **same transaction**, and nothing is published when the transaction rolls back.
+- **Tenant isolation** (§7) — mandatory, not optional.
+
+---
+
+## 5. Architecture fitness tests
+
+One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assemblies (ArchUnitNET) plus a few Roslyn-based source rules. It runs in under 30 seconds and needs no database, so it is cheap enough to run on every save.
+
+### 5.1 Layer rules
+
+| Id | Rule |
+|---|---|
+| L1 | `Aurora.Modules.*.Domain` and `Aurora.SharedKernel` reference only the BCL (and `SharedKernel` respectively). No EF, ASP.NET, Npgsql, logging, JSON or DI types |
+| L2 | `*.Contracts` references only `Aurora.SharedKernel` and `Aurora.Documents.Canonical` |
+| L3 | `*.Application` references no Npgsql type and no ASP.NET type |
+| L4 | `*.Infrastructure` is referenced only by `Aurora.Composition` and its own test projects |
+| L5 | `Aurora.Web` and `Aurora.Worker` reference no `*.Domain` or `*.Infrastructure` assembly (ADR-0005 rule 1) |
+| L6 | No type in a module's `Application` or `Infrastructure` is `public` unless it is in `Contracts` — modules expose contracts, not classes |
+
+### 5.2 Module boundary rules
+
+| Id | Rule |
+|---|---|
+| M1 | The dependency matrix in `modules.md` §6 is encoded as data in the test and asserted for every project reference. Adding a reference requires editing the matrix, which requires a reviewer to see it |
+| M2 | Same-tier modules have **no** project reference between them (events only) |
+| M3 | No module's `DbContext` maps an entity to a schema other than its own |
+| M4 | No SQL string in any module names a schema other than its own (Roslyn scan over string literals reaching `FromSql*`/`ExecuteSql*`) |
+| M5 | Every module has exactly one `DbContext`, with `MigrationsHistoryTable` in its own schema |
+
+### 5.3 Tenancy rules — the structural guarantee, tested
+
+| Id | Rule |
+|---|---|
+| T1 | No tenant `DbContext` has a `public` or `protected` constructor (ADR-0007 §4.1) |
+| T2 | No `AddDbContext*`/`AddDbContextFactory*`/`AddDbContextPool*` call anywhere names a tenant `DbContext` (§4.2) |
+| T3 | `ITenantDbContextFactory<>` is implemented only in `Aurora.Platform.Tenancy` |
+| T4 | `IHttpContextAccessor` appears only in `Aurora.Web`'s tenant-resolution middleware (§3.3) |
+| T5 | No type registered as a **singleton** has a `TenantScope` field or property |
+| T6 | `TenantScope` appears in no serializable payload: not in an integration event, not in a job payload, not in a cache entry (§10.4) |
+| T7 | Every module integration-test assembly contains exactly one subclass of `TenantIsolationContract<>` |
+| T8 | No `IPlatformJob` implementation references a module's `.Domain`, `.Application` or `.Infrastructure` (§10.1) |
+
+### 5.4 Financial-correctness rules
+
+| Id | Rule |
+|---|---|
+| F1 | No `double` or `float` field, property, parameter or return type in any `*.Domain`, `*.Application` or `*.Contracts` assembly |
+| F2 | Every `Money`-typed property maps to `numeric(19,4)` + `char(3)`; unit prices to `numeric(19,6)`; exchange rates to `numeric(19,10)` (asserted over the built EF model) |
+| F3 | `JournalEntry` and `JournalEntryLine` expose no public setter and no delete path; the EF model marks them append-only |
+| F4 | Every monetary arithmetic result in domain code is produced by `Money` operators, never by raw `decimal` arithmetic on an amount extracted from a `Money` |
+
+### 5.5 Country-agnosticism rules
+
+| Id | Rule |
+|---|---|
+| C1 | No comparison against an ISO-3166 country literal, and no `CountryCode` switch, in any business module's `Domain` or `Application`. This is the mechanical form of *"the core must never contain `if (country == "SE")`"* |
+| C2 | No account-number-shaped literal (a bare 3–8 digit string assigned to an account-typed member) in core code — accounts are resolved by `AccountRole` (ADR-0008 §6.1) |
+| C3 | A Country Package assembly references only `Aurora.Countries.Contracts` and `Aurora.Documents.Canonical` |
+| C4 | The public surface of `Aurora.Countries.Contracts` matches its approved-API file; any change forces an explicit SemVer decision (ADR-0008 §3.1) |
+| C5 | No tax or rate lookup signature exists without an explicit `asOf` date parameter (ADR-0008 §6.2) |
+
+### 5.6 Security and correctness rules
+
+| Id | Rule |
+|---|---|
+| S1 | Every application-service command type carries a permission declaration (ADR-0010) |
+| S2 | Every REST endpoint has an authorization attribute; anonymous access requires an explicit, reviewed `[AllowAnonymous]` on a short allow-list |
+| S3 | No `DateTime.Now`, `DateTime.UtcNow` or `DateTimeOffset.UtcNow` in `*.Domain` or `*.Application` — time comes from `TimeProvider` |
+| S4 | No interpolated or concatenated string reaches `FromSqlRaw`/`ExecuteSqlRaw` (Roslyn rule); parameterized APIs only |
+| S5 | No `[PersonalData]`-annotated property on a type that does not implement `IPseudonymisable`, unless listed in the reviewed exception file (ADR-0007 §11.5) |
+| Q1 | No `ToListAsync`/`ToArrayAsync` on an `IQueryable` without a preceding `Take` (Roslyn heuristic; suppressions require a justification string and are reviewed) |
+| Q2 | Every module `DbContext` sets `QueryTrackingBehavior.NoTrackingWithIdentityResolution` as its default (ADR-0003 rule 4) |
+
+### 5.7 Migration safety rules
+
+| Id | Rule |
+|---|---|
+| MIG1 | Every migration is annotated `Expand`, `Contract` or `DataOnly` |
+| MIG2 | Generated SQL containing `DROP COLUMN`, `DROP TABLE`, `ALTER COLUMN ... TYPE`, `RENAME`, or `ADD COLUMN ... NOT NULL` without a default appears only in a `Contract` migration |
+| MIG3 | A `Contract` migration and the `Expand` it contracts never ship in the same release (ADR-0007 §7.2) |
+| MIG4 | `CREATE INDEX` on an existing table uses `CONCURRENTLY` with `suppressTransaction: true` |
+| MIG5 | A package migration names no schema other than its own (ADR-0008 §4.1 R2) |
+
+### 5.8 Localization rules
+
+| Id | Rule |
+|---|---|
+| A1 | No literal string is passed to a component parameter named `Text`, `Label`, `Title`, `Placeholder`, `Header` or `Description` in a `.razor` file; values come from `IStringLocalizer` (Roslyn/source scan). Best-effort by nature — code review remains the backstop for prose in markup |
+| A2 | Every `.resx` key used in code exists in the base `en` resource; unused keys are reported, not failed |
+
+---
+
+## 6. Integration test infrastructure
+
+**Measured fact that shapes everything here: a `postgres:17-alpine` container costs about 9 seconds to start.** With one container per test class, a hundred integration test classes would spend fifteen minutes doing nothing but starting databases.
+
+### 6.1 One container per xUnit collection, and few collections
+
+- The container is an xUnit **collection fixture** (`ICollectionFixture<PostgresFixture>`), not a class fixture.
+- **Hard rule: a test project has at most two collections.** More collections means more containers means a gate developers stop running.
+- `PostgreSqlBuilder` must pin the image explicitly — `new PostgreSqlBuilder().WithImage("postgres:17-alpine")` — because the parameterless constructor is obsolete in Testcontainers 4.15.0.
+- Leave the Testcontainers resource reaper enabled; orphaned containers on a developer machine are a support cost nobody budgets for.
+
+### 6.2 Test-only tuning that is safe because it is test-only
+
+```
+--tmpfs /var/lib/postgresql/data
+-c fsync=off -c full_page_writes=off -c synchronous_commit=off
+-c max_connections=200
+```
+
+Durability is irrelevant in a container that is destroyed at the end of the run, and turning it off is the difference between a 5-minute and a 12-minute suite.
+
+### 6.3 Template databases, not repeated migrations
+
+Applying every module's migrations takes seconds. Doing it per test class is the second biggest cost after container startup. Instead:
+
+1. **Once per collection**, provision `aurora_template` through the **real provisioning saga** (ADR-0007 §8) — so the saga is continuously tested by everything else.
+2. **Per test class**, `CREATE DATABASE <unique> TEMPLATE aurora_template` (typically 100–300 ms) and re-stamp `platform.tenant_identity` with that class's tenant id.
+3. **Within a class**, tests that do not manage their own transactions may roll back; tests that touch the outbox, provisioning or advisory locks get a fresh database from the template, because a rollback would hide exactly the behaviour under test.
+
+No connection may be open to the template while cloning — the fixture closes and clears pools before each clone.
+
+### 6.4 Parallelism
+
+Collections run in parallel; `maxParallelThreads` is capped (start at 4) so parallel tests do not create a connection storm against a single container. Raise it only with a measured before/after.
+
+---
+
+## 7. The tenant isolation test pattern — mandatory
+
+Defined normatively in ADR-0007 §12. Restated here as the developer's checklist, because this is the one pattern nobody may skip.
+
+`TwoTenantDatabaseFixture` provisions **two** tenants, A and B, through the real saga. Each module inherits `TenantIsolationContract<TFixture>`, implements four small methods — seed, read-all, run-the-background-job, raise-the-integration-event — and inherits six tests:
+
+1. Data written in A is not readable in B.
+2. Data written in B is not readable in A.
+3. A background job for A writes only to A.
+4. An integration event raised in A is handled only in A.
+5. Reusing a disposed `TenantScope` throws.
+6. **A deliberate mis-route** — tenant A's scope handed a connection string pointing at tenant B's database — throws `TenantRoutingViolationException`.
+
+Test 6 is the one a developer would never think to write and the one that matters most: it proves the §4.3 safety net still works. Without it, the identity check can silently rot into a no-op and nothing turns red.
+
+**Fitness rule T7 fails the build for any module without a subclass.** Tests 3 and 4 exist because background jobs and integration events are where database-per-tenant leaks in practice — there is no HTTP request to carry the tenant, so the context has to be carried deliberately, and the test is what proves it was.
+
+---
+
+## 8. Country Package tests
+
+Every package inherits `CountryPackageContractTests<TPackage>` (ADR-0008 §10): manifest matches assembly, migrations touch only the package schema, install does not alter core DDL, all declared capabilities resolve, effective-dated rows have no gaps or overlaps, the identifier validator matches the jurisdiction's published test vectors, e-invoice output validates against the published XSD, install/uninstall round-trips, **and install into a live tenant with existing data works**. A fitness test asserts every package assembly has a subclass.
+
+---
+
+## 9. UI component and accessibility tests
+
+- **bUnit** for components: rendering, two-way binding, validation messages, and that every user-facing string comes from `IStringLocalizer` (a test renders under `en` and a pseudo-locale and asserts the output differs).
+- Grid components are tested for **server-side paging**: a component given a 100 000-row provider must request at most one page (ADR-0005 rule 3).
+- Accessibility: automated checks for the mechanical parts of WCAG 2.2 AA — labels associated with inputs, roles, focus order, colour-contrast tokens from `docs/design/tokens.json`. Automation catches perhaps half of AA; the design reviews in `docs/design/reviews/` are the other half and this document does not pretend otherwise.
+
+---
+
+## 10. Performance tests
+
+Not a suite; three guard rails:
+
+1. **Query-count assertions** on the heaviest read paths (order list, ledger enquiry, stock availability): the test fails if the number of SQL round trips exceeds a stated budget. This is how N+1 is caught the day it is written rather than the day a customer complains.
+2. **Result-bound assertions**: a query over a seeded 50 000-row table must return a bounded page and must not materialise the table.
+3. **Index presence**: a test asserts that every foreign key and every column used by a declared query filter has an index, by comparing the EF model against `pg_indexes`.
+
+Load testing is a milestone activity against the numbers in `scalability.md`, not a per-commit gate.
+
+---
+
+## 11. What runs in `verify.sh`
+
+See `solution-layout.md` §5.2 for the definitive stage list. In short: restore (locked), format, build (warnings as errors), dependency licence gate, vulnerability gate, **unit tests (which must pass with Docker stopped)**, architecture fitness tests, integration tests, UI component tests, coverage.
+
+Two properties worth stating explicitly:
+
+- **Stages 6 and 7 need no Docker.** A developer without a working Docker daemon still gets the domain and architecture feedback, which is most of the value.
+- **The gate is the same locally and in CI.** There is no separate CI script that runs more or fewer checks. A gate that differs between the two teaches developers to distrust both.
+
+---
+
+## 12. Coverage
+
+Collected on every run and reported; **not** a primary target — coverage measures execution, not assertion. One enforced floor: **80% line coverage on `*.Domain` assemblies, from milestone M2**. Domain code is pure, fast to test and holds the invariants that cost money when wrong; there is no honest excuse for uncovered domain code. No floor is set on Infrastructure, where coverage chasing produces tests of the ORM rather than of the system.
