@@ -26,7 +26,7 @@ namespace Aurora.Architecture.Tests;
 /// So each rule below is recorded as <b>live</b> - a violation is expressible in today's code, and
 /// the rule examined a real population - or <b>inert</b>, with the type it governs named and a
 /// fixture the rule is run over to show it still fires. The inert rows also assert the
-/// <i>absence</i> of that type. The day B-05 or B-06 introduces it, the assertion fails and whoever
+/// <i>absence</i> of that type. The day B-06 introduces it, the assertion fails and whoever
 /// added it must move the rule to the live list with a floor. Inertness expires loudly rather than
 /// quietly persisting.
 /// </para>
@@ -43,6 +43,8 @@ public sealed class RuleInventoryTests
             static () => AmbientTimeRule.Check(SolutionLayout.ProductionTypes)),
         (HttpContextAccessorRule.Id, HttpContextAccessorRule.Name, 10,
             static () => HttpContextAccessorRule.Check(SolutionLayout.ProductionTypes)),
+        (TenantDbContextRegistrationRule.Id, TenantDbContextRegistrationRule.Name, 1,
+            static () => TenantDbContextRegistrationRule.Check(TypeIndex.Of(SolutionLayout.ProductionTypes))),
         (TenantDbContextFactoryRule.Id, TenantDbContextFactoryRule.Name, 10,
             static () => TenantDbContextFactoryRule.Check(SolutionLayout.ProductionTypes)),
         (TenantDatabaseHandleRule.Id, TenantDatabaseHandleRule.Name, 10,
@@ -78,9 +80,6 @@ public sealed class RuleInventoryTests
         (TenantDbContextConstructorRule.Id, TenantDbContextConstructorRule.Name,
             "a tenant DbContext", "B-06 (B-05 brings CatalogDbContext, which is exempt)",
             static () => TenantDbContextConstructorRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
-        (TenantDbContextRegistrationRule.Id, TenantDbContextRegistrationRule.Name,
-            "an AddDbContext* call", "B-05 (the catalog registration inside Aurora.Platform.Tenancy)",
-            static () => TenantDbContextRegistrationRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
         (ModuleDependencyRule.Id, ModuleDependencyRule.Name,
             "two business modules to reference each other", "the first module after B-15",
             static () =>
@@ -155,20 +154,6 @@ public sealed class RuleInventoryTests
     }
 
     [Fact]
-    public void The_tenancy_assembly_does_not_exist_yet_which_is_why_T2_is_inert()
-    {
-        // T2's one permitted call site - the catalog registration - lives in Aurora.Platform.Tenancy,
-        // which B-05 creates. Until then T2 has no AddDbContext* call to examine.
-        SolutionLayout.ProductionAssemblies
-            .Select(static assembly => assembly.Name)
-            .ShouldNotContain(
-                TenancyNames.TenancyAssemblyName,
-                "B-05 has landed Aurora.Platform.Tenancy, so T2 has its subject: the catalog registration. "
-                + "Move its row from Inert to Live with a floor of 1, raise the floor in "
-                + "TenancyRuleTests from 0, and delete this test.");
-    }
-
-    [Fact]
     public void No_tenant_access_type_exists_yet_which_is_why_T5_and_T6_have_nothing_to_find()
     {
         SolutionLayout.ProductionTypes
@@ -235,6 +220,6 @@ public sealed class RuleInventoryTests
                 + $"fixture. It is not asleep, it is broken: {outcome.Describe()}");
         }
 
-        Inert.Length.ShouldBe(3, "three rules are inert today: T1, T2 and M1");
+        Inert.Length.ShouldBe(2, "two rules are inert today: T1 and M1");
     }
 }

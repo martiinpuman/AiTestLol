@@ -47,8 +47,8 @@ internal sealed record RuleViolation(string Subject, ViolationSite Site, string 
 /// <remarks>
 /// <see cref="SubjectsExamined"/> is not decoration. B-02 shipped a gate stage that printed PASS
 /// having executed zero tests; a rule that reports "no violations" without saying how many
-/// subjects it looked at has the same defect. Every rule test prints this count, and
-/// <c>RuleInventoryTests</c> asserts the expected count for each rule so that a population
+/// subjects it looked at has the same defect. <c>RuleAssert.Holds</c> takes a mandatory floor on
+/// this count, and <c>RuleInventoryTests</c> asserts one for every live rule, so that a population
 /// collapsing to zero fails instead of passing.
 /// </remarks>
 internal sealed record RuleOutcome(

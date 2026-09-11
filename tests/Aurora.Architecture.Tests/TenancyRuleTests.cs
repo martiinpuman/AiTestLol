@@ -13,9 +13,9 @@ namespace Aurora.Architecture.Tests;
 /// The five tenancy fitness rules ADR-0007 §12.3 requires: T1, T2, T3, T4 and T5.
 /// </summary>
 /// <remarks>
-/// These are the rules that keep one tenant's data out of another tenant's request. Four of them
+/// These are the rules that keep one tenant's data out of another tenant's request. Three of them
 /// have nothing to bite on yet - <c>TenantScope</c>, <c>ITenantDbContextFactory&lt;&gt;</c> and the
-/// first tenant <c>DbContext</c> arrive with B-05 and B-06 - so each is proven against a
+/// first tenant <c>DbContext</c> arrive with B-06 - so each is proven against a
 /// deliberately-violating fixture instead of against an empty population, and
 /// <c>RuleInventoryTests</c> records which are inert today.
 /// </remarks>
@@ -128,11 +128,13 @@ public sealed class TenancyRuleTests
     // ---- T2: the AddDbContext family only in Aurora.Platform.Tenancy, only for the catalog ---
 
     [Fact]
-    public void T2_no_production_code_calls_the_AddDbContext_family()
+    public void T2_the_only_AddDbContext_call_in_production_is_the_catalog_registration_inside_the_tenancy_assembly()
     {
-        // Inert today: no AddDbContext* call exists in production. B-05 brings the catalog's, inside
-        // Aurora.Platform.Tenancy, and RuleInventoryTests holds the expiry.
-        RuleAssert.Holds(TenantDbContextRegistrationRule.Check(Production), minimumSubjects: 0);
+        // Live since B-05: CatalogServiceCollectionExtensions.AddCatalogDatabase is the one call, at
+        // the permitted site with the permitted argument. The floor of 1 is what separates "the
+        // catalog registration passed" from "nothing was examined"; RuleInventoryTests records the
+        // same floor in its live list.
+        RuleAssert.Holds(TenantDbContextRegistrationRule.Check(Production), minimumSubjects: 1);
     }
 
     [Fact]

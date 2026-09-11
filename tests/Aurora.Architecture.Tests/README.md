@@ -52,12 +52,12 @@ both trusted. The difference is written down in `RuleInventoryTests` and **check
 | T4 | **Live** | `IHttpContextAccessor` exists in the framework; any production code could name it today |
 | T3, T5, T6 | **Live, nothing to find** | They scan every production type on every run and would report the first violation immediately. The *types* they govern (`ITenantDbContextFactory<>`, `TenantScope`, `TenantDatabaseHandle`) arrive with B-06 |
 | T1 | **Inert** | No tenant `DbContext` exists in production yet. B-05 brings the catalog context (exempt as the exact pair); B-06 brings the first tenant context |
-| T2 | **Inert** | `Aurora.Platform.Tenancy` does not exist yet. B-05 creates it, with the one permitted `AddDbContext` call site: the catalog registration |
+| T2 | **Live** | `Aurora.Platform.Tenancy` exists since B-05, with the one permitted `AddDbContext` call site: the catalog registration. T2 examines it on every run, floor 1 |
 | M1 | **Inert** | Fewer than two business modules exist, so there are no cross-module edges |
 
-`RuleInventoryTests` asserts the absence of each awaited type and of the awaited assembly **by
-name**. The day B-05 or B-06 adds one, those tests fail with an instruction saying what to change.
-Inertness expires loudly.
+`RuleInventoryTests` asserts the absence of each awaited type **by name**. The day B-06 adds one,
+those tests fail with an instruction saying what to change. Inertness expires loudly - T2's did,
+the day B-05 landed the tenancy assembly.
 
 Each inert row also carries a deliberately-violating fixture. `RuleInventoryTests` runs the rule over
 it and requires a violation back, so a rule recorded as asleep is shown to be asleep rather than

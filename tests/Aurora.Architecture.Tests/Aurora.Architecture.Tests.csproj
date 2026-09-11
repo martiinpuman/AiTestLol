@@ -17,7 +17,7 @@
     "source-level rules are Roslyn tests, because reflection cannot see them"; docs/reviews/B-03.md
     m-1 is the proof - a rule reflecting over member signatures cannot see a `double` local or a
     `(double)` cast, which is exactly the violation solution-layout.md 6 row B-04 requires this
-    rule set to catch. IL is where that violation is visible. README.md 7 records the deviation.
+    rule set to catch. IL is where that violation is visible. README.md 5 records the deviation.
 
     The EntityFrameworkCore reference and the ASP.NET framework reference exist for ONE reason:
     the deliberately-violating fixtures in Fixtures/ derive from the real DbContext, use the real
