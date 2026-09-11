@@ -90,3 +90,21 @@ handoff would have thrown away and redone.
 - **Developers must commit as soon as their work first compiles**, not at the end. B-01 came within
   one reclaimed container of losing a complete, correct scaffold. The task brief template now
   requires an early WIP commit on the task branch.
+
+### Orchestrator verification — the pinned test runner (iteration 2)
+
+The architect corrected a factual claim in ADR-0020: the rule that the test-runner major must match
+the framework major held for runner 2.x and is false from 3.0, so `xunit.runner.visualstudio` **3.1.4**
+beside `xunit` **2.9.3** is correct and must not be "fixed" by downgrading.
+
+Nothing had actually exercised that pairing — the solution has no tests yet, so `dotnet test` reporting
+"No test is available" proves only that the run does not abort. If the claim were wrong, every test
+project would be silently broken and the first symptom would arrive at B-03 with the first real test.
+
+Verified directly: a scratch project at exactly those two pinned versions, with one passing and one
+deliberately failing test.
+
+**Result: 2 tests discovered, 1 passed, 1 failed, exit 1.**
+
+The runner discovers and runs xunit 2.9.3 tests, and a failing test genuinely fails the run — which the
+quality gate depends on. The architect's correction is confirmed; ADR-0020's decision stands unchanged.
