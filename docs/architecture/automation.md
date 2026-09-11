@@ -118,6 +118,21 @@ Proven from both sides on 2026-09-11: a deliberately failing `Assert.Equal(2, 1 
 was reported with its name, both values and its file and line, exit code 1; the clean
 tree reports 208 executed, exit code 0.
 
+**A defect it shipped with, found by a developer using it.** The first version passed
+`--logger "trx;LogFileName=results.trx"`, so every test assembly in a solution run
+overwrote the same file and the last one won: a green 315-test suite reported
+`TOTAL 0 executed`. Dropping `LogFileName` — which is what `verify.sh` already does —
+fixes it. The zero-executed guard is what made the defect visible instead of silently
+halving a count, which is the whole argument for the guard. A `.trx` names its
+assembly only inside a `UnitTest` element, so an assembly that executed nothing cannot
+be named from its own results; those are counted and reported as unnamed rather than
+printed as a row called "unknown".
+
+Run `dotnet build Aurora.sln` first when the architecture fitness tests matter:
+`dotnet test` builds only what the test projects reference, so three projects are not
+built by a bare test run and the rules' population guard fires. `verify.sh` builds in
+stage 3, so the gate is unaffected.
+
 `scripts/verify.sh` remains the authority on whether a branch may merge. `dev-test.sh`
 is for the loop before that, and does not replace it.
 
