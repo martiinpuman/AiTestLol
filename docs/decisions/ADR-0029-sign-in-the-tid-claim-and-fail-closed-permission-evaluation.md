@@ -1,6 +1,6 @@
 # ADR-0029 — Sign-in, the `tid` claim and fail-closed permission evaluation
 
-- **Status:** Accepted (2026-09-11)
+- **Status:** Accepted (2026-09-11), **amended 2026-09-11** after security review (`../reviews/ADR-0029.md`: 2 blockers, 9 high). **Read Amendment 1 at the end of this document before implementing anything — where it disagrees with §1-§9 it wins.**
 - **Deciders:** architect
 - **Supersedes:** **in part** ADR-0009 rule 4 — the phrase *"cross-checked against host/path resolution on every request"* is replaced by the three named checkpoints in §4. A Blazor Server circuit issues no HTTP requests while it is alive (ADR-0005 rule 2), so "every request" leaves the longest-lived session in the product unchecked. Every other decision in ADR-0009 stands.
 - **Superseded by:** —
@@ -48,7 +48,7 @@ Only the decisions that had a credible alternative are listed. The rest follow f
 
 ### 2. Credential material is a separate catalog row
 
-`catalog.identity_user.credential_ref` (ADR-0007 §9.2) is a foreign key to **`catalog.identity_credential`**: password hash, security stamp, lockout counters and end, and the concurrency stamp. Reasons, in order of weight: offboarding and erasure delete credentials as one row while the user row survives as the pseudonymised actor reference every audit event points at (ADR-0018); a membership or routing query never has the hash in its projection; and it keeps §9.2's column list true rather than quietly contradicted.
+`catalog.identity_user.credential_ref` (ADR-0007 §9.2) is a foreign key to **`catalog.identity_credential`**: password hash, security stamp, lockout counters and end, and the concurrency stamp. Reasons, in order of weight: offboarding and erasure delete credentials as one row while the user row survives as the pseudonymised actor reference every audit event points at (ADR-0018); a membership or routing query never has the hash in its projection; and it keeps §9.2's column list true rather than quietly contradicted. **Amended (A1.3 M-7):** separating the row is not enough — `catalog.identity_credential` is readable only by a new `aurora_identity` login, revoked from `aurora_app`.
 
 **`Microsoft.AspNetCore.Identity.EntityFrameworkCore` is not referenced.** Its purpose is `IdentityDbContext` and `UserStore<…>` over ASP.NET Core Identity's *own* schema, which ours deliberately is not. What we use — `UserManager<T>`, `SignInManager<T>`, `PasswordHasher<T>`, `IUserStore<T>` and its siblings, cookie authentication, `RevalidatingServerAuthenticationStateProvider`, `CircuitHandler` — all ship in the `Microsoft.AspNetCore.App` 10.0.12 shared framework, verified in this environment on 2026-09-11 (`Microsoft.Extensions.Identity.Core.dll`, `Microsoft.Extensions.Identity.Stores.dll`, `Microsoft.AspNetCore.Identity.dll`, `Microsoft.AspNetCore.Authentication.Cookies.dll`, `Microsoft.AspNetCore.Components.Server.dll`). **The bootstrap identity and authorization path adds no third-party dependency.** Password hashing is the framework's; ADR-0009's "no custom password hashing, ever" is unchanged.
 
@@ -62,7 +62,7 @@ One cookie, name `__Host-aurora.auth`. The `__Host-` prefix is not decoration: i
 
 **Minted** only by the sign-in service (`Aurora.Platform.Identity`), only after all of: credentials verified; the tenant of the *sign-in request* resolved by host or path (never from a form field, a query string, a previous cookie or a header); `catalog.user_tenant_membership` for (user, that tenant) is `Active`; `catalog.tenant.state` is `Active`. The claim value is the host-resolved `TenantId`. No other code adds, edits or re-signs it; a **new** `tid` is only ever produced by a full re-authentication of the session, never by amending a principal in place.
 
-**Checked** at three points, because a Blazor Server session outlives every HTTP request that created it:
+**Checked** at three points, because a Blazor Server session outlives every HTTP request that created it. **Amended (A1.2 H-4, H-6, H-9): there are four checkpoints, checkpoint 1 moves into `OnValidatePrincipal`, checkpoint 2 compares `tid`, `sub` and the security stamp, and `OnRefreshingPrincipal` is checkpoint 4.**
 
 | # | Checkpoint | What is compared | Owner |
 |---|---|---|---|
@@ -75,7 +75,7 @@ One cookie, name `__Host-aurora.auth`. The `__Host-` prefix is not decoration: i
 **On disagreement, in this order:**
 
 1. **No `TenantScope` is opened.** Not for the claim's tenant, not for the resolved tenant. The request touches no tenant database.
-2. `403` with RFC 9457 Problem Details, `type` `https://aurora.example/problems/tenant-mismatch`. The body names **neither** tenant and does not say which side was wrong — unlike a permission denial (ADR-0010 rule 10), where the missing permission is not a secret. Whether a tenant exists, and whether your session is valid for it, are both secrets from a non-member.
+2. **Superseded by A1.3 M-1: the status is `404` and is identical to the response for an unknown tenant key**, because `403`-here/`404`-there enumerates the customer list. `403` with RFC 9457 Problem Details, `type` `https://aurora.example/problems/tenant-mismatch`. The body names **neither** tenant and does not say which side was wrong — unlike a permission denial (ADR-0010 rule 10), where the missing permission is not a secret. Whether a tenant exists, and whether your session is valid for it, are both secrets from a non-member.
 3. The session is **not** renewed on the violating response (no sliding-expiration refresh), and the cookie is **not** deleted — deleting it turns any crafted cross-tenant link into a logout of the victim, and buys nothing against the attacker who already holds the cookie.
 4. A `catalog.authentication_event` row (§7) plus a structured log at `Warning` with tenant and correlation ids, and a counter. Nothing is written to either tenant's `audit.audit_event`.
 5. **A distinct exception type.** `TenantClaimMismatchException`, **not** ADR-0007 §4.3's `TenantRoutingViolationException`. §4.3's exception marks the tenant `SchemaBlocked`, which is right for a server-side mis-route and catastrophic here: it would let anyone holding a stale cookie take a tenant offline. A fitness-adjacent unit test asserts a claim mismatch leaves `catalog.tenant.state` unchanged.
@@ -92,6 +92,8 @@ One cookie, name `__Host-aurora.auth`. The `__Host-` prefix is not decoration: i
 ### 5. Permission evaluation fails closed, and "no decision" is louder than "denied"
 
 `IPermissionEvaluator` in `Aurora.Platform.Access.Contracts` (**not** `IAuthorizationService` — `../architecture/modules.md` §4's working name collides with `Microsoft.AspNetCore.Authorization.IAuthorizationService`, and a collision on the one type every guarded command touches is a trap; modules.md is corrected accordingly):
+
+**Superseded by A1.2 H-1:** the first parameter is an `AccessSubject`, not a `ClaimsPrincipal`, because a method given both halves of the tenancy proof must not be free to ignore them.
 
 ```
 ValueTask<PermissionDecision> EvaluateAsync(ClaimsPrincipal principal, TenantScope scope,
@@ -120,9 +122,9 @@ ValueTask<PermissionDecision> EvaluateAsync(ClaimsPrincipal principal, TenantSco
 - no target (a tenant-wide query such as SPEC-002's list) → `Granted(CompanyScope.AllCompaniesInTenant)` if any `null`-scoped assignment carries the permission, otherwise `Granted(CompanyScope.Of(ids))` over the distinct ids that do;
 - `CompanyScope.Of` **throws on an empty collection** — the empty set cannot be constructed, so it cannot silently become `WHERE 1=1`.
 
-`CompanyScope` is the parameter of ADR-0010 rule 6's EF global query filter: `AllCompaniesInTenant` emits no `CompanyId` predicate (tenant isolation is the database, ADR-0007), and any explicit set emits `CompanyId = ANY(@p)`. Filtering after materialisation stays forbidden.
+`CompanyScope` is the parameter of ADR-0010 rule 6's EF global query filter — **and A1.2 H-2 makes that transport structural: it lives in `Aurora.SharedKernel` and is a required constructor parameter of any context mapping an `ICompanyScoped` entity**: `AllCompaniesInTenant` emits no `CompanyId` predicate (tenant isolation is the database, ADR-0007), and any explicit set emits `CompanyId = ANY(@p)`. Filtering after materialisation stays forbidden.
 
-**The built-in administrator is data, not a branch.** There is no `if (isAdministrator)` anywhere in the evaluator — ADR-0010 rule 2 ("code never checks a role") is only true if the evaluator itself obeys it. The administrator role holds an explicit, seeded permission set; the per-tenant seeder is idempotent and re-runs on every `access`-schema migration, granting **newly declared** permissions to the built-in administrator role and to no other role. That is how SPEC-002's `organization.company.manage` reaches an administrator provisioned before the Organization module existed, without a wildcard. The test that proves no hidden superuser branch survives: declare a test-only permission, seed it into the catalogue, grant it to nobody, assert the administrator is **denied**.
+**The built-in administrator is data, not a branch.** There is no `if (isAdministrator)` anywhere in the evaluator — ADR-0010 rule 2 ("code never checks a role") is only true if the evaluator itself obeys it. The administrator role holds an explicit, seeded permission set; the per-tenant seeder is idempotent and re-runs on every `access`-schema migration, granting **newly declared** permissions to the built-in administrator role and to no other role. **Superseded by A1.2 H-3: the seeder grants a committed approved list, not "everything in the catalogue" — as written this was a wildcard, and it made the no-superuser test below unpassable.** That is how SPEC-002's `organization.company.manage` reaches an administrator provisioned before the Organization module existed, without a wildcard. The test that proves no hidden superuser branch survives: declare a test-only permission, seed it into the catalogue, grant it to nobody, assert the administrator is **denied**.
 
 ### 6. Permissions are evaluation-time, never carried in a cookie or a token
 
@@ -149,14 +151,14 @@ Both sides of the tenant boundary, on the rule of ADR-0028 §6, with one additio
 
 **A sign-in that cannot be recorded does not happen:** if the `catalog.authentication_event` write fails, the sign-in fails. An authentication log that is allowed to drop rows under load is not an authentication log.
 
-**Dependency consequence, stated because it is the question that prompted this ADR:** only the two rows that write tenant-side events depend on **B-16.2** (`IAuditWriter` and the hash chain) — sign-in (B-18.5) and the enforcement pipeline (B-17.3). Everything else in the identity and access set writes platform-side only and is free of the B-16 chain, which is what lets most of it run in parallel with it.
+**Dependency consequence, stated because it is the question that prompted this ADR:** only the two rows that write tenant-side events depend on **B-16.1** (the audit store and `IAuditWriter`) — **corrected in A1.4; this sentence said B-16.2, the `[Auditable]` interceptor, which neither row uses** — sign-in (B-18.5) and the enforcement pipeline (B-17.3). Everything else in the identity and access set writes platform-side only and is free of the B-16 chain, which is what lets most of it run in parallel with it.
 
 ### 8. Two new fitness rules, and one existing rule that must count
 
 Added to `../architecture/testing-strategy.md` §5.6, each with a deliberately-violating fixture proving it fails:
 
 - **S6 — approved claims.** The set of claim types minted at sign-in equals a committed approved-claims file; no claim type in it is a permission or a role. The test reports the number of claim types asserted.
-- **S7 — `tid` is minted in one place.** The claim-type constant `AuroraClaimTypes.TenantId` is referenced only by the sign-in service, the tenant-resolution cross-check and their test assemblies — a named allow-list, in the shape of ADR-0027 §1's `TenantDatabaseHandle` allow-list.
+- **S7 — the tenant claims are written in exactly two places** (**renamed and widened by A1.2 H-6**: as originally written it inspected references to one constant, so `new Claim("tid", …)` and any `ClaimsIdentity` construction slipped past it, and `tkey` was unguarded). The claim-type constant `AuroraClaimTypes.TenantId` is referenced only by the sign-in service, the tenant-resolution cross-check and their test assemblies — a named allow-list, in the shape of ADR-0027 §1's `TenantDatabaseHandle` allow-list.
 - **S1, extended.** ADR-0010 rule 5's existing rule must report **how many** application-service request types it asserted and fail below a floor, and it gains a runtime counterpart: the pipeline behaviour refuses to invoke a handler whose request type carries no declaration (§5). A reflection rule that finds no types passes silently; a build gate and a runtime gate fail in different ways, which is the point of having both.
 
 ### 9. What this ADR deliberately does not decide
@@ -177,3 +179,140 @@ Named so nobody mistakes silence for a decision, and so nobody designs them insi
 ## Revisit when
 
 The tenant-switch endpoint is scheduled (it will re-open §4's disagreement handling, and must re-open it as a new ADR, not as a branch in the middleware); or the public API's token path is built (§6's intersection rule meets OpenIddict for real); or enterprise SSO arrives (ADR-0009 rule 6 — federation changes where the principal comes from but must not change where `tid` is minted); or measured `403`s from §4 are dominated by legitimate navigation rather than by tests, which would mean the resolution model, not the check, is wrong.
+
+---
+
+# Amendment 1 — 2026-09-11, after security review
+
+**Applies to:** everything above. Where this amendment and §1–§9 disagree, **this amendment wins**; the affected sentences are marked in place.
+
+**Source:** `../reviews/ADR-0029.md` — CHANGES_REQUESTED, 2 blockers, 9 high, 7 medium, 4 low. The reviewer attacked and could not break the replay test, refuse-don't-re-mint, `tid` as constraint and never source, absence-is-mismatch, the two-constructible-outcomes rule, keeping permissions out of the cookie, drawing the audit boundary at *unproven* rather than *unauthenticated*, and the argument for not reusing `TenantRoutingViolationException`. **None of those is reopened here.** Every change below closes a place where the guarantee was carried by a convention — middleware ordering, an unnamed cache key, "the caller will pass the right scope", "the framework will leave the principal alone" — rather than by a mechanism that cannot be expressed wrongly.
+
+## A1.1 — Blockers
+
+### B-1: the membership cache read is keyed by user alone (cross-tenant `tid` mint)
+
+The key `c:member:{userId}` was invented in a task row and back-cited to §4, which never defined it. It lets a member of any tenant obtain a minted `tid` for a tenant they do not belong to, within the TTL, from the one legitimate mint site — forging the very membership proof §7's audit boundary rests on.
+
+**Decision — there is no per-tenant membership key, because the tenant is not part of the key at all.** The cached value is an **`IdentitySnapshot`**:
+
+```
+IdentitySnapshot(UserId, SecurityStamp, UserStatus, IReadOnlyDictionary<TenantId, MembershipState> Memberships)
+```
+
+cached 60 s under `CatalogCacheKey.IdentitySnapshot(userId)` and invalidated on membership change, security-stamp rotation and user-status change. **The tenant is a parameter of the lookup (`snapshot.Memberships.TryGetValue(tenantId)`), never of the key**, so the wrong-tenant key cannot be constructed. One entry per user serves membership, stamp and status for every path — which is also what closes H-5 and H-7 at 60 s instead of 30 minutes.
+
+`CatalogCacheKey.For(kind, …)` is defined as the catalog-side sibling of `TenantCacheKey.For` (ADR-0012 rules 1–2, which had a `c:` prefix and no helper). Every `HybridCache` key in the solution comes from one of the two helpers, and each `CatalogCacheKey` kind is a member of a committed enum so a new cross-tenant cache entry is a reviewed edit. ADR-0012's status line, which repeated the bad key, is corrected.
+
+Falsifiable criteria are added to B-18.2 (ask for `(U, A)` then `(U, B)` with **no time advanced**; the second answer is `false`) and B-18.7 (sign in at A, then attempt sign-in at B with correct credentials and no membership in B inside the TTL: refused, and **zero** rows in B's `audit.audit_event`).
+
+### B-2: an invitation is a platform-wide password-set capability handed to the caller
+
+Credentials are global, so setting a password through an invitation sets it for **every tenant that person belongs to**; the token went to the *caller*; and nobody owned find-or-create on `catalog.identity_user`, so "adopt the existing user" was the unowned default that completed the attack.
+
+**Decision, four parts.**
+
+1. **An invitation may only be issued against an unestablished identity.** `IPlatformUserProvisioning.ResolveForTenantAdministratorAsync(email, tenantId)` is the single owner of find-or-create and returns one of two outcomes: **`Invite`** — the identity has **no credential and no Tenant Membership in any other tenant** — or **`Join`** — an established identity, for which provisioning creates the Tenant Membership only. **A `Join` never produces a password-set token.** Redeeming a join requires authenticating as that user with their existing credential. An identity may therefore be given access to a new tenant, but never a new password, by someone who merely knows its email address.
+2. **The token is never returned to the caller.** `IssueAsync` returns an opaque `InvitationHandle` (id, expiry, outcome); the secret leaves the process only through `IInvitationDelivery`, addressed to the invited address. Bootstrap has no mail transport, so `Aurora.Composition` registers a delivery implementation that **throws** when no transport is configured — provisioning fails loudly rather than quietly handing the secret back. The test harness registers a capturing sink. Returning the token in an API response is the same disclosure as logging it, with a nicer wrapper.
+3. **Redemption resolves its tenant from the host or path, never from the request body**, and refuses unless `invitation.tenant_id` equals it — the same rule §4 applies to the mint. The redeem endpoint lives on the tenant's own host.
+4. ADR-0010 rule 8 is preserved rather than contradicted: no operator ever holds a capability over an established tenant user. **Who may call provisioning at all** is the operator capability model, which rule 8 excludes from the tenant permission model and which no document owns — named in A1.4 as a follow-up, not decided here.
+
+## A1.2 — High findings
+
+### H-1: the evaluator held both halves of the tenancy proof and compared neither
+
+**Decision — remove the ability to present two halves that disagree.** `EvaluateAsync` no longer takes a `ClaimsPrincipal`. It takes an **`AccessSubject`**, a sealed type constructible only inside `Aurora.Platform.Access` by one of two factories:
+
+- `AccessSubject.FromPrincipal(ClaimsPrincipal, TenantScope)` — **performs the comparison as the price of construction**: `tid` present, parsable and equal to `scope.TenantId`, and the principal's security stamp, user status and Tenant Membership for that tenant still valid against the 60 s `IdentitySnapshot` (A1.1). There is no path that reads the principal without this.
+- `AccessSubject.ForSystemJob(TenantScope, SystemPrincipalId, IReadOnlySet<Permission>)` — ADR-0010 rule 9's named system principal. It carries **no `tid` claim at all**, so jobs never become a second site that writes tenant claims (which would have collided with rule S7).
+
+The §5 outcome table gains three rows, and they are deliberately three different outcomes:
+
+| Situation | Outcome |
+|---|---|
+| `tid` absent, unparsable, or `!= scope.TenantId` | **No decision** — throws, `500`, counter `authz_tenant_mismatch_total`. A defect, never a user error |
+| Security stamp stale, user disabled, or Tenant Membership no longer `Active` | **Session no longer valid** — `401` + challenge. Not `403` (it is not an authorization refusal) and not `500` (it is not a defect) |
+| Tenant's permission catalogue **empty**, or its `access` schema behind the skew gate | **No decision** — `503` (M-3: a broken tenant must not look like a misconfigured role) |
+
+### H-2: `CompanyScope` was constructed safely and then transported by convention
+
+`CompanyScope.Of` could not be empty, but nothing said how the scope reached the query filter — leaving an ambient accessor (the exact trap ADR-0007 §3.3 bans for tenants) or a hand-written `Where` as the two things a developer would reach for. The company boundary is the one horizontal-escalation boundary inside a tenant; it gets a mechanism, not a convention.
+
+**Decision.** `CompanyScope` and the `ICompanyScoped` marker live in **`Aurora.SharedKernel`** (tier 0, where `CompanyId` already is). A module `DbContext` that maps any `ICompanyScoped` entity has one `internal` constructor taking `(DbContextOptions, TenantAccess, CompanyScope)` — extending ADR-0027 §1's constructor rule by one parameter — and its global query filter is parameterized from that field. `ITenantDbContextFactory<TContext>` gains `CreateAsync(TenantScope, CompanyScope, ct)`, and the single-argument overload **throws** when the context's EF model contains an `ICompanyScoped` entity type: model metadata is the mechanism, so a filtered context cannot be obtained unfiltered. `CompanyScope.AllCompaniesInTenant` emits no predicate; any explicit set emits `CompanyId = ANY(@p)`; the empty set remains unconstructible.
+
+### H-3: "grant the administrator every permission in the catalogue" is a wildcard
+
+It is a wildcard described in the paragraph that boasts of having none, it auto-grants every future module's permissions fleet-wide at every migration, and it makes §5's own no-superuser test unpassable — the two criteria could not both hold against one implementation.
+
+**Decision.** The built-in administrator role is granted an **explicit committed list**, `administrator-permissions.approved.txt`, in the shape of S6's approved-claims file; the seeder grants that list and nothing else. A new permission joins it by a reviewed edit — which is what still delivers §5's stated benefit (SPEC-002's `organization.company.manage` reaching an administrator provisioned before the Organization module existed). A fitness rule asserts every declared `Permission` constant appears in **exactly one** of two committed lists — the administrator list, or a `not-administrator.approved.txt` with a reason per entry — and reports both counts, so a permission can be neither silently granted nor silently unreachable. A second rule forbids declaring a `Permission` constant for a platform or operator capability (reserved `operator.` and `platform.` prefixes): rule 8's capabilities do not live in the tenant catalogue.
+
+### H-4: checkpoint 1's pipeline position and exempt paths were unspecified
+
+Registered before `UseAuthentication`, the control is a silent no-op; and under path-based tenancy every root-mapped path (`/_blazor`, `/health`, static assets, `/sign-in`) resolves to no tenant, so an exemption list would have been invented unreviewed by whoever implemented it.
+
+**Decision — the check runs where the cookie is read, not where someone remembered to register it.** Checkpoint 1 moves into `CookieAuthenticationOptions.Events.OnValidatePrincipal`, which has the whole `HttpContext` (host and path are available) and runs on every request that presents the cookie, so it can be neither mis-ordered nor path-exempted by accident. On failure it calls `RejectPrincipal()`, sets `ShouldRenew = false` (M-2) and records the reason in `HttpContext.Items`; it does **not** call `SignOutAsync` — §4.3's no-cookie-deletion decision stands. A small middleware turns the recorded reason into the Problem Details response. **If that middleware is missing or mis-registered the request is simply anonymous** — a harsher outcome, never a permissive one. That asymmetry is the point, and B-18.6 gets a deliberately-violating fixture that removes the middleware and asserts the replay still refuses.
+
+**Tenant-neutral endpoints** are named in a committed allow-list on the same footing as S2's `[AllowAnonymous]` file, with a justification per entry: `/sign-in`, `/sign-out`, `/_blazor`, `/health*`, static assets, the deferred tenant picker. On such an endpoint no `TenantScope` can be opened, so an unchecked principal there can do nothing tenantful; a fitness rule fails the build for any endpoint that is neither tenant-resolved nor on the list, and reports the count of each. `/sign-out` being on it also removes the wedge the reviewer found — a user holding a cookie for a suspended or deleted tenant can always sign out in-product, so there is never pressure to exempt something that matters. Under host-based tenancy — the primary model — these paths sit on a tenant host and resolve normally; the list matters for the apex host and for path-based deployments.
+
+### H-5: revocation, suspension and `SchemaBlocked` were unenforced for 30 minutes, or forever
+
+The 60-second argument covered permissions only. On the plain HTTP path nothing re-checked membership, tenant state or the security stamp at all, so a revoked member or a suspended tenant kept working for the 12-hour cookie lifetime — and a `SchemaBlocked` tenant kept **writing to a half-migrated database**.
+
+**Decision — one choke point, not five checks.** `ITenantScopeFactory.OpenAsync` refuses to open a scope for a tenant whose `catalog.tenant.state` is not in the allow-list for the requested `TenantAccessReason`. It already re-reads the routing row under a 60 s cache that is invalidated on state change (ADR-0007 §3.5, ADR-0012 rule 6), and it already runs the §7.5 skew gate, so this costs nothing and bounds tenant-state staleness to 60 s for **every** path, including jobs and the outbox.
+
+| Reason | May open a tenant in state |
+|---|---|
+| `Request`, `Job`, `Outbox` | `Active` |
+| `Provisioning` | `Provisioning`, `Active` |
+| `OperatorSupport` | `Active`, `Suspended`, `SchemaBlocked` |
+| `Migration` | none — the DDL path uses `TenantDatabaseHandle` (ADR-0027), and a scope opened with this reason is refused |
+
+Refusal is `TenantNotAvailableException`: `503` + `Retry-After` for `Provisioning`/`SchemaBlocked` (transient), `403` for `Suspended`/`PendingDeletion`/`Deleted` (not transient). Neither names another tenant. `Exporting` and `PendingDeletion` have no reason that may open them until offboarding is built — named in A1.4.
+
+Membership, security stamp and user status are bounded at 60 s on every path by `AccessSubject.FromPrincipal` (H-1) reading the `IdentitySnapshot` (B-1). What remains at 30 minutes is narrow and now stated: a live circuit whose user was disabled can keep rendering **already-loaded** state, because it can neither open a scope nor execute a guarded command.
+
+### H-6: `SecurityStampValidator` rebuilds the principal, so "one mint site" did not survive the framework
+
+It replaces the principal with one built from the store; `tid` is not a store claim, so the framework either drops it fleet-wide (turning §4's absence-is-mismatch into a synchronised `403` storm indistinguishable from an attack) or it is copied in `OnRefreshingPrincipal` — a site that writes `tid` with **none** of the mint preconditions, added to rule S7's allow-list under deadline.
+
+**Decision.** We do use `SecurityStampValidator` — H-5 and H-7 need it — with a 60-second validation interval, and **`OnRefreshingPrincipal` is checkpoint 4**, in §4's table, not an allow-list exception. It re-runs the mint preconditions against the current request: Tenant Membership `Active` for the existing `tid`, tenant state `Active`, and the host-resolved tenant equal to the existing `tid`. All pass → `tid` and `tkey` are carried over unchanged. Any fail → the principal is **rejected**. `tid` is therefore never *produced* outside a re-authentication and is *carried over* by exactly one site with stated preconditions. `OnValidatePrincipal` runs stamp validation first and the tenant cross-check second; one event, two ordered steps.
+
+**Rule S7 is rewritten to what it actually inspects**, per `CLAUDE.md` self-check 1: it covers references to the constants `AuroraClaimTypes.TenantId` **and `TenantKey`**, the **string literals** `"tid"` and `"tkey"` anywhere in the solution, and every `ClaimsIdentity`/`ClaimsPrincipal` construction site — allow-listed to the mint, the carry-over and the cross-check plus their test assemblies. Its name becomes *"the tenant claims are written in exactly two places"*, which is what the mechanism checks.
+
+### H-7: sign-out did not end the session it signed out of
+
+**Decision.** Sign-out deletes the cookie, calls `UserManager.UpdateSecurityStampAsync` and invalidates the user's `IdentitySnapshot` entry; a password change does the same. The 60-second stamp validation then ends every other HTTP session, and `AccessSubject.FromPrincipal` refuses every guarded command from a live circuit within the same 60 s. The revalidation failure path on a circuit **forces a navigation to the sign-in page** rather than `ForceSignOut`'s stock anonymous-but-connected render, so already-rendered tenant data leaves the screen and circuit memory instead of sitting on a shared warehouse terminal.
+
+### H-8: unauthenticated catalog writes, plus fail-closed on that write, is a fleet-wide sign-in outage
+
+Three individually correct decisions composed badly: every failed sign-in writes to the shared catalog; a failed write fails the sign-in; all rate limiting was deferred.
+
+**Decision — rate limiting is not deferred past sign-in.** `Microsoft.AspNetCore.RateLimiting` (in-box, no new dependency) applies fixed-window limits per source IP and per email hash to `/sign-in` and to invitation redeem, **rejecting before the credential check and before any catalog write**. A rejected request writes at most **one** row per `(source, email-hash, window, event type)`, deduplicated by a unique key with `ON CONFLICT DO NOTHING` — an insert that does nothing, which is compatible with append-only, unlike the counter column the obvious design would have used. `catalog.authentication_event` is **monthly RANGE-partitioned** on `occurred_at` exactly like `audit.audit_event` (ADR-0028 §3), with a 180-day retention window enforced by detaching and dropping whole partitions — because an append-only trigger blocks `DELETE` for the owner too, so retention on this table is a partition operation or it is nothing. *"A sign-in that cannot be recorded does not happen"* stands unchanged: the fix belongs to the rate limiting, not to that rule.
+
+### H-9: circuit reconnect proved the tenant and not the person
+
+**Decision.** Checkpoint 2 compares **`tid`, `sub` and the security stamp** against the tuple pinned at circuit creation; a mismatch on any of the three aborts the circuit. The pinned tuple lives **server-side only, keyed by circuit id, and is never serialised to the client** — otherwise the cross-check would compare a cookie claim against a value the attacker also controls, which is no control at all. Persisted circuit state is keyed to the authenticated subject. A reconnect presenting a valid cookie for a *different user of the same tenant* is refused; that is horizontal escalation inside a tenant, and it passed the design as written.
+
+## A1.3 — Medium and low findings
+
+| # | Decision |
+|---|---|
+| **M-1** | The tenant-existence oracle is closed: an unknown tenant key and a known-but-not-mine tenant key return **the same status (`404`) and the same Problem Details `type`**, byte-identical apart from the correlation id. This **supersedes §4.2's `403`** and, with it, ADR-0007 §3.2's `403` for a routing violation. The distinguishing detail goes to `catalog.authentication_event` and the log, never to the caller |
+| **M-2** | The mechanism for "the session is not renewed" is `ShouldRenew = false` inside `OnValidatePrincipal` (H-4), and the criterion is that the refusal response carries **no `Set-Cookie` header**, asserted by parsing the response |
+| **M-3** | An **empty** catalogue, or an `access` schema behind the skew gate, is **no decision → `503`**; a single absent constant in a populated catalogue stays `Denied` + `Error`. A broken tenant must not be indistinguishable from a misconfigured role |
+| **M-4** | `attempted_email_hash` becomes **HMAC-SHA-256 with a key from the secret store** (ADR-0011). Unsalted SHA-256 over an enumerable address space is reversible, so §7's claim that it does not widen ADR-0007 §9.3's personal-data exception was false. §7 is corrected: it is a **correlation key, not an anonymisation**, and it inherits H-8's retention window and partition-drop path |
+| **M-5** | Pinned, with a test asserting the configured values: `PasswordOptions` ≥ 12 characters and **no composition rules** (the framework default of 6 plus character classes fails ASVS L2); `LockoutOptions` 10 attempts, 15-minute lockout, enabled for new users; invitation TTL 72 hours. A breached-password check is a named follow-up, not an omission |
+| **M-6** | A denial writes **at most one** `audit.audit_event` per `(actor, permission, request type)` per 5-minute window, deduplicated in the tenant cache; the **metric** carries the exact count. Otherwise the least privileged member of a tenant can grow an append-only partitioned table without bound and contend the per-tenant audit lock that every business write needs |
+| **M-7** | Password hashes get a privilege boundary, not just a separate row: `catalog.identity_credential` is readable only by a new **`aurora_identity`** login used by the identity store's own data source; `REVOKE ALL … FROM aurora_app`, probed by connecting as `aurora_app` and asserting `SELECT` fails — the same probe shape as ADR-0028 §2, because B-05 finding M-1 already showed this project shipping an over-broad catalog grant once |
+| **L-1** | `TenantClaimMismatchException` carries tenant ids in **structured properties only**, never in `Message`, so §4.2's "names neither tenant" does not depend on a Problem Details handler never echoing `ex.Message` |
+| **L-2** | The counter and log distinguish "no `tid`" from "`tid` mismatch" (never the response body), so H-6's fleet-wide claim-drop and a genuine replay attack are not the same line on a dashboard |
+| **L-3** | The invitation token is never placed in a URL: redemption POSTs the token into the redeem form |
+| **L-4** | The antiforgery token is regenerated at sign-in alongside the auth cookie |
+
+## A1.4 — Corrections to §7's dependency claim, and follow-ups this amendment does not answer
+
+**§7's closing paragraph is wrong and is corrected here:** the two rows that write tenant-side events depend on **B-16.1** — the audit store and `IAuditWriter` — **not B-16.2**, the `[Auditable]` interceptor. Both write an explicit event; the interceptor is irrelevant to them, and naming it both delayed the rows and invited someone to route a permission denial through an entity-change interceptor.
+
+Also corrected: a permission denial has **no caller transaction**, because the pipeline refuses before the handler runs and no module `DbContext` exists. ADR-0028 §4 requires one. The enforcement pipeline therefore opens its **own** short transaction on `AccessDbContext` (via `ITenantDbContextFactory` with the current scope) and writes the denial event inside it. If that write fails, the denial still stands — the caller is never granted because auditing failed — and the failure is logged at `Error` and counted.
+
+**Named, not answered** (each needs its own ADR or an owner, and none may be decided inside a bootstrap row): the **operator capability model** — who may provision, who may read an invitation handle, what an operator may do to a tenant user — which ADR-0010 rule 8 excludes from the tenant permission model and SPEC-001 BR-1 assumes exists; **who may write `catalog.tenant_host` and what verifies a custom domain**, a tenant-influenced row in the shared database that steers routing; **what the health endpoints expose**, given ADR-0007 §9.4 has them enumerate this instance's cached tenants; **the offboarding `TenantAccessReason`** that may open `Exporting`/`PendingDeletion` scopes; **a scheduler for the retention and partition-management jobs**, since `Aurora.Platform.Jobs` is in no bootstrap row and ADR-0028 §3's partition pre-creation job has the same latent gap; **breached-password checking**; and the **tenant-switch endpoint**, already deferred in §9 and unchanged.

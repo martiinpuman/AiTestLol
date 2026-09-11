@@ -1,6 +1,6 @@
 # ADR-0009 — Identity and authentication
 
-- **Status:** Accepted (2026-09-11) — rule 4 superseded **in part** by ADR-0029; the mechanics of rules 1-3 (credential storage, cookie shape, what revalidation checks) are specified by ADR-0029 and the decisions here are unchanged
+- **Status:** Accepted (2026-09-11) — rule 4 superseded **in part** by ADR-0029; the mechanics of rules 1-3 (credential storage, cookie shape, what revalidation checks) are specified by ADR-0029 and the decisions here are unchanged. Rule 3's 30-minute circuit revalidation stands; ADR-0029 Amendment 1 adds a 60-second cookie-path security-stamp validation beside it and states exactly what each bounds
 - **Deciders:** architect
 - **Supersedes:** —
 - **Superseded by:** **in part** by ADR-0029 — rule 4's *"cross-checked ... on every request"*, which leaves a live Blazor Server circuit unchecked, is replaced by the three named checkpoints in ADR-0029 §4. Every other decision in this ADR stands.

@@ -95,6 +95,8 @@ One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assembl
 | T6 | `TenantScope` appears in no serializable payload: not in an integration event, not in a job payload, not in a cache entry (§10.4) |
 | T7 | Every module integration-test assembly contains exactly one subclass of `TenantIsolationContract<>` |
 | T8 | No `IPlatformJob` implementation references a module's `.Domain`, `.Application` or `.Infrastructure` (§10.1) |
+| T9 | A `DbContext` mapping any `ICompanyScoped` entity type has a `CompanyScope` constructor parameter, and is never obtained through the single-argument `CreateAsync(TenantScope, ct)` overload (ADR-0029 A1.2 H-2). The company boundary is the one horizontal-escalation boundary inside a tenant and gets the same structural treatment as the tenant boundary |
+| T10 | Every `HybridCache` key is produced by `TenantCacheKey.For` or `CatalogCacheKey.For` and by nothing else; each `CatalogCacheKey` kind is a member of the committed kinds enum (ADR-0012 rules 1-2 as amended by ADR-0029 A1.1). A cross-tenant cache entry is a reviewed edit, not a string literal |
 
 ### 5.4 Financial-correctness rules
 
@@ -125,7 +127,9 @@ One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assembl
 | S4 | No interpolated or concatenated string reaches `FromSqlRaw`/`ExecuteSqlRaw` (Roslyn rule); parameterized APIs only |
 | S5 | No `[PersonalData]`-annotated property on a type that does not implement `IPseudonymisable`, unless listed in the reviewed exception file (ADR-0007 §11.5) |
 | S6 | The set of claim types minted at sign-in equals the committed approved-claims file, and no claim type in it is a permission or a role — permissions are read at evaluation time, never carried in a cookie or a token (ADR-0029 §6). Reports the number of claim types asserted |
-| S7 | `AuroraClaimTypes.TenantId` (the `tid` claim) is referenced only by the sign-in mint, the tenant-resolution cross-check and their test assemblies — a named allow-list in the shape of ADR-0027 §1's `TenantDatabaseHandle` rule (ADR-0029 §4) |
+| S7 | **The tenant claims are written in exactly two places.** The rule inspects the constants `AuroraClaimTypes.TenantId` **and `TenantKey`**, the string literals `"tid"` and `"tkey"` anywhere in the solution, and every `ClaimsIdentity`/`ClaimsPrincipal` construction site; the allow-list is the sign-in mint, the `OnRefreshingPrincipal` carry-over and the cross-check, plus their test assemblies (ADR-0029 §4, A1.2 H-6). Named for what it inspects: a rule over one constant's references does not see `new Claim("tid", …)` |
+| S8 | Every endpoint is either tenant-resolved or named in the committed tenant-neutral allow-list with a justification (ADR-0029 A1.2 H-4). Reports the count of each; no `TenantScope` may be opened on a tenant-neutral endpoint |
+| S9 | Every declared `Permission` constant appears in **exactly one** of `administrator-permissions.approved.txt` and `not-administrator.approved.txt`, and no constant uses the reserved `operator.` or `platform.` prefix (ADR-0029 A1.2 H-3). Reports both counts, so a permission can be neither silently granted fleet-wide nor silently unreachable |
 | Q1 | No `ToListAsync`/`ToArrayAsync` on an `IQueryable` without a preceding `Take` (Roslyn heuristic; suppressions require a justification string and are reviewed) |
 | Q2 | Every module `DbContext` sets `QueryTrackingBehavior.NoTrackingWithIdentityResolution` as its default (ADR-0003 rule 4) |
 
