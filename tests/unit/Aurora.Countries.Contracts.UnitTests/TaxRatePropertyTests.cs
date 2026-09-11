@@ -37,10 +37,17 @@ namespace Aurora.Countries.Contracts.UnitTests;
 /// the quotient here would only prove the test and the code make the same mistake.
 /// </para>
 /// <para>
-/// These were watched to fail. Truncating instead of rounding, rounding at the wrong scale, and
-/// reverting to <c>amount * rate.AsFraction</c> each break the nearest-multiple property within the
-/// first hundred cases; the whole-minor-units property survives truncation, which is exactly why
-/// both are here.
+/// <b>What these were watched to fail on, and what they were not.</b> Truncating instead of rounding
+/// falsifies the nearest-multiple property on the first generated case. Rounding at the wrong scale
+/// falsifies both. But writing <see cref="TaxRate.ApplyTo"/> the obvious way — multiplying two
+/// decimals — passes every property here, because randomly drawn amounts almost never land where
+/// <c>decimal</c>'s twenty-eight digits run out <i>and</i> the shortfall reaches the cent. That case
+/// is pinned as an example instead, in
+/// <c>TaxRateTests.A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence</c>, and
+/// it is the only test in this suite that separates the two implementations. Saying so here rather
+/// than claiming these properties cover it is the point: a property test that cannot distinguish the
+/// right implementation from the wrong one is not covering that difference, however universal its
+/// name sounds.
 /// </para>
 /// </remarks>
 public sealed class TaxRatePropertyTests

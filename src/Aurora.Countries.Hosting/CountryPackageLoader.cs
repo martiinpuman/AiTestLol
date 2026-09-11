@@ -21,8 +21,6 @@ namespace Aurora.Countries.Hosting;
 /// </remarks>
 public sealed class CountryPackageLoader
 {
-    private readonly CountryPackageHostOptions _options;
-    private readonly PackageMetadataReader _metadataReader = new();
     private readonly PackageSignatureVerifier _verifier;
     private readonly string _coreContractVersion;
 
@@ -46,7 +44,6 @@ public sealed class CountryPackageLoader
         ArgumentNullException.ThrowIfNull(options);
         ArgumentException.ThrowIfNullOrWhiteSpace(coreContractVersion);
 
-        _options = options;
         _verifier = new PackageSignatureVerifier(options);
         _coreContractVersion = coreContractVersion;
     }
@@ -61,7 +58,7 @@ public sealed class CountryPackageLoader
     /// </remarks>
     public Result<InspectedPackage> Inspect(string packageDirectory)
     {
-        Result<PackageMetadata> metadata = _metadataReader.Read(packageDirectory);
+        Result<PackageMetadata> metadata = PackageMetadataReader.Read(packageDirectory);
         if (metadata.IsFailure)
         {
             return metadata.Error;
@@ -120,7 +117,7 @@ public sealed class CountryPackageLoader
     // Kept out of Load so that no local of Load can hold the context alive, which is what would make
     // the unload test pass for the wrong reason - or fail for one.
     [MethodImpl(MethodImplOptions.NoInlining)]
-    private Result<LoadedCountryPackage> Activate(InspectedPackage inspected)
+    private static Result<LoadedCountryPackage> Activate(InspectedPackage inspected)
     {
         CountryPackageManifest manifest = inspected.Manifest;
         string contextName = $"{manifest.Id}@{manifest.Version}";
@@ -161,9 +158,32 @@ public sealed class CountryPackageLoader
                                             or ReflectionTypeLoadException)
         {
             context.Unload();
-            return HostingErrors.LoadFailed(
-                $"Package '{manifest.Id}' {manifest.Version} did not load: {failure.Message}");
+
+            // The runtime wraps whatever the load context's Load override threw in a
+            // FileLoadException, so the refusal that actually matters is one or two levels down.
+            // Reporting the wrapper would hide the only sentence that says what went wrong.
+            PackageReferenceRefusedException? refused = Refusal(failure);
+
+            return refused is null
+                ? HostingErrors.LoadFailed(
+                    $"Package '{manifest.Id}' {manifest.Version} did not load: {failure.Message}")
+                : HostingErrors.ForbiddenReference(
+                    $"Package '{manifest.Id}' {manifest.Version} reached for an assembly it may not " +
+                    $"reference while loading. {refused.Message}");
         }
+    }
+
+    private static PackageReferenceRefusedException? Refusal(Exception? failure)
+    {
+        for (Exception? candidate = failure; candidate is not null; candidate = candidate.InnerException)
+        {
+            if (candidate is PackageReferenceRefusedException refused)
+            {
+                return refused;
+            }
+        }
+
+        return null;
     }
 
     private static Result<ICountryPackage> Construct(Assembly assembly, CountryPackageManifest manifest)

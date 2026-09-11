@@ -89,17 +89,16 @@ public sealed class PackageSignatureVerifier
         byte[] content = PackageSignature.ContentToSign(metadata.AssemblyPath, metadata.ManifestBytes);
         PackageTrust established = PackageTrust.None;
 
+        // At most one key can match: a signature is produced by one private key, and a thumbprint
+        // may appear only once in the trust store, so there is no "highest level wins" rule to
+        // write - and writing one would be a branch no configuration could ever reach.
         foreach (TrustedPackageKey trusted in _options.TrustedKeys)
         {
             using ECDsa key = trusted.OpenVerifier();
-            if (!key.VerifyData(content, signature, PackageSignature.HashAlgorithm))
-            {
-                continue;
-            }
-
-            if (trusted.Level > established.Level)
+            if (key.VerifyData(content, signature, PackageSignature.HashAlgorithm))
             {
                 established = new PackageTrust(trusted.Level, trusted.Thumbprint);
+                break;
             }
         }
 

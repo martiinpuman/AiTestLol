@@ -25,13 +25,13 @@ namespace Aurora.Countries.Hosting;
 /// carrying the manifest is what makes an assembly the package.
 /// </para>
 /// </remarks>
-public sealed class PackageMetadataReader
+public static class PackageMetadataReader
 {
     /// <summary>
     /// Reads the manifest and the referenced assemblies of the package in
     /// <paramref name="directory"/>.
     /// </summary>
-    public Result<PackageMetadata> Read(string directory)
+    public static Result<PackageMetadata> Read(string directory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
 

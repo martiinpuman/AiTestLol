@@ -158,6 +158,41 @@ public sealed class TaxRateTests
     }
 
     /// <summary>
+    /// The case that separates the integer implementation from the obvious one, pinned as an example
+    /// because the property tests do not reach it by chance.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 0.0199999999999999999999999999 NZD at 25 percent is exactly 0.004999999999999999999999999975,
+    /// which rounds to nothing. Written the obvious way — <c>amount * (percent / 100m)</c> — the
+    /// product needs thirty decimal places and <c>decimal</c> has twenty-eight, so it rounds
+    /// <b>silently</b> to 0.0050000000000000000000000000 and the cent that was not there rounds up
+    /// into existence.
+    /// </para>
+    /// <para>
+    /// One cent, on one line, from an amount nobody would call unusual — an allocation intermediate,
+    /// a converted price. <see cref="TaxRate.ApplyTo"/> never multiplies two decimals, so the
+    /// twenty-eight-digit limit is not on its path at all. This is the same failure
+    /// <c>Money.Allocate</c> was rewritten in integers to close (ADR-0021 §6).
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public void A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence()
+    {
+        Money amount = ContractTestValues.Nz(0.0199999999999999999999999999m);
+        TaxRate rate = ContractTestValues.Rate(25m);
+
+        decimal writtenTheObviousWay = amount.Amount * (rate.AsPercentage.AsPercent / 100m);
+        writtenTheObviousWay.ShouldBe(
+            0.0050000000000000000000000000m,
+            "if this stops being true, decimal has changed and the case below no longer separates " +
+            "the two implementations");
+
+        rate.ApplyTo(amount, ContractTestValues.TwoPlacesAwayFromZero)
+            .ShouldBe(ContractTestValues.Nz(0.00m));
+    }
+
+    /// <summary>
     /// An amount carrying more decimal places than its currency has minor units is perfectly
     /// ordinary — a unit price, a line net before rounding — and the tax on it is still payable.
     /// </summary>
