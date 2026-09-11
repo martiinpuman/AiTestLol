@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -14,11 +15,24 @@ namespace Aurora.SharedKernel.UnitTests;
 /// parts".
 /// </summary>
 /// <remarks>
+/// <para>
 /// The example-based tests next door pin the exact split a known input produces. These pin the law
-/// that no input may break, over currencies with zero, two and three minor units, over positive,
-/// negative and zero totals, and over weight sets that include zeros. Example-based tests
-/// systematically miss the boundaries of money arithmetic (`testing-strategy.md` §2), which is why
-/// the allocation invariant is stated universally here rather than sampled.
+/// that no input may break. Example-based tests systematically miss the boundaries of money
+/// arithmetic (<c>testing-strategy.md</c> §2), which is why the allocation invariant is stated
+/// universally here rather than sampled.
+/// </para>
+/// <para>
+/// <b>Which dimensions are arbitrary, and which are a hand-written list.</b> Arbitrary: the total
+/// (any whole number of minor units, positive, negative or zero), the part count (one to twelve),
+/// and — since review B-03 — the weights, which are drawn from ratios of the
+/// <c>lineAmount / documentTotal</c> shape a caller actually writes, from magnitudes spanning
+/// 10⁻²⁰ to 10⁸ within one split, and from round numbers, with zero weights throughout.
+/// Hand-written: the four currencies, chosen for zero, two and three minor units so that no
+/// property can pass by assuming cents. The weights used to be a hand-written list too — ten
+/// literals of at most two decimal places — and that is precisely why these properties reported
+/// green while <c>Allocate</c> was losing cents: every such weight makes the arithmetic exact, so
+/// the generator never visited the region where the law breaks.
+/// </para>
 /// </remarks>
 public sealed class MoneyAllocationPropertyTests
 {
@@ -78,6 +92,31 @@ public sealed class MoneyAllocationPropertyTests
             .QuickCheckThrowOnFailure();
     }
 
+    /// <summary>
+    /// One part takes the whole amount, whatever its weight says, because one part is the whole of
+    /// whatever is being divided.
+    /// </summary>
+    /// <remarks>
+    /// The narrowest property here and the one that would have caught review B-03's blocker on its
+    /// own: there is no rounding left for a leftover rule to hide, so any inexactness in how a
+    /// weight meets the amount shows up directly in the single part that comes back.
+    /// </remarks>
+    [Fact]
+    public void A_single_part_takes_the_whole_amount_whatever_its_weight_says()
+    {
+        Prop.ForAll(
+                SingleWeightSplits().ToArbitrary(),
+                split =>
+                {
+                    IReadOnlyList<Money> parts = split.Total.Allocate(split.Weights);
+
+                    parts.Count.ShouldBe(1);
+                    parts[0].ShouldBe(split.Total);
+                    parts[0].IsInWholeMinorUnits.ShouldBeTrue();
+                })
+            .QuickCheckThrowOnFailure();
+    }
+
     [Fact]
     public void The_same_split_asked_for_twice_gives_the_same_answer_twice()
     {
@@ -113,11 +152,63 @@ public sealed class MoneyAllocationPropertyTests
                 .Select(minorUnits => FromMinorUnits(minorUnits, currency)));
 
     /// <summary>
-    /// Weights that include zero about one time in five, because a zero-weighted part is the case
-    /// ADR-0021 §6 names and the one an implementation is most likely to get wrong.
+    /// Weights of every shape a caller can hand in, zero included.
     /// </summary>
+    /// <remarks>
+    /// A weight is a proportion, and nothing here may assume how a caller arrived at one. The zero
+    /// weight stays at about one draw in six, because a zero-weighted part is the case ADR-0021 §6
+    /// names and the one an implementation is most likely to get wrong.
+    /// </remarks>
     private static Gen<decimal> Weights() =>
-        Gen.Elements(0m, 0m, 0.25m, 0.5m, 1m, 2m, 3m, 5m, 7m, 12.5m);
+        Gen.Frequency(
+            (2, Gen.Constant(0m)),
+            (3, RoundWeights()),
+            (4, RatioWeights()),
+            (3, WildlyScaledWeights()));
+
+    /// <summary>
+    /// Weights someone typed: whole numbers and halves, with at most two decimal places. Every
+    /// product they take part in is exact, which is exactly why a generator made only of these
+    /// cannot fail.
+    /// </summary>
+    private static Gen<decimal> RoundWeights() =>
+        Gen.Elements(0.25m, 0.5m, 1m, 2m, 3m, 5m, 7m, 12.5m);
+
+    /// <summary>
+    /// Weights the way a caller actually produces them: one line's amount over the document total.
+    /// </summary>
+    /// <remarks>
+    /// A <c>decimal</c> division carries 28 decimal places. Multiplying a five- or six-figure
+    /// amount by one of these needs more significant digits than <c>decimal</c> has, so it rounds
+    /// without saying so — the failure review B-03 found. This is the region the old generator
+    /// never visited.
+    /// </remarks>
+    private static Gen<decimal> RatioWeights() =>
+        Gen.Choose(1, 10_000_000).SelectMany(lineAmount =>
+            Gen.Choose(1, 10_000_000).Select(documentTotal =>
+                decimal.Divide(lineAmount, documentTotal)));
+
+    /// <summary>
+    /// Weights whose magnitudes are nothing like one another — 10⁻²⁰ beside 10⁸ in the same split —
+    /// and whose scales run most of the way to what <c>decimal</c> can hold.
+    /// </summary>
+    private static Gen<decimal> WildlyScaledWeights() =>
+        Gen.Choose(1, 999_999).SelectMany(digits =>
+            Gen.Choose(-20, 8).Select(exponent => AtPowerOfTen(digits, exponent)));
+
+    /// <summary>Weights that can carry a split on their own, for the single-part property.</summary>
+    private static Gen<decimal> PositiveWeights() => Weights().Where(weight => weight > 0m);
+
+    private static decimal AtPowerOfTen(int digits, int exponent)
+    {
+        decimal weight = digits;
+        for (int step = 0; step < Math.Abs(exponent); step++)
+        {
+            weight = exponent > 0 ? weight * 10m : weight / 10m;
+        }
+
+        return weight;
+    }
 
     private static Gen<EvenSplit> EvenSplits() =>
         SplittableAmounts().SelectMany(total =>
@@ -127,8 +218,12 @@ public sealed class MoneyAllocationPropertyTests
         SplittableAmounts().SelectMany(total =>
             Gen.Choose(1, MaxParts).SelectMany(count =>
                 Gen.ArrayOf(Weights(), count)
-                    .Where(weights => weights.Sum() > 0m)
+                    .Where(weights => weights.Any(weight => weight > 0m))
                     .Select(weights => new WeightedSplit(total, weights))));
+
+    private static Gen<WeightedSplit> SingleWeightSplits() =>
+        SplittableAmounts().SelectMany(total =>
+            PositiveWeights().Select(weight => new WeightedSplit(total, [weight])));
 
     private static Money FromMinorUnits(int minorUnits, Currency currency)
     {
