@@ -40,9 +40,14 @@ public sealed class CatalogHoldsNoTenantBusinessDataTests
     public async Task The_migrated_catalog_schema_holds_no_tenant_business_data()
     {
         await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
+        IReadOnlyCollection<CatalogColumn> columns = await ColumnsAsync(connection, null);
 
-        IReadOnlyList<string> violations = CatalogSchemaGuard.Violations(await ColumnsAsync(connection, null), Allowlist);
+        IReadOnlyList<string> violations = CatalogSchemaGuard.Violations(columns, Allowlist);
 
+        // Say what was inspected, not only that it was clean: a query typo that returned no rows
+        // would already fail on the guard's stale-allowlist rule, and this number makes the pass
+        // legible in the test output (CLAUDE.md self-check 2).
+        columns.Count.ShouldBe(Allowlist.Sum(table => table.Value.Count));
         violations.ShouldBeEmpty(string.Join(Environment.NewLine, violations));
     }
 

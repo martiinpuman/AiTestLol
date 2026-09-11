@@ -37,10 +37,21 @@ public sealed class CatalogContextAccessibilityTests
     private static readonly IReadOnlySet<string> PublishedTypes =
         new HashSet<string>(StringComparer.Ordinal) { "Aurora.Platform.Tenancy.CatalogServiceCollectionExtensions" };
 
+    /// <summary>
+    /// The one namespace exempt from the rule below, and why. <c>dotnet ef migrations add</c>
+    /// scaffolds <c>public partial class</c>, and EF Core finds migrations by attribute rather than
+    /// by accessibility, so hand-editing them to internal would be undone by the next scaffold. A
+    /// migration is inert DDL whose signature names no registry type, so exporting one gives a
+    /// caller nothing to query with — unlike <c>CatalogDbContext</c>, which is the point of the rule.
+    /// </summary>
+    private const string ScaffoldedMigrations = "Aurora.Platform.Tenancy.Migrations.";
+
     [Fact]
     public void The_tenancy_assembly_publishes_only_its_DI_extension()
     {
-        IEnumerable<string> exported = typeof(CatalogDbContext).Assembly.GetExportedTypes().Select(type => type.FullName!);
+        IEnumerable<string> exported = typeof(CatalogDbContext).Assembly.GetExportedTypes()
+            .Select(type => type.FullName!)
+            .Where(name => !name.StartsWith(ScaffoldedMigrations, StringComparison.Ordinal));
 
         exported.OrderBy(name => name, StringComparer.Ordinal)
             .ShouldBe(
@@ -60,7 +71,7 @@ public sealed class CatalogContextAccessibilityTests
         ConstructorInfo[] constructors = typeof(CatalogDbContext).GetConstructors(
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-        typeof(CatalogDbContext).ShouldBeAssignableTo<DbContext>();
+        typeof(DbContext).IsAssignableFrom(typeof(CatalogDbContext)).ShouldBeTrue();
         constructors.ShouldHaveSingleItem()
             .GetParameters()
             .Select(parameter => parameter.ParameterType)
