@@ -9,10 +9,27 @@ Companion: `solution-layout.md` §5.2 stage 4 (`scripts/check-dependencies.sh`),
 
 `CLAUDE.md`: **a new third-party dependency needs a permissive licence (MIT, Apache-2.0, BSD) and an entry in this file.** Enforced, not requested:
 
-1. `Directory.Packages.props` holds every version; `packages.lock.json` is committed; `dotnet restore --locked-mode` runs in `verify.sh`.
-2. `verify.sh` stage 4 lists all packages **including transitive** and fails if any is absent from this file or carries a non-permissive licence.
-3. Stage 5 fails on any High or Critical advisory.
-4. **Licences are re-verified at every milestone health check.** 2025–2026 proved that a licence is not a property you check once: AutoMapper, MediatR, MassTransit and FluentAssertions all moved to commercial terms during that window.
+1. `Directory.Packages.props` holds every version; `packages.lock.json` is committed; `dotnet restore --locked-mode` runs in `verify.sh` stage 1. Nothing below is trustworthy without this: the gate reads the restored graph, so the graph has to be reproducible.
+2. **`verify.sh` stage 4 governs the package graph in two tiers** (ADR-0026). The two tiers exist because a package we *chose* and a package that merely *arrived* carry different amounts of information:
+   - **Direct** — any package with a `PackageReference` in a project. It must appear in §2 or §3 of this file, with a purpose, an owning ADR and a verification date. A direct package that is not listed **fails the gate**.
+   - **Transitive** — arrives only because a direct package depends on it. It must appear in **`dependency-closure.md`**, an exact, generated, licence-verified allowlist (§7). A transitive package that is not listed, or a listed package that is no longer in the graph, **fails the gate**.
+3. **The licence check applies to both tiers, and reads the resolved package's own `.nuspec`** — never the version string this document remembers. That is what catches a licence changing under a package we already ship, which is the failure this gate mainly exists for.
+4. **Stage 4 fails when any of these is true** (ADR-0026):
+   1. a direct package is absent from §2/§3;
+   2. a transitive package is absent from `dependency-closure.md`;
+   3. `dependency-closure.md` lists a package that is no longer in the graph — the allowlist is exact, not a superset, because a stale row silently pre-approves;
+   4. a resolved licence differs from the licence recorded for that package in either file;
+   5. a resolved licence is not on the accepted SPDX list below;
+   6. a package id from the rejection list in §5 appears anywhere in the graph, at any version, direct or transitive.
+
+   Stage 4 also fails if `dependency-closure.md` is missing or unparseable, and it **never writes to either file**: regeneration is a separate explicit command (§7.3). A gate must not silently fix what it is measuring.
+5. Stage 5 fails on any High or Critical advisory.
+6. **Licences are re-verified at every milestone health check.** 2025–2026 proved that a licence is not a property you check once: AutoMapper, MediatR, MassTransit and FluentAssertions all moved to commercial terms during that window.
+
+> **Why two lists, and not one** (correction of the v1 rule, B-01 review finding S-1, 2026-09-11).
+> The v1 rule required *every* package including transitive to be listed here. Measured against the real graph, B-01's nine lock files hold **66 distinct packages: 7 referenced directly, 59 present only transitively**, of which **57 were absent from this file**. All 57 arrive through approved direct packages (Testcontainers, bUnit, Shouldly, the test SDK) and are permissively licensed. The gate would therefore have been **red on its first run against a correct codebase**, and the only way to green it would have been to hand-write 57 rows describing decisions nobody made.
+> That is not merely inconvenient. A gate that fails for a reason nobody believes in gets weakened, filtered or skipped — and then it is no longer there for the case that costs money: a dependency quietly moving to a commercial licence. Six of the nine packages in §5 were rejected on exactly that ground.
+> Narrowing the rule to direct references only was the obvious fix and was rejected: it would let a **new** transitive package enter silently, and an unnoticed new dependency is how supply-chain risk usually starts. The two-tier form keeps the human attention on the packages we actually chose, while every addition, removal or licence change anywhere in the closure still shows up as a reviewable diff in the pull request that caused it. Options and reasoning: **ADR-0026**.
 
 **Accepted SPDX identifiers:** `MIT`, `Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `PostgreSQL` (a permissive BSD-style licence; spelled out here because it is not one of the three names in `CLAUDE.md` and would otherwise be re-flagged at every review).
 
