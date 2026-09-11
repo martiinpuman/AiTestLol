@@ -159,3 +159,37 @@ on the rejection round, which is what the self-check list and tiering target.
 
 **Wasted effort** — the three killed Fable spawns. Nothing else; every interrupted task resumed from
 committed work.
+
+## Iteration 5 — 2026-09-11
+
+**Reviews returned, all four rejecting.** B-04 REJECT (2 mechanical majors, but the reviewer planted
+eleven real violations in production code and watched every rule go red — the rule set is sound).
+B-05 security re-review CHANGES_REQUESTED with 2 High: the privilege oracle that replaced
+`ALTER DEFAULT PRIVILEGES` is blind to column-level grants and to PG 17's `MAINTAIN`, and the
+request-path role owns the tenant routing tables — the reviewer repointed another tenant's database
+and cluster host as `aurora_app`, with no DDL and no superuser. B-12 CHANGES_REQUESTED twice: four
+majors from the peer review and one High from security, the latter a case-insensitivity bypass of the
+`Aurora.*` assembly rule. Three rework agents dispatched; every one returns to a second reviewer.
+
+**Automation built** (`docs/architecture/automation.md`). Three levers against the cost of a review
+round trip, which on the tasks measured so far has been roughly half of a task's wall clock:
+
+- Two hooks. A `PreToolUse(Bash)` guard blocks force-push, a push to any branch but the integration or
+  a `task/*` branch, deleting an ADR, staging a `.env`, and `dotnet` without `dev-env.sh` sourced in
+  the same call. A `PostToolUse(Write|Edit)` guard reports a country compared to a string literal in
+  core, an ambient clock read, a `float`/`double` in `src/`, a `TODO` with no backlog id, and a
+  credential-shaped literal. `hooks-selftest.sh` asserts every rule from both sides and prints its
+  case count: 35 cases, 17 blocking, 18 allowing.
+- `scripts/dev-test.sh`: the executed counts and the failures, nothing else. 89% less output than raw
+  `dotnet test` on a passing run. Zero executed tests is a failure, not a pass.
+- Three skills (`aurora-status`, `dispatch`, `integrate`) and `senior-developer` gaining
+  `memory: project`, `maxTurns: 400` and `disallowedTools: Agent`.
+
+**What building it taught.** Writing the hook selftest caught four defects in the hooks, three of them
+rules that never fired at all because the path derivation was wrong — the guards would have sat there
+looking like enforcement. Then *using* the guard caught two more that the selftest had not: a push
+whose output went through a pipe was refused, and a commit message describing a blocked command was
+analysed as if it were one. Both are now cases in the selftest. The allow side of a guard is not a
+formality; it is half of what the guard is.
+
+**Next:** integrate the three reworks as they return, each through a second reviewer. Then B-06.

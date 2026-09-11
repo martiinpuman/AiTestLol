@@ -2,7 +2,7 @@
 
 **Phase:** build · **Milestone:** M1 walking skeleton (B-01 … B-15)
 **Integration branch:** `claude/multi-tenant-saas-erp-pv2nap` · draft PR #1 tracks it
-**Last iteration:** 4 (2026-09-11)
+**Last iteration:** 5 (2026-09-11)
 
 ## Product in one line
 A multi-tenant SaaS ERP for SMBs with a country-agnostic core, where every jurisdiction-specific rule ships as an installable **Country Package**.
@@ -30,13 +30,22 @@ xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework maj
 - Research (9 files), design system with a computed WCAG audit and HTML prototypes, roadmap,
   glossary, SPEC-001/002, 29-task backlog.
 
-## In flight (four developers)
-| Task | What | Model | Notes |
-|---|---|---|---|
-| **B-05** | Catalog database, `CatalogDbContext`, the tenant registry | opus | Resuming 24 recovered commits. 3 build errors to close: `CatalogDbContext` is `internal` and the test fixture exposes it publicly — a deliberate decision, not a quick fix |
-| **B-04** | Solution-wide architecture fitness rules | opus | Every rule must be proven to fail; some are inert until B-06 brings `TenantScope` |
-| **B-12** | Country Package contracts + hosting | opus | The extension model's first real test |
-| **B-02-FU** | Quality-gate follow-ups (m-6, n-7, n-8, n-6) | fable | Two were flagged "before B-11 starts" |
+## In flight (three developers reworking, all Full tier)
+- **B-04 architecture fitness tests** — reviewed, **REJECT**, 2 mechanical majors (`docs/reviews/B-04.md`).
+  The reviewer planted eleven real violations in `src/` and watched every rule go red, so no rule in the
+  set is vacuous. Rework in flight: a `.csproj` comment describing a directory that does not exist, and
+  `Each_inert_rule_still_fires_against_its_fixture`, which fires no rule.
+- **B-05 catalog schema and privileges** — security re-review **CHANGES_REQUESTED**, 2 High. The
+  privilege oracle is bypassable by a column-level grant and by PG 17's `MAINTAIN`, and `aurora_app`
+  holds all four privileges on the tenant routing tables — the reviewer repointed another tenant's
+  database and cluster host as that role. Rework in flight.
+- **B-12 Country Package contracts** — peer review **CHANGES_REQUESTED** (4 majors) and security review
+  **CHANGES_REQUESTED** (1 High). The tax property generator cannot reach the failure region by
+  construction; `coreContractRange` may be unbounded; package structures may be cyclic; a README
+  enforcement claim is false; and the `Aurora.*` assembly rule is bypassable by name casing because the
+  loader binds case-insensitively while the check is `Ordinal`. One rework agent holds all of it.
+
+Each rework returns to a **second reviewer**, not to orchestrator verification — Full tier.
 
 ## Known risks
 1. **Usage limits kill agents mid-task, repeatedly** (five times so far). Mitigation works: developers
