@@ -225,7 +225,7 @@ public sealed class ReportingAndIdentifierTests
             TaxCategory.Standard,
             default,
             TaxBasis.LineNet,
-            ContractTestValues.TwoPlacesAwayFromZero,
+            ContractTestValues.AwayFromZero,
             Year(2026),
             ContractTestValues.Version()));
 
@@ -234,7 +234,7 @@ public sealed class ReportingAndIdentifierTests
             TaxCategory.Standard,
             ContractTestValues.Rate(15m),
             TaxBasis.LineNet,
-            default,
+            (MidpointRounding)99,
             Year(2026),
             ContractTestValues.Version()));
 
@@ -243,7 +243,7 @@ public sealed class ReportingAndIdentifierTests
             TaxCategory.Standard,
             ContractTestValues.Rate(15m),
             TaxBasis.LineNet,
-            ContractTestValues.TwoPlacesAwayFromZero,
+            ContractTestValues.AwayFromZero,
             default,
             ContractTestValues.Version()));
     }
@@ -260,7 +260,7 @@ public sealed class ReportingAndIdentifierTests
             TaxCategory.Standard,
             ContractTestValues.Rate(15m),
             TaxBasis.LineNet,
-            ContractTestValues.TwoPlacesAwayFromZero,
+            ContractTestValues.AwayFromZero,
             Year(2026),
             ContractTestValues.Version());
 

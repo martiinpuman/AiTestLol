@@ -76,7 +76,7 @@ public sealed class TaxRateTests
         Should.Throw<InvalidOperationException>(() => unassigned.AsPercentage);
         Should.Throw<InvalidOperationException>(() => unassigned.IsZero);
         Should.Throw<InvalidOperationException>(() =>
-            unassigned.ApplyTo(ContractTestValues.Nz(100m), ContractTestValues.TwoPlacesAwayFromZero));
+            unassigned.ApplyTo(ContractTestValues.Nz(100m), ContractTestValues.AwayFromZero));
 
         TaxRate.Zero.IsSpecified.ShouldBeTrue();
         TaxRate.Zero.IsZero.ShouldBeTrue();
@@ -96,7 +96,7 @@ public sealed class TaxRateTests
         string expected)
     {
         Money tax = ContractTestValues.Rate(Dec(percent))
-            .ApplyTo(ContractTestValues.Nz(Dec(amount)), ContractTestValues.TwoPlacesAwayFromZero);
+            .ApplyTo(ContractTestValues.Nz(Dec(amount)), ContractTestValues.AwayFromZero);
 
         tax.ShouldBe(ContractTestValues.Nz(Dec(expected)));
         tax.IsInWholeMinorUnits.ShouldBeTrue();
@@ -112,14 +112,12 @@ public sealed class TaxRateTests
         Money amount = ContractTestValues.Nz(0.10m);
         TaxRate rate = ContractTestValues.Rate(15m);
 
-        rate.ApplyTo(amount, RoundingPolicy.Of(2, MidpointRounding.AwayFromZero))
-            .ShouldBe(ContractTestValues.Nz(0.02m));
-        rate.ApplyTo(amount, RoundingPolicy.Of(2, MidpointRounding.ToEven))
-            .ShouldBe(ContractTestValues.Nz(0.02m));
-        rate.ApplyTo(amount, RoundingPolicy.Of(2, MidpointRounding.ToZero))
-            .ShouldBe(ContractTestValues.Nz(0.01m));
+        rate.ApplyTo(amount, MidpointRounding.AwayFromZero).ShouldBe(ContractTestValues.Nz(0.02m));
+        rate.ApplyTo(amount, MidpointRounding.ToEven).ShouldBe(ContractTestValues.Nz(0.02m));
+        rate.ApplyTo(amount, MidpointRounding.ToZero).ShouldBe(ContractTestValues.Nz(0.01m));
 
-        Should.Throw<InvalidOperationException>(() => rate.ApplyTo(amount, default));
+        Should.Throw<ArgumentOutOfRangeException>(
+            () => rate.ApplyTo(amount, (MidpointRounding)99));
     }
 
     /// <summary>
@@ -133,9 +131,9 @@ public sealed class TaxRateTests
         Money dinar = new(10m, ContractTestValues.Bhd);
 
         Money yenTax = ContractTestValues.Rate(10m)
-            .ApplyTo(yen, RoundingPolicy.Of(0, MidpointRounding.AwayFromZero));
+            .ApplyTo(yen, MidpointRounding.AwayFromZero);
         Money dinarTax = ContractTestValues.Rate(10m)
-            .ApplyTo(dinar, RoundingPolicy.Of(3, MidpointRounding.AwayFromZero));
+            .ApplyTo(dinar, MidpointRounding.AwayFromZero);
 
         yenTax.ShouldBe(new Money(100m, ContractTestValues.Jpy));
         yenTax.IsInWholeMinorUnits.ShouldBeTrue();
@@ -151,8 +149,8 @@ public sealed class TaxRateTests
     {
         TaxRate rate = ContractTestValues.Rate(15m);
 
-        Money charge = rate.ApplyTo(ContractTestValues.Nz(19.99m), ContractTestValues.TwoPlacesAwayFromZero);
-        Money credit = rate.ApplyTo(ContractTestValues.Nz(-19.99m), ContractTestValues.TwoPlacesAwayFromZero);
+        Money charge = rate.ApplyTo(ContractTestValues.Nz(19.99m), ContractTestValues.AwayFromZero);
+        Money credit = rate.ApplyTo(ContractTestValues.Nz(-19.99m), ContractTestValues.AwayFromZero);
 
         credit.ShouldBe(-charge);
     }
@@ -188,7 +186,7 @@ public sealed class TaxRateTests
             "if this stops being true, decimal has changed and the case below no longer separates " +
             "the two implementations");
 
-        rate.ApplyTo(amount, ContractTestValues.TwoPlacesAwayFromZero)
+        rate.ApplyTo(amount, ContractTestValues.AwayFromZero)
             .ShouldBe(ContractTestValues.Nz(0.00m));
     }
 
@@ -200,7 +198,7 @@ public sealed class TaxRateTests
     public void An_amount_more_precise_than_its_currency_still_yields_payable_tax()
     {
         Money tax = ContractTestValues.Rate(15m)
-            .ApplyTo(ContractTestValues.Nz(12.3456789m), ContractTestValues.TwoPlacesAwayFromZero);
+            .ApplyTo(ContractTestValues.Nz(12.3456789m), ContractTestValues.AwayFromZero);
 
         tax.IsInWholeMinorUnits.ShouldBeTrue();
         tax.ShouldBe(ContractTestValues.Nz(1.85m));

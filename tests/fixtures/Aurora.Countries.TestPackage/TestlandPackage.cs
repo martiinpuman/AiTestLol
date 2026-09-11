@@ -157,7 +157,7 @@ public sealed class TestlandTaxRules : ITaxRuleProvider
             category,
             rate.Value,
             TaxBasis.LineNet,
-            RoundingPolicy.Of(2, MidpointRounding.AwayFromZero),
+            MidpointRounding.AwayFromZero,
             DateRange.FromUntil(from, until),
             version.Value);
     }

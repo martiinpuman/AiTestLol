@@ -488,7 +488,7 @@ Aurora.Countries.Contracts.Taxation.TaxCode.TaxCode() -> void
 Aurora.Countries.Contracts.Taxation.TaxCode.Value.get -> string!
 Aurora.Countries.Contracts.Taxation.TaxErrors
 Aurora.Countries.Contracts.Taxation.TaxRate
-Aurora.Countries.Contracts.Taxation.TaxRate.ApplyTo(Aurora.SharedKernel.Money taxableAmount, Aurora.SharedKernel.RoundingPolicy rounding) -> Aurora.SharedKernel.Money
+Aurora.Countries.Contracts.Taxation.TaxRate.ApplyTo(Aurora.SharedKernel.Money taxableAmount, System.MidpointRounding midpoint) -> Aurora.SharedKernel.Money
 Aurora.Countries.Contracts.Taxation.TaxRate.AsPercentage.get -> Aurora.SharedKernel.Percentage
 Aurora.Countries.Contracts.Taxation.TaxRate.CompareTo(Aurora.Countries.Contracts.Taxation.TaxRate other) -> int
 Aurora.Countries.Contracts.Taxation.TaxRate.Equals(Aurora.Countries.Contracts.Taxation.TaxRate other) -> bool
@@ -506,13 +506,13 @@ Aurora.Countries.Contracts.Taxation.TaxRuleVersion.<Clone>$() -> Aurora.Countrie
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Basis.get -> Aurora.Countries.Contracts.Taxation.TaxBasis
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Category.get -> Aurora.Countries.Contracts.Taxation.TaxCategory
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Code.get -> Aurora.Countries.Contracts.Taxation.TaxCode
-Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Deconstruct(out Aurora.Countries.Contracts.Taxation.TaxCode Code, out Aurora.Countries.Contracts.Taxation.TaxCategory Category, out Aurora.Countries.Contracts.Taxation.TaxRate Rate, out Aurora.Countries.Contracts.Taxation.TaxBasis Basis, out Aurora.SharedKernel.RoundingPolicy Rounding, out Aurora.SharedKernel.DateRange Validity, out Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
+Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Deconstruct(out Aurora.Countries.Contracts.Taxation.TaxCode Code, out Aurora.Countries.Contracts.Taxation.TaxCategory Category, out Aurora.Countries.Contracts.Taxation.TaxRate Rate, out Aurora.Countries.Contracts.Taxation.TaxBasis Basis, out System.MidpointRounding Midpoint, out Aurora.SharedKernel.DateRange Validity, out Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Equals(Aurora.Countries.Contracts.Taxation.TaxRuleVersion? other) -> bool
+Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Midpoint.get -> System.MidpointRounding
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Rate.get -> Aurora.Countries.Contracts.Taxation.TaxRate
-Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Rounding.get -> Aurora.SharedKernel.RoundingPolicy
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.SourceVersion.get -> Aurora.Countries.Contracts.PackageVersion
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.TaxOn(Aurora.SharedKernel.Money taxableAmount) -> Aurora.SharedKernel.Money
-Aurora.Countries.Contracts.Taxation.TaxRuleVersion.TaxRuleVersion(Aurora.Countries.Contracts.Taxation.TaxCode Code, Aurora.Countries.Contracts.Taxation.TaxCategory Category, Aurora.Countries.Contracts.Taxation.TaxRate Rate, Aurora.Countries.Contracts.Taxation.TaxBasis Basis, Aurora.SharedKernel.RoundingPolicy Rounding, Aurora.SharedKernel.DateRange Validity, Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
+Aurora.Countries.Contracts.Taxation.TaxRuleVersion.TaxRuleVersion(Aurora.Countries.Contracts.Taxation.TaxCode Code, Aurora.Countries.Contracts.Taxation.TaxCategory Category, Aurora.Countries.Contracts.Taxation.TaxRate Rate, Aurora.Countries.Contracts.Taxation.TaxBasis Basis, System.MidpointRounding Midpoint, Aurora.SharedKernel.DateRange Validity, Aurora.Countries.Contracts.PackageVersion SourceVersion) -> void
 Aurora.Countries.Contracts.Taxation.TaxRuleVersion.Validity.get -> Aurora.SharedKernel.DateRange
 const Aurora.Countries.Contracts.Banking.BankingErrors.InvalidCode = "country_package.banking.invalid" -> string!
 const Aurora.Countries.Contracts.CountryPackageManifestJson.ResourceName = "package.manifest.json" -> string!

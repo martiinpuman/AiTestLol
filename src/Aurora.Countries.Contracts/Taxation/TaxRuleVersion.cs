@@ -57,15 +57,17 @@ public enum TaxBasis
 /// resolves the version that was in force on the invoice's date, not the one in force today.
 /// </para>
 /// <para>
-/// The rounding policy travels with the rule rather than being chosen by core, because how tax is
-/// rounded is part of what a jurisdiction decides. <see cref="TaxOn"/> is where the two meet.
+/// The midpoint rule travels with the rule rather than being chosen by core, because which way a
+/// jurisdiction breaks a half-cent is part of what it decides. The <i>scale</i> does not travel with
+/// it: tax is rounded at the minor unit of the currency being taxed, for the reason given on
+/// <see cref="TaxRate.ApplyTo"/>. <see cref="TaxOn"/> is where the two meet.
 /// </para>
 /// </remarks>
 /// <param name="Code">The jurisdiction's code for this treatment.</param>
 /// <param name="Category">How core should group it.</param>
 /// <param name="Rate">The rate in force over <paramref name="Validity"/>.</param>
 /// <param name="Basis">What the rate applies to.</param>
-/// <param name="Rounding">How the resulting tax is rounded, per this jurisdiction's rule.</param>
+/// <param name="Midpoint">Which way this jurisdiction breaks a half minor unit.</param>
 /// <param name="Validity">The half-open period this version was in force.</param>
 /// <param name="SourceVersion">The package version that contributed it, for audit.</param>
 [EffectiveDated]
@@ -74,7 +76,7 @@ public sealed record TaxRuleVersion(
     TaxCategory Category,
     TaxRate Rate,
     TaxBasis Basis,
-    RoundingPolicy Rounding,
+    MidpointRounding Midpoint,
     DateRange Validity,
     PackageVersion SourceVersion)
 {
@@ -110,13 +112,13 @@ public sealed record TaxRuleVersion(
         ? Basis
         : throw new ArgumentException($"'{Basis}' is not a tax basis.", nameof(Basis));
 
-    /// <summary>How the resulting tax is rounded.</summary>
-    public RoundingPolicy Rounding { get; } = Rounding.IsSpecified
-        ? Rounding
+    /// <summary>Which way this jurisdiction breaks a half minor unit.</summary>
+    public MidpointRounding Midpoint { get; } = Enum.IsDefined(Midpoint)
+        ? Midpoint
         : throw new ArgumentException(
-            "A tax rule needs an explicit rounding policy: how tax is rounded is part of what the " +
-            "jurisdiction decides, so core has no default to fall back on.",
-            nameof(Rounding));
+            $"'{Midpoint}' is not a rounding mode. Which way a half minor unit breaks is part of " +
+            $"what the jurisdiction decides, so core has no default to fall back on.",
+            nameof(Midpoint));
 
     /// <summary>The half-open period this version was in force.</summary>
     public DateRange Validity { get; } = Validity.IsEmpty
@@ -135,5 +137,5 @@ public sealed record TaxRuleVersion(
     /// The tax on <paramref name="taxableAmount"/> under this rule, rounded the way this
     /// jurisdiction rounds.
     /// </summary>
-    public Money TaxOn(Money taxableAmount) => Rate.ApplyTo(taxableAmount, Rounding);
+    public Money TaxOn(Money taxableAmount) => Rate.ApplyTo(taxableAmount, Midpoint);
 }

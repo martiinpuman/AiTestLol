@@ -131,38 +131,43 @@ public readonly record struct TaxRate : IComparable<TaxRate>
     }
 
     /// <summary>
-    /// The tax on <paramref name="taxableAmount"/> at this rate, rounded once under
-    /// <paramref name="rounding"/>.
+    /// The tax on <paramref name="taxableAmount"/> at this rate, rounded once at the currency's
+    /// minor unit under <paramref name="midpoint"/>.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The rounding policy is a parameter and has no default, because how a jurisdiction rounds tax
-    /// is a jurisdiction's decision: choosing one here would put that decision inside core code,
-    /// which is the thing this whole contract exists to prevent.
+    /// The midpoint rule is a parameter and has no default, because which way a jurisdiction breaks
+    /// a half-cent is a jurisdiction's decision, and choosing one here would put that decision
+    /// inside core code — the thing this whole contract exists to prevent.
     /// </para>
     /// <para>
-    /// The computation runs in whole numbers end to end and rounds exactly once, at the currency's
-    /// minor unit. It then asserts its own postcondition — that the amount it is about to return can
-    /// actually be paid — and throws rather than return an amount that cannot.
+    /// <b>The scale is not a parameter, and deliberately so.</b> Tax is rounded at the minor unit of
+    /// the currency being taxed, because tax that is not a whole number of minor units cannot be
+    /// paid, invoiced or posted. A package cannot choose that scale: a rule declared with two
+    /// decimal places would be wrong for a company trading in yen and wrong again in dinars, and a
+    /// scale a package could state but core had to ignore would be a field that reads like a
+    /// decision and is not one. A jurisdiction that computes tax at a finer precision and rounds at
+    /// document level says so with <see cref="TaxBasis.DocumentNet"/>.
+    /// </para>
+    /// <para>
+    /// The computation runs in whole numbers end to end and rounds exactly once. It then asserts its
+    /// own postcondition — that the amount it is about to return can actually be paid — and throws
+    /// rather than return an amount that cannot.
     /// </para>
     /// </remarks>
     /// <exception cref="InvalidOperationException">
-    /// <paramref name="taxableAmount"/> names no currency, <paramref name="rounding"/> is
-    /// unspecified, the rounded tax is too large for <see cref="decimal"/>, or — the case that
-    /// should be unreachable — the result is not a whole number of minor units.
+    /// This rate is unassigned, <paramref name="taxableAmount"/> names no currency, the rounded tax
+    /// is too large for <see cref="decimal"/>, or — the case that should be unreachable — the result
+    /// is not a whole number of minor units.
     /// </exception>
-    public Money ApplyTo(Money taxableAmount, RoundingPolicy rounding)
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <paramref name="midpoint"/> is not a rounding mode.
+    /// </exception>
+    public Money ApplyTo(Money taxableAmount, MidpointRounding midpoint)
     {
         if (!_isSpecified)
         {
             throw Unspecified();
-        }
-
-        if (!rounding.IsSpecified)
-        {
-            throw new InvalidOperationException(
-                "Applying a tax rate needs an explicit rounding policy. How tax is rounded is a " +
-                "jurisdiction's rule, so there is no default to fall back on.");
         }
 
         Currency currency = taxableAmount.Currency;
@@ -181,7 +186,7 @@ public readonly record struct TaxRate : IComparable<TaxRate>
             productUnits,
             productScale,
             currency.MinorUnits,
-            rounding.Midpoint);
+            midpoint);
 
         decimal tax;
         try

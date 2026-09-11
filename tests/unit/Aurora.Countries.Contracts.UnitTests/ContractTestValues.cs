@@ -27,8 +27,7 @@ internal static class ContractTestValues
     /// <summary>Three minor units, the other side of the same assumption.</summary>
     internal static Currency Bhd { get; } = Currency.Of("BHD", 3);
 
-    internal static RoundingPolicy TwoPlacesAwayFromZero { get; } =
-        RoundingPolicy.Of(2, MidpointRounding.AwayFromZero);
+    internal const MidpointRounding AwayFromZero = MidpointRounding.AwayFromZero;
 
     internal static T Ok<T>(Result<T> result) =>
         result.IsSuccess

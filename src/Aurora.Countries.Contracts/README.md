@@ -67,7 +67,9 @@ reprices a two-year-old invoice at today's rate the first time somebody reprints
 **A package-supplied rate is a caller-supplied factor.** `TaxRate` refuses anything that does not fit
 `numeric(9,6)`, and `TaxRate.ApplyTo` never multiplies two decimals: it takes both operands apart
 into whole numbers, works in `BigInteger`, rounds once at the currency's minor unit under the
-package's own `RoundingPolicy`, and checks the result is payable before returning it.
+package's own `MidpointRounding` rule, and checks the result is payable before returning it. The
+*scale* is not the package's to choose — tax that is not a whole number of minor units cannot be
+paid, and a rule declared at two decimal places would be wrong for a company trading in yen.
 `TaxRateTests.A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence` is the case
 that separates it from the obvious implementation — one cent, on one line, from an amount nobody
 would call unusual.

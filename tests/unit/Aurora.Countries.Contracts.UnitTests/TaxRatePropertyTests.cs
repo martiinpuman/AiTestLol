@@ -27,7 +27,9 @@ namespace Aurora.Countries.Contracts.UnitTests;
 /// </para>
 /// <para>
 /// A fixed list: the three currencies (zero, two and three minor units, so nothing can pass by
-/// assuming cents) and the five midpoint rules, which are an enumeration and not a range.
+/// assuming cents) and the five midpoint rules, which are an enumeration and not a range. The
+/// rounding <i>scale</i> is not a dimension at all: tax is always rounded at the currency's minor
+/// unit, because tax that is not a whole number of minor units cannot be paid.
 /// </para>
 /// <para>
 /// <b>Why the second property is not the implementation restated.</b> <see cref="TaxRate.ApplyTo"/>
@@ -59,7 +61,7 @@ public sealed class TaxRatePropertyTests
                 Cases().ToArbitrary(),
                 testCase =>
                 {
-                    Money tax = testCase.Rate.ApplyTo(testCase.Amount, testCase.Rounding);
+                    Money tax = testCase.Rate.ApplyTo(testCase.Amount, testCase.Midpoint);
 
                     tax.Currency.ShouldBe(testCase.Amount.Currency);
                     tax.IsInWholeMinorUnits.ShouldBeTrue();
@@ -74,7 +76,7 @@ public sealed class TaxRatePropertyTests
                 NearestCases().ToArbitrary(),
                 testCase =>
                 {
-                    Money tax = testCase.Rate.ApplyTo(testCase.Amount, testCase.Rounding);
+                    Money tax = testCase.Rate.ApplyTo(testCase.Amount, testCase.Midpoint);
 
                     // exact product = amountUnits * rateUnits / 10^(amountScale + rateScale + 2)
                     // answer        = taxUnits           / 10^minorUnits
@@ -112,19 +114,15 @@ public sealed class TaxRatePropertyTests
                 Cases().ToArbitrary(),
                 testCase =>
                 {
-                    RoundingPolicy awayFromZero = RoundingPolicy.Of(
-                        testCase.Amount.Currency.MinorUnits,
-                        MidpointRounding.AwayFromZero);
-
-                    Money charge = testCase.Rate.ApplyTo(testCase.Amount, awayFromZero);
-                    Money credit = testCase.Rate.ApplyTo(-testCase.Amount, awayFromZero);
+                    Money charge = testCase.Rate.ApplyTo(testCase.Amount, MidpointRounding.AwayFromZero);
+                    Money credit = testCase.Rate.ApplyTo(-testCase.Amount, MidpointRounding.AwayFromZero);
 
                     credit.ShouldBe(-charge);
                 })
             .QuickCheckThrowOnFailure();
     }
 
-    private sealed record TaxCase(Money Amount, TaxRate Rate, RoundingPolicy Rounding);
+    private sealed record TaxCase(Money Amount, TaxRate Rate, MidpointRounding Midpoint);
 
     private static Gen<TaxCase> Cases() => Cases(AllMidpoints());
 
@@ -145,10 +143,7 @@ public sealed class TaxRatePropertyTests
         Currencies().SelectMany(currency =>
             Amounts(currency).SelectMany(amount =>
                 Rates().SelectMany(rate =>
-                    midpoints.Select(midpoint => new TaxCase(
-                        amount,
-                        rate,
-                        RoundingPolicy.Of(currency.MinorUnits, midpoint))))));
+                    midpoints.Select(midpoint => new TaxCase(amount, rate, midpoint)))));
 
     private static Gen<MidpointRounding> AllMidpoints() =>
         Gen.Elements(
