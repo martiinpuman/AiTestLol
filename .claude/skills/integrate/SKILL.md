@@ -45,15 +45,19 @@ source scripts/dev-env.sh && ./scripts/verify.sh
 Record the **verbatim summary and the executed-test count**. A PASS with a test count
 equal to the previous task's is a PASS that measured nothing new.
 
-## 4. Merge
+## 4. Merge — through the pull request
 
 ```
-git checkout claude/multi-tenant-saas-erp-pv2nap
-git merge --no-ff task/<ID> -m "merge(<ID>): <what it delivered>"
-git push -u origin claude/multi-tenant-saas-erp-pv2nap
+git -C <worktree> merge claude/multi-tenant-saas-erp-pv2nap   # develop into the branch
+# run the gate here, then:
+git -C <worktree> push -u origin task/<ID>
 ```
 
-Never force-push. Never push to any other branch.
+Then merge the PR itself with `mcp__github__merge_pull_request`, merge-commit method.
+
+Never rebase a pushed branch, never force-push, never push to `main`. A local
+merge-and-push closes the PR only by ancestry and leaves no merge event on it; the
+review trail is what makes the merge auditable.
 
 ## 5. Leave it consistent — all five, every time
 

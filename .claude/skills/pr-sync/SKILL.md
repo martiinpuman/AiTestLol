@@ -58,7 +58,22 @@ examined. Prefer the finding over the adjective — "a role could repoint anothe
 tenant's database, executed as `aurora_app` with no DDL" beats "security issues
 found".
 
-Every PR is a **draft** until its task is merged into the integration branch.
-Never mark one ready for review or merge it on your own authority: the Definition
-of Done requires a reviewer who is not the author, and this environment refuses a
-merge without one.
+## Merging, strictly through the pull request
+
+The product owner is hands-off by standing instruction and does not accept pull
+requests. **You merge**, on a passing verdict from an agent that did not author the
+branch — and at Full tier after a rework, from a second reviewer. That is the whole
+gate; nothing waits on a human.
+
+Merge **through** the PR, not around it:
+
+1. `git merge` develop into the task branch — never rebase a pushed branch, never
+   force-push. A merge commit keeps every existing checkout valid.
+2. Run `scripts/verify.sh` there and record its summary and executed-test count.
+3. Push the task branch.
+4. `mcp__github__merge_pull_request` with a merge commit.
+5. Delete the remote branch, delete the local branch, prune the worktree.
+
+A local merge-and-push closes the PR only by accident of commit ancestry, and the
+PR then shows no merge event — the review trail is what makes the merge auditable,
+so do not lose it to save one API call.
