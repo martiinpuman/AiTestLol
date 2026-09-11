@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 
 namespace Aurora.SharedKernel;
@@ -27,7 +28,7 @@ namespace Aurora.SharedKernel;
 /// error states.
 /// </para>
 /// </remarks>
-public readonly record struct Money
+public readonly record struct Money : IComparable<Money>
 {
     /// <summary>Creates an amount in a currency.</summary>
     /// <exception cref="ArgumentException"><paramref name="currency"/> is unspecified.</exception>
@@ -83,6 +84,93 @@ public readonly record struct Money
     {
         value.AssertSpecified();
         return new Money(-value.Amount, value.Currency);
+    }
+
+    /// <summary>
+    /// Scales an amount — a quantity times a unit price, a rate applied to a base. The result is
+    /// an amount in the same currency, at full precision.
+    /// </summary>
+    public static Money operator *(Money amount, decimal factor)
+    {
+        amount.AssertSpecified();
+        return new Money(amount.Amount * factor, amount.Currency);
+    }
+
+    /// <summary>Scales an amount. Mirror of <c>Money * decimal</c> so either order reads naturally.</summary>
+    public static Money operator *(decimal factor, Money amount) => amount * factor;
+
+    /// <summary>Divides an amount by a plain number, giving an amount at full precision.</summary>
+    /// <exception cref="DivideByZeroException"><paramref name="divisor"/> is zero.</exception>
+    public static Money operator /(Money amount, decimal divisor)
+    {
+        amount.AssertSpecified();
+        return new Money(amount.Amount / divisor, amount.Currency);
+    }
+
+    /// <summary>
+    /// Divides one amount by another in the same currency, giving the <b>ratio</b> between them —
+    /// a plain number, not an amount. Money per money is dimensionless: it is a proportion, a
+    /// margin or an allocation weight, and calling it money again is how a currency gets lost.
+    /// </summary>
+    /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>
+    /// <exception cref="DivideByZeroException"><paramref name="divisor"/> is nothing.</exception>
+    public static decimal operator /(Money amount, Money divisor)
+    {
+        AssertSameCurrency(amount, divisor);
+        return amount.Amount / divisor.Amount;
+    }
+
+    /// <summary>Whether the left amount is less than the right, in the same currency.</summary>
+    /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>
+    public static bool operator <(Money left, Money right) => left.CompareTo(right) < 0;
+
+    /// <summary>Whether the left amount is greater than the right, in the same currency.</summary>
+    /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>
+    public static bool operator >(Money left, Money right) => left.CompareTo(right) > 0;
+
+    /// <summary>Whether the left amount is at most the right, in the same currency.</summary>
+    /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>
+    public static bool operator <=(Money left, Money right) => left.CompareTo(right) <= 0;
+
+    /// <summary>Whether the left amount is at least the right, in the same currency.</summary>
+    /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>
+    public static bool operator >=(Money left, Money right) => left.CompareTo(right) >= 0;
+
+    /// <summary>Orders this amount against another in the same currency.</summary>
+    /// <remarks>
+    /// Deliberately throws rather than inventing an order across currencies. That makes sorting a
+    /// mixed-currency list fail loudly, which is the correct outcome: NZD 10 is neither more nor
+    /// less than AUD 10, and a report that quietly ordered them would be wrong in a way nobody
+    /// would notice.
+    /// </remarks>
+    /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>
+    public int CompareTo(Money other)
+    {
+        AssertSameCurrency(this, other);
+        return Amount.CompareTo(other.Amount);
+    }
+
+    /// <summary>
+    /// Adds up a sequence of amounts, all of which must be in <paramref name="currency"/>.
+    /// </summary>
+    /// <remarks>
+    /// The currency is a parameter, not something inferred from the first element, so that an
+    /// empty sequence still produces an amount in a named currency instead of a currency-less
+    /// zero. Summing no invoice lines is nothing-in-NZD, never just nothing.
+    /// </remarks>
+    /// <exception cref="ArgumentNullException"><paramref name="amounts"/> is <see langword="null"/>.</exception>
+    /// <exception cref="CurrencyMismatchException">An amount is in another currency.</exception>
+    public static Money Sum(IEnumerable<Money> amounts, Currency currency)
+    {
+        ArgumentNullException.ThrowIfNull(amounts);
+
+        Money total = Zero(currency);
+        foreach (Money amount in amounts)
+        {
+            total += amount;
+        }
+
+        return total;
     }
 
     /// <summary>The amount without its sign, in the same currency.</summary>
