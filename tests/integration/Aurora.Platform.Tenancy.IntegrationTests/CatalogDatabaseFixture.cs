@@ -132,10 +132,12 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
             Username = role,
             Password = password,
             Database = database,
-            // Pooling is per connection string; keep the four role pools small and short-lived so the
-            // container's max_connections is never the thing a test trips over.
+            // Pooling is per connection string; keep the role pools small and short-lived so the
+            // container's max_connections is never the thing a test trips over. Npgsql refuses an
+            // idle lifetime below its pruning interval, so both are named rather than one.
             MaxPoolSize = 8,
-            ConnectionIdleLifetime = 5,
+            ConnectionPruningInterval = 2,
+            ConnectionIdleLifetime = 4,
         }.ConnectionString;
 
     private static string MintPassword() => Guid.NewGuid().ToString("N");
