@@ -16,6 +16,7 @@ coverage/
 # Agent loop
 .loop-logs/
 .worktrees/
+.claude/worktrees/
 STOP
 
 # Local environment
