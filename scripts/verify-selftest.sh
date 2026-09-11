@@ -216,6 +216,15 @@ assert_usage_error() {
   printf '    exit 2: %s\n' "${needle}"
 }
 
+# The summary table and anything printed beneath it come from the exit
+# handler to stdout, which run_verify captures in CASE_LOG.
+assert_output_contains() {
+  local needle="$1"
+  grep -qF -- "${needle}" "${CASE_LOG}" \
+    || fail_case "expected '${needle}' in the output" || return 1
+  printf '    output says: %s\n' "${needle}"
+}
+
 assert_stage_log_contains() {
   local id="$1" needle="$2" log
   log="$(ls -- "${VERIFY_DIR}/$(printf '%02d' "${id}")"-*.log 2>/dev/null | head -n 1 || true)"
@@ -541,18 +550,60 @@ octal_ambiguous_floor_above() {
 # closure, which is the code most likely to regress it. The probe is an MSBuild
 # target that writes an untracked file during stage 3's build, so the mutation
 # lands at a point in the run this case decides rather than on a timer.
+MUTATION_PROBE="GATE_MUTATION_PROBE.txt"
+
+# Appends that target to Aurora.Web.csproj. Extra task XML, if given, goes into
+# the same target ahead of the write, so one injection can also make the build
+# warn - a stage that fails and mutates in the same breath.
+inject_mutation_target() {
+  local extra="${1:-}"
+  local proj="src/hosts/Aurora.Web/Aurora.Web.csproj"
+  stage_file "${proj}"
+  stage_file "${MUTATION_PROBE}"
+  local target
+  target='  <Target Name="AuroraSelfTestMutation" AfterTargets="Build">\n'
+  target+="${extra}"
+  target+='    <WriteLinesToFile File="$(MSBuildThisFileDirectory)../../../'"${MUTATION_PROBE}"'" Lines="verify-selftest" Overwrite="true" />\n'
+  target+='  </Target>\n\n</Project>'
+  sed -i "s|^</Project>|${target}|" -- "${REPO_ROOT}/${proj}"
+}
+
 case_summary_tree_guard() {
   case_begin "stage 11: a stage that writes into the repository it measures"
-  local proj="src/hosts/Aurora.Web/Aurora.Web.csproj"
-  local probe="GATE_MUTATION_PROBE.txt"
-  stage_file "${proj}"
-  stage_file "${probe}"
-  sed -i 's|^</Project>|  <Target Name="AuroraSelfTestMutation" AfterTargets="Build">\n    <WriteLinesToFile File="$(MSBuildThisFileDirectory)../../../GATE_MUTATION_PROBE.txt" Lines="verify-selftest" Overwrite="true" />\n  </Target>\n\n</Project>|' \
-    -- "${REPO_ROOT}/${proj}"
+  inject_mutation_target
   run_verify
   assert_fail_stage 11 || return 0
-  assert_stage_log_contains 11 "${probe}" || return 0
+  assert_stage_log_contains 11 "${MUTATION_PROBE}" || return 0
   assert_summary_row 11 "FAIL" "working tree changed" || return 0
+}
+
+# The exit handler's half of the same guard. --stage 3 leaves stage 11 marked
+# SKIP and the stage loop exits 0, so only the exit handler can turn the drift
+# into a failure - the one path in the gate that converts a passing run into a
+# failing one. It has to name stage 11 in the headline and write the log the
+# summary points at, saying which path wrote it.
+case_summary_tree_guard_from_exit_handler() {
+  case_begin "stage 11: the guard still fires when --stage leaves stage 11 unrun"
+  inject_mutation_target
+  run_verify --stage 3
+  assert_fail_stage 11 || return 0
+  assert_stage_log_contains 11 "working-tree guard, run from the exit handler" || return 0
+  assert_stage_log_contains 11 "${MUTATION_PROBE}" || return 0
+  assert_summary_row 11 "FAIL" "working tree changed" || return 0
+}
+
+# Drift on a run that already failed elsewhere is reported, not promoted: the
+# stage the developer has to fix stays the headline, and the drift is an
+# advisory beneath the table. Both halves are asserted, because losing either
+# is a regression - the advisory turning into a second failure, or vanishing.
+case_summary_tree_drift_beside_earlier_failure() {
+  case_begin "stage 11: drift beside an earlier failure is reported, not promoted"
+  inject_mutation_target '    <Warning Text="verify-selftest: deliberate MSBuild warning" />\n'
+  run_verify
+  assert_fail_stage 3 || return 0
+  assert_output_contains "Also: the working tree changed while the gate ran" || return 0
+  assert_output_contains "${MUTATION_PROBE}" || return 0
+  assert_nothing_ran_after 3 || return 0
 }
 
 # 5.3. Each of these is a way of calling the gate wrongly, and each must be
@@ -626,6 +677,8 @@ CASES=(
   case_unit_tests_vacuous
   case_unit_tests_floor_is_read_in_base_ten
   case_summary_tree_guard
+  case_summary_tree_guard_from_exit_handler
+  case_summary_tree_drift_beside_earlier_failure
   case_usage_errors
   case_option_skips_are_declared
 )
