@@ -43,6 +43,8 @@ public sealed class RuleInventoryTests
             static () => HttpContextAccessorRule.Check(SolutionLayout.ProductionTypes)),
         (TenantDbContextFactoryRule.Id, TenantDbContextFactoryRule.Name, 10,
             static () => TenantDbContextFactoryRule.Check(SolutionLayout.ProductionTypes)),
+        (TenantDatabaseHandleRule.Id, TenantDatabaseHandleRule.Name, 10,
+            static () => TenantDatabaseHandleRule.Check(SolutionLayout.ProductionTypes)),
         (TenantScopeSingletonRule.Id, TenantScopeSingletonRule.Name, 10,
             static () => TenantScopeSingletonRule.Check(TypeIndex.Of(SolutionLayout.ProductionTypes))),
         (DomainPurityRule.Id, DomainPurityRule.Name, 1,
@@ -132,27 +134,28 @@ public sealed class RuleInventoryTests
     }
 
     [Fact]
-    public void No_TenantScope_exists_yet_which_is_why_T5_has_nothing_to_find()
+    public void No_tenant_access_type_exists_yet_which_is_why_T5_and_T6_have_nothing_to_find()
     {
         SolutionLayout.ProductionTypes
             .Where(static type =>
-                TypeIndex.SimpleNameOf(type.FullName) == TenancyNames.TenantScopeSimpleName)
+                TenancyNames.TenantAccessSimpleNames.Contains(TypeIndex.SimpleNameOf(type.FullName)))
             .Select(static type => type.FullName)
             .ShouldBeEmpty(
-                "TenantScope now exists in production (B-06). T5 is already live and will now bite "
-                + "on the real type; delete the stand-in in Fixtures/Violations/TenancyViolations.cs "
-                + "and point the fixtures at the real one, then update this test.");
+                "TenantScope, TenantAccess or TenantDatabaseHandle now exists in production (B-06, "
+                + "ADR-0027). T5 and T6 are already live and will now bite on the real types; delete "
+                + "the stand-ins in Fixtures/Violations/TenancyViolations.cs, point the fixtures at "
+                + "the real ones, and update this test.");
     }
 
     [Fact]
-    public void No_ITenantDbContextFactory_exists_yet_which_is_why_T3_has_nothing_to_find()
+    public void No_tenant_DbContext_factory_exists_yet_which_is_why_T3_has_nothing_to_find()
     {
         SolutionLayout.ProductionTypes
             .Where(static type =>
-                TypeIndex.SimpleNameOf(type.FullName) == TenancyNames.TenantDbContextFactorySimpleName)
+                TenancyNames.TenantContextFactorySimpleNames.Contains(TypeIndex.SimpleNameOf(type.FullName)))
             .Select(static type => type.FullName)
             .ShouldBeEmpty(
-                "ITenantDbContextFactory<> now exists in production (B-06). T3 is already live; "
+                "a tenant DbContext factory interface now exists in production (B-06). T3 is live; "
                 + "delete the stand-in in Fixtures/Violations/TenancyViolations.cs, point the "
                 + "fixtures at the real interface, and update this test.");
     }

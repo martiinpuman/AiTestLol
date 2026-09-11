@@ -27,6 +27,16 @@ internal sealed class TenantScope : IAsyncDisposable
     }
 }
 
+/// <summary>
+/// Stand-in for ADR-0027's <c>TenantDatabaseHandle</c>: the DDL-path proof, which is a direct
+/// aurora_migrator connection with no schema-version gate.
+/// </summary>
+/// <remarks>Matched by simple name, like <see cref="TenantScope"/> and for the same reason.</remarks>
+internal sealed class TenantDatabaseHandle
+{
+    public string DatabaseName { get; init; } = string.Empty;
+}
+
 /// <summary>Stand-in for the real <c>ITenantDbContextFactory&lt;&gt;</c> (ADR-0007 §4.1).</summary>
 /// <remarks>Matched by simple name, like <see cref="TenantScope"/> and for the same reason.</remarks>
 internal interface ITenantDbContextFactory<TContext>
@@ -116,6 +126,50 @@ internal sealed class FactoryImplementedInTheWrongAssembly
         throw new NotSupportedException("fixture");
 }
 
+/// <summary>ADR-0027's DDL-path sibling of the factory, implemented outside the tenancy assembly.</summary>
+/// <remarks><b>Deliberately violating fixture (T3).</b></remarks>
+internal interface ITenantMigrationContextFactory<TContext>
+    where TContext : DbContext
+{
+    ValueTask<TContext> CreateAsync(TenantDatabaseHandle handle, CancellationToken cancellationToken);
+}
+
+/// <summary>The DDL-path factory, in the wrong assembly, which ADR-0027 §1 bans exactly as T3 bans the other.</summary>
+/// <remarks><b>Deliberately violating fixture (T3).</b></remarks>
+internal sealed class MigrationFactoryImplementedInTheWrongAssembly
+    : ITenantMigrationContextFactory<TenantDbContextWithAnInternalConstructor>
+{
+    public ValueTask<TenantDbContextWithAnInternalConstructor> CreateAsync(
+        TenantDatabaseHandle handle,
+        CancellationToken cancellationToken) =>
+        throw new NotSupportedException("fixture");
+}
+
+/// <summary>A module reaching for the DDL path, which ADR-0027 §1 confines to a named allow-list.</summary>
+/// <remarks>
+/// <b>Deliberately violating fixture (T6).</b> The signature is <c>(string) -&gt; bool</c>: only the
+/// local and the instructions name the banned type, so a rule reading signatures reports nothing.
+/// </remarks>
+internal static class ModuleReachingForTheDdlPath
+{
+    public static bool LooksLikeOurs(string databaseName)
+    {
+        TenantDatabaseHandle handle = new() { DatabaseName = databaseName };
+        return handle.DatabaseName.StartsWith("aurora_", StringComparison.Ordinal);
+    }
+}
+
+/// <summary>A singleton holding the DDL-path proof, which is T5's defect with more authority.</summary>
+/// <remarks><b>Deliberately violating fixture (T5).</b></remarks>
+internal sealed class SingletonCacheHoldingAHandle
+{
+    private TenantDatabaseHandle? _handle;
+
+    public void Remember(TenantDatabaseHandle handle) => _handle = handle;
+
+    public bool Knows(TenantDatabaseHandle handle) => ReferenceEquals(_handle, handle);
+}
+
 /// <summary>A tenant scope parked in a static field, where it outlives every request.</summary>
 /// <remarks><b>Deliberately violating fixture (T5, static half).</b></remarks>
 internal static class AmbientScopeHolder
@@ -158,6 +212,10 @@ internal static class LifetimeRegistrations
     /// <summary>The violation: a singleton that holds a scope.</summary>
     public static void RegisterSingletonCache(IServiceCollection services) =>
         services.AddSingleton<SingletonCacheHoldingAScope>();
+
+    /// <summary>The violation again, holding ADR-0027's DDL-path proof instead of a scope.</summary>
+    public static void RegisterSingletonHandleCache(IServiceCollection services) =>
+        services.AddSingleton<SingletonCacheHoldingAHandle>();
 
     /// <summary>Compliant: a scoped registration of a type that holds a scope is exactly right.</summary>
     public static void RegisterScopedHandler(IServiceCollection services) =>

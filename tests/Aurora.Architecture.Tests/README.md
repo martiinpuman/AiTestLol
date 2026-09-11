@@ -18,9 +18,10 @@ the fixture tests red instead of passing quietly.
 | **S3** | No ambient clock read in domain or application code | Every instruction naming `DateTime.Now/UtcNow/Today` or `DateTimeOffset.Now/UtcNow`, in any method body in the kernel or a `*.Domain` / `*.Application` assembly. A property read is a call to its getter, so it is visible in an expression, a field initialiser, a lambda or a local function alike | IL |
 | **T1** | No public or protected constructor on a tenant `DbContext` | The accessibility flag on every `.ctor` of every type whose base chain reaches `Microsoft.EntityFrameworkCore.DbContext`, `CatalogDbContext` excepted | Metadata |
 | **T2** | No `AddDbContext` registration of a tenant `DbContext` | Every `call` whose member name starts `AddDbContext` or `AddPooledDbContextFactory` and whose **generic arguments** name a tenant context | IL |
-| **T3** | `ITenantDbContextFactory<>` implemented only in `Aurora.Platform.Tenancy` | The implemented-interface list of every production type, matched on the simple name `ITenantDbContextFactory\`1` | Metadata |
+| **T3** | A tenant `DbContext` factory implemented only in `Aurora.Platform.Tenancy` | The implemented-interface list of every production type, matched on the simple names `ITenantDbContextFactory\`1` and ADR-0027 §1's DDL-path sibling `ITenantMigrationContextFactory\`1` | Metadata |
 | **T4** | `IHttpContextAccessor` only in the tenant-resolution middleware | Every type mention in production code — base types, interfaces, fields, properties, parameters, returns, **locals**, and the declaring type, signature and generic arguments of every member an instruction names | IL + metadata |
-| **T5** | No static or singleton-registered type has a `TenantScope` field or property | (a) any `static` field or property whose type names a `TenantScope`; (b) the generic arguments of every call whose member name contains `Singleton`, each then checked through its base chain for such a field or property | IL + metadata |
+| **T5** | No static or singleton-registered type has a `TenantScope`, `TenantDatabaseHandle` or `TenantAccess` field or property | (a) any `static` field or property whose type names one of those three; (b) the generic arguments of every call whose member name contains `Singleton`, each then checked through its base chain for such a field or property | IL + metadata |
+| **T6** | `TenantDatabaseHandle` named only by the assemblies on the allow-list (ADR-0027 §1) | Every type mention in every production assembly whose name does not start with an allow-listed prefix — signature **and** body, which is what "in any signature or body" means. Allow-list today: `Aurora.Platform.Tenancy` | IL + metadata |
 | **L1** | `Aurora.SharedKernel` and every `.Domain` depend on the BCL and the kernel only | Declared `PackageReference` and `FrameworkReference`; the `Direct` entries of the committed `packages.lock.json`; the emitted `AssemblyRef` table; and every type named from a banned namespace (EF, ASP.NET, `Microsoft.Extensions`, Npgsql, `System.Data`, `System.Text.Json`, Newtonsoft, Serilog) | Project files + metadata |
 | **L1-L5** | Every project reference is one `solution-layout.md` §2 permits | The `ProjectReference` elements each `.csproj` under `src/` declares, classified by the naming convention of `solution-layout.md` §1. Direct references only — a host reaching Infrastructure *through* `Aurora.Composition` is the design | Project files |
 | **M1** | Every cross-module reference is in the `modules.md` §6 matrix | Every declared `ProjectReference` between two different `Aurora.Modules.*` modules, against the matrix held as data in `ModuleMatrix`. A module with no row may reference no other module | Project files |
@@ -49,7 +50,7 @@ both trusted. The difference is written down in `RuleInventoryTests` and **check
 |---|---|---|
 | F1, S3, L1, L1-L5 | **Live** | They examine the kernel, the hosts and the project graph, all of which exist |
 | T4 | **Live** | `IHttpContextAccessor` exists in the framework; any production code could name it today |
-| T3, T5 | **Live, nothing to find** | They scan every production type on every run and would report the first violation immediately. The *types* they govern (`ITenantDbContextFactory<>`, `TenantScope`) arrive with B-06 |
+| T3, T5, T6 | **Live, nothing to find** | They scan every production type on every run and would report the first violation immediately. The *types* they govern (`ITenantDbContextFactory<>`, `TenantScope`, `TenantDatabaseHandle`) arrive with B-06 |
 | T1, T2 | **Inert** | No `DbContext` exists in production yet. B-05 brings `CatalogDbContext` (exempt); B-06 brings the first tenant context |
 | M1 | **Inert** | Fewer than two business modules exist, so there are no cross-module edges |
 
@@ -82,8 +83,8 @@ solution; the fixture test runs the **same function** over a deliberately-violat
   would be switched off within a week. Silence on them is only meaningful because the subject counts
   assert the rule actually examined them.
 
-Two fixtures are **stand-ins**: `TenantScope` and `ITenantDbContextFactory<>` do not exist until
-B-06. The rules match them by *simple name*, which ADR-0007 fixes, rather than by full name, whose
+Four fixtures are **stand-ins**: `TenantScope`, `TenantDatabaseHandle`, `ITenantDbContextFactory<>`
+and `ITenantMigrationContextFactory<>` do not exist until B-06. The rules match them by *simple name*, which ADR-0007 fixes, rather than by full name, whose
 namespace B-06 has not chosen — a rule that guessed the namespace and guessed wrong would match
 nothing and report no violations, in green, forever. **When B-06 lands the real types, delete the
 stand-ins and point the fixtures at them**; `RuleInventoryTests` is what will remind you.
@@ -144,6 +145,13 @@ should decide whether to amend ADR-0020 or to keep both mechanisms.
 - **EF model rules** (F2, M3, M5, Q2): they need a built `DbContext` model, which means constructing
   one, which means a tenant scope. They belong with the first module.
 - **Migration rules** (MIG1-MIG5): B-09 owns them.
+- **Two rules ADR-0027 asks for that are not here.** §1's "every tenant `DbContext` constructor takes
+  exactly one `TenantAccess`-derived parameter" would have to guess the shape of a base class that
+  does not exist, and a rule built on a guess is the vacuous kind. §2's "restrict
+  `AllowUnstampedDuringProvisioning` call sites to the provisioning saga's step types by name" needs
+  those step types, which B-07.1 creates. Both belong with the code they govern; ADR-0027 landed
+  after this task's acceptance row was written, and what T3, T5 and T6 already cover of it is noted
+  in the table above.
 - **`verify.sh` stage 7**: B-11 owns it. Until then these tests run inside stage 6 — every class
   carries `[Trait("Category", "Architecture")]`, which stage 6's `Category!=Integration&Category!=Ui`
   filter includes and stage 7 can select on.

@@ -58,11 +58,11 @@ readonly FAIL_TAIL_LINES=40
 # or a discovery failure, all of which move the count by tens or to zero. Re-round
 # it whenever a test project joins or leaves Aurora.sln.
 #
-# 300 since B-04: Aurora.Architecture.Tests started hosting tests (97 of them) and
+# 310 since B-04: Aurora.Architecture.Tests started hosting tests (109 of them) and
 # the two kernel-local assembly tests it supersedes were deleted, taking the suite
-# from 208 to 303. Leaving the floor at 200 would have let the whole architecture
+# from 208 to 315. Leaving the floor at 200 would have let the whole architecture
 # assembly drop out of the run without the gate noticing.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-300}"
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-310}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
@@ -171,7 +171,7 @@ Options:
 
 Environment:
   AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
-                          it may report PASS (default 300, the suite's count
+                          it may report PASS (default 310, the suite's count
                           rounded down to the nearest ten). The count is always
                           printed in the summary, whatever the floor is. Set it
                           to 0 when running a deliberately narrow --filter.

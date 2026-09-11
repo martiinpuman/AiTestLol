@@ -7,8 +7,8 @@ using Aurora.Architecture.Tests.Metadata;
 namespace Aurora.Architecture.Tests.Rules;
 
 /// <summary>
-/// Fitness rule <b>T3</b> - only <c>Aurora.Platform.Tenancy</c> implements
-/// <c>ITenantDbContextFactory&lt;&gt;</c> (ADR-0007 §4.2, §12.3).
+/// Fitness rule <b>T3</b> - only <c>Aurora.Platform.Tenancy</c> implements a tenant
+/// <c>DbContext</c> factory (ADR-0007 §4.2, §12.3; ADR-0027 §1).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,8 +18,9 @@ namespace Aurora.Architecture.Tests.Rules;
 /// </para>
 /// <para>
 /// <b>What the mechanism inspects:</b> the implemented-interface list of every production type,
-/// matched on the simple name <c>ITenantDbContextFactory`1</c> so the rule is live the moment B-06
-/// declares the interface, in whichever namespace it chooses.
+/// matched on the simple names <c>ITenantDbContextFactory`1</c> and ADR-0027's DDL-path sibling
+/// <c>ITenantMigrationContextFactory`1</c> - the ADR says "the same fitness rule ... applies to it" -
+/// so the rule is live the moment B-06 declares either, in whichever namespace it chooses.
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> an implementation in a <b>test</b> assembly, because the population
@@ -32,7 +33,8 @@ internal static class TenantDbContextFactoryRule
 {
     public const string Id = "T3";
 
-    public const string Name = "ITenantDbContextFactory<> implemented only in Aurora.Platform.Tenancy";
+    public const string Name =
+        "ITenantDbContextFactory<> and ITenantMigrationContextFactory<> implemented only in Aurora.Platform.Tenancy";
 
     public static RuleOutcome Check(IEnumerable<ScannedType> types)
     {
@@ -46,10 +48,7 @@ internal static class TenantDbContextFactoryRule
             from type in subjects
             where !type.AssemblyName.StartsWith(TenancyNames.TenancyAssemblyPrefix, StringComparison.Ordinal)
             from implemented in type.InterfaceNames
-            where string.Equals(
-                TypeIndex.SimpleNameOf(implemented),
-                TenancyNames.TenantDbContextFactorySimpleName,
-                StringComparison.Ordinal)
+            where TenancyNames.TenantContextFactorySimpleNames.Contains(TypeIndex.SimpleNameOf(implemented))
             select new RuleViolation(
                 type.FullName,
                 ViolationSite.TypeShape,
@@ -59,8 +58,8 @@ internal static class TenantDbContextFactoryRule
 }
 
 /// <summary>
-/// Fitness rule <b>T5</b> - nothing that outlives a single unit of work holds a
-/// <c>TenantScope</c> (ADR-0007 §10.4, §12.3).
+/// Fitness rule <b>T5</b> - nothing that outlives a single unit of work holds a tenant access
+/// proof (ADR-0007 §10.4, §12.3; ADR-0027 §1).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -75,15 +74,17 @@ internal static class TenantDbContextFactoryRule
 /// <list type="number">
 ///   <item><description>
 ///     <b>Static holders.</b> Any <c>static</c> field or property in production code whose type
-///     names a <c>TenantScope</c>. A static is a singleton whether or not a container knows about
-///     it, and this half needs no registration call to find it.
+///     names a <c>TenantScope</c>, a <c>TenantDatabaseHandle</c> or their <c>TenantAccess</c> base.
+///     A static is a singleton whether or not a container knows about it, and this half needs no
+///     registration call to find it. The base type is in the set deliberately: a field typed
+///     <c>TenantAccess</c> holds one tenant's proof exactly as the derived types do.
 ///   </description></item>
 ///   <item><description>
 ///     <b>Container singletons.</b> Every generic call whose member name contains
 ///     <c>Singleton</c> - <c>AddSingleton</c>, <c>TryAddSingleton</c>, <c>AddKeyedSingleton</c>,
 ///     <c>ServiceDescriptor.Singleton</c> - contributes its generic arguments as singleton types;
-///     each is then checked, through its base-type chain, for a field or property naming a
-///     <c>TenantScope</c>.
+///     each is then checked, through its base-type chain, for a field or property naming any of
+///     those three.
 ///   </description></item>
 /// </list>
 /// <para>
@@ -98,7 +99,8 @@ internal static class TenantScopeSingletonRule
 {
     public const string Id = "T5";
 
-    public const string Name = "No static or singleton-registered type has a TenantScope field or property";
+    public const string Name =
+        "No static or singleton-registered type has a TenantScope, TenantDatabaseHandle or TenantAccess field or property";
 
     public static bool IsSingletonRegistration(string memberName) =>
         memberName.Contains("Singleton", StringComparison.Ordinal);
@@ -130,22 +132,22 @@ internal static class TenantScopeSingletonRule
         from reference in TypeReferences.In(type)
         where reference.Site is ViolationSite.Field or ViolationSite.Property
             && reference.Context.StartsWith("static", StringComparison.Ordinal)
-            && TenancyNames.MentionsTenantScope(reference.Use)
+            && TenancyNames.MentionsTenantAccess(reference.Use)
         select new RuleViolation(
             reference.Subject,
             reference.Site,
             $"{reference.Context} of type {reference.Use.Display}; a static outlives every unit of work, "
-            + "so the scope it holds is served to the wrong tenant (ADR-0007 §10.4)");
+            + "so the tenant proof it holds is served to the wrong tenant (ADR-0007 §10.4)");
 
     private static IEnumerable<RuleViolation> SingletonHolders(TypeIndex index, ImmutableHashSet<string> singletons) =>
         from registered in singletons
         let type = index.Find(registered)
         where type is not null
         from member in index.MembersOf(type)
-        where TenancyNames.MentionsTenantScope(member.Type)
+        where TenancyNames.MentionsTenantAccess(member.Type)
         select new RuleViolation(
             $"{member.Owner}.{member.Member}",
             ViolationSite.Field,
-            $"{registered} is registered as a singleton and holds a TenantScope in {member.Type.Display}; "
-            + "a singleton serves one tenant's scope to another tenant's request (ADR-0007 §10.4)");
+            $"{registered} is registered as a singleton and holds a tenant proof in {member.Type.Display}; "
+            + "a singleton serves one tenant's proof to another tenant's request (ADR-0007 §10.4)");
 }

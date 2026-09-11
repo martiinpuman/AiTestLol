@@ -124,6 +124,57 @@ public sealed class TenancyRuleTests
         RuleAssert.Reports(outcome, nameof(FactoryImplementedInTheWrongAssembly), ViolationSite.TypeShape);
     }
 
+    [Fact]
+    public void T3_fires_on_the_DDL_path_factory_too_which_ADR_0027_puts_under_the_same_rule()
+    {
+        RuleOutcome outcome = TenantDbContextFactoryRule.Check(FixtureAssembly.AllViolations);
+
+        RuleAssert.Reports(outcome, nameof(MigrationFactoryImplementedInTheWrongAssembly), ViolationSite.TypeShape);
+    }
+
+    // ---- T6: TenantDatabaseHandle confined to a named allow-list (ADR-0027 §1) ---------------
+
+    [Fact]
+    public void T6_no_production_assembly_outside_the_allow_list_names_TenantDatabaseHandle()
+    {
+        RuleAssert.Holds(TenantDatabaseHandleRule.Check(SolutionLayout.ProductionTypes), minimumSubjects: 10);
+    }
+
+    [Fact]
+    public void T6_fires_on_a_module_that_names_the_handle_only_inside_a_method_body()
+    {
+        RuleOutcome outcome = TenantDatabaseHandleRule.Check(FixtureAssembly.AllViolations);
+
+        // (string) -> bool for a signature: reporting it proves the body was read.
+        RuleAssert.Reports(
+            outcome,
+            nameof(ModuleReachingForTheDdlPath),
+            ViolationSite.Local,
+            ViolationSite.MemberReference);
+    }
+
+    [Fact]
+    public void T6_stays_silent_inside_an_allow_listed_assembly()
+    {
+        // The fixture assembly is not Aurora.Platform.Tenancy, so the allow-list is exercised by
+        // passing the prefix that does match it. Without this the exemption path ships untested.
+        RuleOutcome outcome = TenantDatabaseHandleRule.Check(
+            FixtureAssembly.AllViolations,
+            ["Aurora.Architecture.Tests"]);
+
+        outcome.Violations.ShouldBeEmpty(outcome.Describe());
+        outcome.SubjectsExamined.ShouldBe(0, "every fixture type is inside the allow-listed assembly");
+    }
+
+    [Fact]
+    public void T6_allows_only_the_tenancy_assembly_today()
+    {
+        TenantDatabaseHandleRule.AllowedAssemblyPrefixes.ShouldBe(["Aurora.Platform.Tenancy"]);
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.Tenancy").ShouldBeTrue();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Modules.Sales.Application").ShouldBeFalse();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Web").ShouldBeFalse();
+    }
+
     // ---- T4: IHttpContextAccessor only in the tenant-resolution middleware ------------------
 
     [Fact]
@@ -198,6 +249,16 @@ public sealed class TenancyRuleTests
         RuleOutcome outcome = TenantScopeSingletonRule.Check(Fixtures);
 
         RuleAssert.Reports(outcome, nameof(SingletonCacheHoldingAScope), ViolationSite.Field);
+    }
+
+    [Fact]
+    public void T5_fires_on_a_singleton_holding_the_DDL_path_handle_as_well_as_a_scope()
+    {
+        // ADR-0027 gives the tenant proof two forms. A rule matching only "TenantScope" would have
+        // stopped covering half of them the day that ADR was accepted.
+        RuleOutcome outcome = TenantScopeSingletonRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, nameof(SingletonCacheHoldingAHandle), ViolationSite.Field);
     }
 
     [Fact]
