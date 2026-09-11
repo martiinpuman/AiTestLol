@@ -39,6 +39,13 @@ export DOTNET_CLI_UI_LANGUAGE=en
 
 readonly FAIL_TAIL_LINES=40
 
+# The number of unit tests stage 6 must see execute before it is allowed to
+# report PASS. Zero today: the solution has no tests yet (B-03 lands the first
+# ones). Raise this in the same commit that adds them - a stage that measures
+# nothing must not be able to report PASS silently.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-0}"
+readonly MIN_UNIT_TESTS
+
 # ---------------------------------------------------------------------------
 # The stage table (5.2). The order here is the execution order.
 #   STAGE_RUN[id]   - handler function, or empty for "not implemented yet"
@@ -138,6 +145,11 @@ Options:
                      already run in this working tree.
   -h, --help         Show this help.
 
+Environment:
+  AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
+                          it may report PASS (default 0). The count is always
+                          printed in the summary, whatever the floor is.
+
 Exit codes:
   0  every stage that ran passed
   1  a stage failed - the summary names it
@@ -178,6 +190,11 @@ if [[ -n "${OPT_ONLY_STAGE}" ]]; then
   [[ -n "${STAGE_RUN[${OPT_ONLY_STAGE}]:-}" ]] \
     || fatal_usage "--stage ${OPT_ONLY_STAGE} (${STAGE_NAME[${OPT_ONLY_STAGE}]}) is not implemented yet; task ${STAGE_OWNER[${OPT_ONLY_STAGE}]:-?} owns it"
 fi
+
+# A non-numeric floor would be read as zero by the arithmetic in stage 6, which
+# is the one value that silently disables the check it is meant to configure.
+[[ "${MIN_UNIT_TESTS}" =~ ^[0-9]+$ ]] \
+  || fatal_usage "AURORA_MIN_UNIT_TESTS must be a non-negative integer, got '${MIN_UNIT_TESTS}'"
 
 # ---------------------------------------------------------------------------
 # Presentation
@@ -437,12 +454,28 @@ stage_unit_tests() {
     filter="(${filter})&(${OPT_FILTER})"
   fi
 
+  local rc=0
   run_cmd dotnet test "${SOLUTION}" \
     -c Release \
     --no-build \
     --filter "${filter}" \
     --logger "trx" \
-    --results-directory "${VERIFY_DIR}" || {
+    --results-directory "${VERIFY_DIR}" || rc=$?
+
+  # A stage that reports PASS without a count cannot report its own vacuity. A
+  # test project dropped from Aurora.sln, a misspelled Category trait, a filter
+  # typo and a discovery failure all exit zero here and look exactly like
+  # "everything passed". So the number of tests that actually ran is put in the
+  # summary row on every path, passing or failing, and MIN_UNIT_TESTS turns it
+  # into a floor that is raised by editing one line.
+  local executed
+  executed="$(count_executed_tests)"
+  STAGE_NOTE[6]="${executed} test(s) executed"
+  note ""
+  note "tests executed:   ${executed} (minimum required: ${MIN_UNIT_TESTS})"
+  note "filter applied:   ${filter}"
+
+  if (( rc != 0 )); then
     note ""
     note "verify: the solution-wide test run failed. Two unrelated causes look alike here:"
     note "          - a test asserted and lost, or"
@@ -451,7 +484,37 @@ stage_unit_tests() {
     note "        A library under tests/ that hosts no tests of its own needs"
     note "        <IsTestProject>false</IsTestProject> in its .csproj."
     return 1
-  }
+  fi
+
+  if (( executed < MIN_UNIT_TESTS )); then
+    note ""
+    note "verify: stage 6 executed ${executed} test(s), below the required minimum of ${MIN_UNIT_TESTS}."
+    note "        The filter applied was:"
+    note "          ${filter}"
+    note "        A test run that matched nothing is not a passing test run. Either that"
+    note "        filter excludes everything, a test project has left Aurora.sln, or a"
+    note "        Category trait is misspelled."
+    note "        The floor is MIN_UNIT_TESTS in scripts/verify.sh (AURORA_MIN_UNIT_TESTS)."
+    return 1
+  fi
+}
+
+# Stage 6's cardinality. `dotnet test --logger trx` writes one .trx per test
+# assembly into --results-directory, each carrying a <Counters executed="N"/>
+# element; an assembly whose filter matched nothing still writes one, with zero.
+# Read with grep, so the gate keeps its "nothing beyond sed/grep/awk/diff/git"
+# property. The leading-space anchor is load-bearing: notExecuted="0" is a
+# different counter that an unanchored pattern would also match.
+count_executed_tests() {
+  local trx n total=0
+  for trx in "${VERIFY_DIR}"/*.trx; do
+    [[ -f "${trx}" ]] || continue
+    while read -r n; do
+      [[ -n "${n}" ]] || continue
+      total=$(( total + 10#${n} ))
+    done < <(grep -o '[[:space:]]executed="[0-9]*"' -- "${trx}" | grep -o '[0-9]*' || true)
+  done
+  printf '%s' "${total}"
 }
 
 # ---------------------------------------------------------------------------
