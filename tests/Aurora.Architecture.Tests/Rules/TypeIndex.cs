@@ -13,7 +13,10 @@ namespace Aurora.Architecture.Tests.Rules;
 /// <remarks>
 /// Cross-assembly is the point: <c>SalesDbContext</c> in one assembly derives from
 /// <c>DbContext</c> in another, and a rule that gave up at the assembly boundary would never
-/// recognise a tenant context at all - and would report no violations, in green.
+/// recognise a tenant context at all - and would report no violations, in green. No compiled
+/// fixture takes that hop, so <c>TypeIndexTests</c> takes it with
+/// <c>Fixtures.CrossAssemblyFixture</c>: that is the test that goes red if the walk ever stops at
+/// a boundary.
 /// </remarks>
 internal sealed class TypeIndex
 {

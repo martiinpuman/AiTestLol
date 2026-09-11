@@ -61,6 +61,22 @@ public sealed class TenancyRuleTests
     }
 
     [Fact]
+    public void T1_fires_on_a_module_context_whose_base_type_lives_in_the_tenancy_assembly()
+    {
+        // B-06's shape, and the only T1 test that fails when the base walk gives up at an assembly
+        // boundary: every compiled fixture reaches DbContext without crossing one. Under that
+        // fault T1 examines the tenancy base alone, reports nothing about the module context with
+        // the public constructor, and the rest of the suite stays green (B-04 re-review, m-3).
+        RuleOutcome outcome = TenantDbContextConstructorRule.Check(
+            TypeIndex.Of(CrossAssemblyFixture.ModuleContextAndItsTenancyBase()));
+
+        outcome.SubjectsExamined.ShouldBe(
+            2,
+            "both the module context and its tenancy-assembly base are tenant contexts: " + outcome.Describe());
+        RuleAssert.Reports(outcome, CrossAssemblyFixture.ModuleContextFullName, ViolationSite.Signature);
+    }
+
+    [Fact]
     public void T1_stays_silent_on_the_catalog_context_which_is_the_one_allowed_exception()
     {
         RuleOutcome outcome = TenantDbContextConstructorRule.Check(Fixtures);
