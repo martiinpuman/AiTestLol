@@ -40,6 +40,18 @@ total exactly; leftover minor units go to the largest fractional remainders, ear
 a tie, so a split is repeatable. It refuses to split an amount that is not already whole minor
 units, rather than rounding on the caller's behalf.
 
+That the parts add up is guaranteed by how the split is computed, not by care taken while
+computing it. `Allocate` scales the weights to whole numbers once and runs the whole
+largest-remainder computation in `BigInteger`, so there is no operation in it that can round; it
+then checks the split against its own law and throws rather than return parts that do not add up.
+The earlier implementation multiplied the amount by each `decimal` weight, and **`decimal` rounds
+silently once a result needs more than its 28–29 significant digits** — a weight written the
+natural way, `lineAmount / documentTotal`, already carries 28 decimal places, so an ordinary
+invoice lost a cent with no exception and no residual to explain it (review `docs/reviews/B-03.md`,
+finding B-1). Any future money algorithm here that multiplies an amount by a caller-supplied factor
+and then depends on the result being a whole number of minor units must do the same: work in
+integers, or verify its own postcondition before returning.
+
 **`Quantity` is `Money`'s twin.** Units do not mix, for the same reason currencies do not. There is
 no unit conversion here: turning cartons into pieces needs an item's conversion factor.
 
