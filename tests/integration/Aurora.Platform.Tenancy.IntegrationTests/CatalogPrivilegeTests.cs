@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Tests;
+using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Shouldly;
 using Xunit;
@@ -261,6 +263,87 @@ public sealed class CatalogPrivilegeTests
     }
 
     [Fact]
+    public async Task The_app_role_cannot_repoint_where_a_tenant_or_a_host_resolves()
+    {
+        // The takeover the security re-review ran against this migration with the grants B-05 first
+        // shipped - as aurora_app, no DDL, no superuser: unbind another tenant's hostname and bind it
+        // to your own; send one tenant's requests at another tenant's database; repoint a cluster at
+        // a host you control, so the resolver dials it carrying the real cluster credentials. Each
+        // statement is tried on rows this test owns, must be refused as 42501 - not a constraint
+        // violation, which would mean the privilege was there and only the data got in the way -
+        // and the rows must read back untouched.
+        DatabaseCluster cluster = Unique.Cluster();
+        Tenant acme = Unique.Tenant(cluster);
+        Tenant globex = Unique.Tenant(cluster);
+        string globexHost = Unique.Host();
+        await _catalog.SeedAsync(catalog => catalog.DatabaseClusters.Add(cluster));
+        await using (CatalogDbContext writer = _catalog.OpenAsApp())
+        {
+            writer.Tenants.Add(acme);
+            writer.Tenants.Add(globex);
+            writer.TenantHosts.Add(TenantHost.Register(globexHost, globex.Id, isPrimary: true, verifiedAt: Unique.Now));
+            await writer.SaveChangesAsync();
+        }
+
+        (string What, string Sql, (string Name, object Value)[] Parameters)[] attempts =
+        [
+            ("unbind another tenant's host",
+                "DELETE FROM catalog.tenant_host WHERE host = @host", [("host", globexHost)]),
+            ("rebind another tenant's host to this tenant",
+                "UPDATE catalog.tenant_host SET tenant_id = @acme WHERE host = @host", [("acme", acme.Id.Value), ("host", globexHost)]),
+            ("send this tenant's requests at another tenant's database",
+                "UPDATE catalog.tenant SET database_name = @database WHERE id = @acme", [("database", globex.DatabaseName!), ("acme", acme.Id.Value)]),
+            ("move this tenant to a cluster of the request's choosing",
+                "UPDATE catalog.tenant SET cluster_id = 'elsewhere', residency_region = 'elsewhere' WHERE id = @acme", [("acme", acme.Id.Value)]),
+            ("rename this tenant's key",
+                "UPDATE catalog.tenant SET key = 'somebody-else' WHERE id = @acme", [("acme", acme.Id.Value)]),
+            ("repoint the cluster at an attacker's host",
+                "UPDATE catalog.database_cluster SET host = 'attacker.example.net' WHERE id = @cluster", [("cluster", cluster.Id.Value)]),
+            ("register a cluster of the request's own",
+                "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) "
+                + "VALUES (@id, 'nz', 'attacker.example.net', 5432, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')", [("id", Unique.ClusterId().Value)]),
+            ("remove the cluster",
+                "DELETE FROM catalog.database_cluster WHERE id = @cluster", [("cluster", cluster.Id.Value)]),
+        ];
+
+        foreach ((string what, string sql, (string Name, object Value)[] parameters) in attempts)
+        {
+            await RefusedAsAppAsync(what, sql, parameters);
+        }
+
+        _output.WriteLine($"Tried {attempts.Length} routing writes as {CatalogDatabaseFixture.AppRole}; every one was refused with {InsufficientPrivilege}.");
+
+        await using CatalogDbContext reader = _catalog.OpenAsApp();
+        (await reader.TenantHosts.SingleAsync(h => h.Host == globexHost)).TenantId.ShouldBe(globex.Id);
+        Tenant acmeReadBack = await reader.Tenants.SingleAsync(t => t.Id == acme.Id);
+        acmeReadBack.DatabaseName.ShouldBe(acme.DatabaseName);
+        acmeReadBack.ClusterId.ShouldBe(cluster.Id);
+        acmeReadBack.Key.ShouldBe(acme.Key);
+        (await reader.DatabaseClusters.SingleAsync(c => c.Id == cluster.Id)).Host.ShouldBe(cluster.Host);
+    }
+
+    [Fact]
+    public async Task The_app_role_cannot_delete_from_any_catalog_table()
+    {
+        // Every ordinary table in the schema, enumerated from pg_class rather than named, so a table
+        // added later is tried too. Nothing on the request path deletes a catalog row: ADR-0007
+        // §11.4 tombstones a tenant, a subscription closes with valid_to, DROP DATABASE is
+        // aurora_admin's. WHERE false, because the privilege is checked before a row is looked at,
+        // and a DELETE that turned out to be granted must not take the shared test database with it.
+        await using NpgsqlConnection migrator = await _catalog.OpenMigratorConnectionAsync();
+        List<string> tables = await OrdinaryTablesAsync(migrator);
+
+        // The list has to be the whole catalog, or the loop below proved less than its name says.
+        tables.Count.ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
+        _output.WriteLine($"Tried DELETE on {tables.Count} catalog tables as {CatalogDatabaseFixture.AppRole}: {string.Join(", ", tables)}.");
+
+        foreach (string table in tables)
+        {
+            await RefusedAsAppAsync($"deleting from catalog.{table}", $"DELETE FROM catalog.\"{table}\" WHERE false", []);
+        }
+    }
+
+    [Fact]
     public async Task The_app_role_cannot_connect_to_any_other_database_on_the_cluster()
     {
         // Every database on the cluster that accepts connections, tried one by one. Under ADR-0007
@@ -339,6 +422,37 @@ public sealed class CatalogPrivilegeTests
         await alter.ExecuteNonQueryAsync();
 
         await transaction.RollbackAsync();
+    }
+
+    private async Task RefusedAsAppAsync(string what, string sql, (string Name, object Value)[] parameters)
+    {
+        await using NpgsqlConnection connection = await _catalog.OpenAppConnectionAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        foreach ((string name, object value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        PostgresException refused = await Should.ThrowAsync<PostgresException>(() => command.ExecuteNonQueryAsync(), what);
+
+        refused.SqlState.ShouldBe(InsufficientPrivilege, what);
+    }
+
+    private static async Task<List<string>> OrdinaryTablesAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            + "WHERE n.nspname = 'catalog' AND c.relkind = 'r' ORDER BY c.relname",
+            connection);
+        await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+
+        List<string> tables = [];
+        while (await reader.ReadAsync())
+        {
+            tables.Add(reader.GetString(0));
+        }
+
+        return tables;
     }
 
     /// <summary>
