@@ -39,7 +39,10 @@ namespace Aurora.Architecture.Tests.Rules;
 /// <para>
 /// <b>What it cannot see:</b> a domain type that reaches a framework through <c>object</c> or
 /// through a delegate handed to it by another layer. That is not a dependency the domain declares,
-/// and it is the layering rules' job to stop the layer that hands it over.
+/// and it is the layering rules' job to stop the layer that hands it over. It also does not
+/// distinguish an <i>analyzer</i> package reference from a runtime one - both are reported - because
+/// nothing in scope has ever needed one; if a <c>.Domain</c> ever does, that is a decision worth a
+/// reviewer seeing rather than a distinction worth making silently.
 /// </para>
 /// </remarks>
 internal static class DomainPurityRule
@@ -62,16 +65,21 @@ internal static class DomainPurityRule
         "Serilog",
     ];
 
-    /// <summary>The tier-0 assemblies. Everything in scope may reference these, subject to the rule below.</summary>
-    public static readonly ImmutableHashSet<string> Tier0 = ImmutableHashSet.Create(
-        StringComparer.Ordinal,
-        "Aurora.SharedKernel",
-        "Aurora.Documents.Canonical",
-        "Aurora.Countries.Contracts");
-
-    /// <summary>Is this assembly governed by L1?</summary>
+    /// <summary>
+    /// Is this assembly governed by L1? <c>Aurora.SharedKernel</c> and every module's
+    /// <c>.Domain</c> - exactly the scope <c>testing-strategy.md</c> §5.1 names.
+    /// </summary>
+    /// <remarks>
+    /// <b>Deliberately not the whole of tier 0.</b> <c>Aurora.Documents.Canonical</c> and
+    /// <c>Aurora.Countries.Contracts</c> are tier 0 but are not named by §5.1, and ADR-0008 §3.1
+    /// requires the latter to carry an approved-API snapshot test - which needs an analyzer package
+    /// reference. Sweeping them in here would ban a dependency the architecture asks for. Their
+    /// reference constraint is the one <c>modules.md</c> §3 actually states, and
+    /// <see cref="ProjectLayeringRule"/> enforces it: tier 0 references tier 0 and nothing else.
+    /// </remarks>
     public static bool IsInScope(string assemblyName) =>
-        Tier0.Contains(assemblyName) || assemblyName.EndsWith(".Domain", StringComparison.Ordinal);
+        string.Equals(assemblyName, "Aurora.SharedKernel", StringComparison.Ordinal)
+        || assemblyName.EndsWith(".Domain", StringComparison.Ordinal);
 
     /// <summary>
     /// Which non-BCL assemblies this one may reference.
@@ -79,14 +87,12 @@ internal static class DomainPurityRule
     /// <remarks>
     /// <c>Aurora.SharedKernel</c> gets the strictest answer - nothing - because
     /// <c>testing-strategy.md</c> §5.1 says "references only the BCL" and every module depends on it.
+    /// A <c>.Domain</c> may reference the kernel, and that is all (<c>solution-layout.md</c> §2).
     /// </remarks>
-    public static ImmutableHashSet<string> AllowedReferencesFor(string assemblyName) => assemblyName switch
-    {
-        "Aurora.SharedKernel" => ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal),
-        "Aurora.Documents.Canonical" => ImmutableHashSet.Create(StringComparer.Ordinal, "Aurora.SharedKernel"),
-        "Aurora.Countries.Contracts" => Tier0,
-        _ => ImmutableHashSet.Create(StringComparer.Ordinal, "Aurora.SharedKernel"),
-    };
+    public static ImmutableHashSet<string> AllowedReferencesFor(string assemblyName) =>
+        string.Equals(assemblyName, "Aurora.SharedKernel", StringComparison.Ordinal)
+            ? ImmutableHashSet<string>.Empty.WithComparer(StringComparer.Ordinal)
+            : ImmutableHashSet.Create(StringComparer.Ordinal, "Aurora.SharedKernel");
 
     /// <summary>
     /// Is this the name of a BCL assembly?
