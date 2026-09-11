@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Unit tests for the tier-0 kernel value objects (docs/architecture/solution-layout.md 6, B-03).
+
+    Every test here is a fast, in-memory domain unit test (testing-strategy.md 2): no database, no
+    container, no clock, no network. verify.sh stage 6 runs this project and must pass with Docker
+    stopped, so nothing in it may acquire any of those.
+
+    FsCheck carries the property-based allocation and rounding tests that ADR-0021 6 requires by
+    name ("a property-based test asserts sum(parts) == total for arbitrary inputs"). It is used
+    from plain [Fact]s via QuickCheckThrowOnFailure rather than through FsCheck.Xunit, because
+    FsCheck.Xunit is a separate package and docs/architecture/dependencies.md 3 approves only
+    FsCheck itself.
+
+    This project references Aurora.SharedKernel. The reverse must never be true: the kernel
+    assembly references nothing but the BCL (fitness rule L1, asserted in B-04).
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.SharedKernel.UnitTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="FsCheck" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Aurora.SharedKernel\Aurora.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>
