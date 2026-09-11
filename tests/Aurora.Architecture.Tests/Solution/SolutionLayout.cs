@@ -110,7 +110,33 @@ internal static class SolutionLayout
                 + Environment.NewLine + "  " + string.Join(Environment.NewLine + "  ", missing));
         }
 
+        string[] stale = [.. projects.Select(StalenessOf).Where(static report => report is not null).Select(static report => report!)];
+
+        if (stale.Length > 0)
+        {
+            throw new InvalidOperationException(
+                "These projects have source files newer than their compiled assembly, so the rules "
+                + "would have inspected the previous build and reported on code that no longer "
+                + "exists. Build the solution before running the architecture tests - verify.sh "
+                + "does this in stage 3, so a full gate run is never affected:"
+                + Environment.NewLine + "  " + string.Join(Environment.NewLine + "  ", stale));
+        }
+
         return [.. projects.Select(static project => AssemblyScanner.Read(ExpectedAssemblyPath(project)))];
+    }
+
+    /// <summary>Reports a project whose sources are newer than its assembly, or <c>null</c> when it is current.</summary>
+    private static string? StalenessOf(ProjectFile project)
+    {
+        string assemblyPath = ExpectedAssemblyPath(project);
+        string? newest = BuildFreshness.NewerSourceThan(
+            Path.GetDirectoryName(project.FullPath)!,
+            File.GetLastWriteTimeUtc(assemblyPath));
+
+        return newest is null
+            ? null
+            : $"{project.RelativePath}: {Path.GetRelativePath(RepositoryRoot, newest)} is newer than "
+                + $"{Path.GetRelativePath(RepositoryRoot, assemblyPath)}";
     }
 
     private static ImmutableArray<ProjectFile> ReadProjectsUnder(string folder)
