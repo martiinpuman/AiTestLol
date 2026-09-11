@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title id="page-title">Companies — Nordwind Group · Aurora ERP</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  /* A deliberately PLAIN list, not the Data grid component (components.md §8)
+     — SPEC-002 non-goals: no sorting/filtering/column settings/saved
+     views/bulk actions/virtualization here. Visually distinct from
+     table.grid (no sticky sunken header, no sort affordance, no checkbox
+     column) so a developer copying this screen never mistakes it for the
+     grid component. See spec, "Why not the Data grid." */
+  table.plain-list { width: 100%; border-collapse: collapse; font-size: var(--font-size-body); }
+  table.plain-list thead th {
+    text-align: left; font-weight: 600; color: var(--color-text-muted);
+    padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border-strong);
+    font-size: 12px;
+  }
+  table.plain-list tbody td { padding: 12px var(--space-3); border-bottom: 1px solid var(--color-border); vertical-align: top; }
+  table.plain-list tbody tr:last-child td { border-bottom: none; }
+  table.plain-list td.name-cell { max-width: 480px; overflow-wrap: anywhere; }
+  table.plain-list td.date-cell { color: var(--color-text-muted); white-space: nowrap; }
+  .list-footer { display: flex; align-items: center; justify-content: space-between; padding: var(--space-3); font-size: 12px; color: var(--color-text-muted); border-top: 1px solid var(--color-border); }
+  .scale-note { font-size: 11px; color: var(--color-text-subtle); padding: 0 var(--space-3) var(--space-2); }
+  .skeleton-cell { height: 14px; width: 60%; }
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <header class="topbar">
+    <button class="icon-btn" title="Toggle navigation" aria-label="Toggle navigation" onclick="toggleRail()">☰</button>
+    <div class="brand"><span class="mark">A</span> Aurora ERP</div>
+
+    <!-- Now three companies exist (continuing the story from first-run-landing.html),
+         so tenant name and company name have diverged from "identical" — the
+         switcher's two-segment Tenant ▸ Company form is back (components.md §18). -->
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('company-popover', event)" aria-haspopup="true">
+        <span class="company-badge" style="--badge-color:#2454CC">NG</span>
+        <span class="tenant-name">Nordwind Group</span>
+        <span class="sep">▸</span>
+        <span class="company-name">Nordwind Group</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="company-popover" hidden>
+        <div class="group-label">Nordwind Group</div>
+        <div class="popover-item active">
+          <span class="company-badge" style="--badge-color:#2454CC">NG</span>
+          <div><div>Nordwind Group</div></div>
+        </div>
+        <div class="popover-item">
+          <span class="company-badge" style="--badge-color:#8A5200">MD</span>
+          <div><div>Meridian Distribution</div></div>
+        </div>
+        <div class="popover-item">
+          <span class="company-badge" style="--badge-color:#146C2E">ST</span>
+          <div><div>Solheim Trading</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="search-box"><span>🔍</span><input placeholder="Search this company…" onfocus="openModal('cmdk-modal'); this.blur();"></div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('cmdk-modal')">Commands <span class="kbd">⌘K</span></button>
+    <button class="icon-btn" title="Notifications" aria-label="Notifications">🔔</button>
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('user-popover', event)">
+        <span class="company-badge" style="--badge-color:#57616C">AK</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="user-popover" hidden style="right:0;left:auto;min-width:200px;">
+        <div class="popover-item">Preferences</div><div class="popover-item">Sign out</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Nav rail sub-navigation expanded under "Master data" -> "Organization" ->
+       "Companies", per app-shell.md's own "each expandable to its sub-areas"
+       rule — the first prototype to actually show a module's sub-nav. -->
+  <nav class="nav-rail">
+    <div class="nav-section-label">Recent</div>
+    <div class="recent-item" onclick="location.href='first-run-landing.html'"><span class="title">Home</span><span class="co">Nordwind Group</span></div>
+    <div class="nav-section-label">Modules</div>
+    <a class="nav-item" href="first-run-landing.html"><span class="ic">⌂</span><span class="label">Home</span></a>
+    <a class="nav-item active" href="companies-list.html" style="padding-left:8px;"><span class="ic">👤</span><span class="label">Master data</span></a>
+    <a class="nav-item active" href="companies-list.html" style="margin-left:26px;width:calc(100% - 26px);font-weight:600;"><span class="label">↳ Organization · Companies</span></a>
+    <a class="nav-item"><span class="ic">🧾</span><span class="label">Sales</span></a>
+    <a class="nav-item"><span class="ic">📦</span><span class="label">Purchasing</span></a>
+    <a class="nav-item"><span class="ic">🏭</span><span class="label">Inventory</span></a>
+    <a class="nav-item"><span class="ic">⚙</span><span class="label">Manufacturing</span></a>
+    <a class="nav-item"><span class="ic">💰</span><span class="label">Finance</span></a>
+    <a class="nav-item"><span class="ic">🔧</span><span class="label">Settings</span></a>
+  </nav>
+
+  <main class="main">
+    <div class="page" style="max-width:1100px;">
+      <div class="page-header" id="page-header-full">
+        <div>
+          <div class="breadcrumb" data-i18n="companies.breadcrumb">Master data · Organization</div>
+          <h1 data-i18n="companies.heading">Companies</h1>
+        </div>
+        <div style="display:flex; gap:var(--space-2); align-items:center;">
+          <div class="theme-toggle" aria-label="Theme">
+            <button data-mode="light" onclick="setTheme('light')">Light</button>
+            <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+            <button data-mode="system" onclick="setTheme('system')">System</button>
+          </div>
+          <button class="btn btn-primary" id="new-company-btn" onclick="onNewCompanyClick()" aria-describedby="new-company-reason">
+            <span data-i18n="companies.newButton">+ New company</span>
+          </button>
+          <!-- title alone is not reliably exposed to assistive tech on focus;
+               aria-describedby + a real (visually-hidden when not needed)
+               text node is the mechanism that actually backs the claim this
+               screen's spec makes ("a disabled control still carries a
+               reachable reason on focus, not only on mouse hover"). -->
+          <span id="new-company-reason" class="visually-hidden"></span>
+        </div>
+      </div>
+
+      <!-- ============ DEFAULT (a few companies, has permission) ============ -->
+      <div class="panel" id="content-default">
+        <table class="plain-list">
+          <thead>
+            <tr>
+              <th data-i18n="companies.colName">Name</th>
+              <th style="width:220px;" data-i18n="companies.colCreated">Created</th>
+            </tr>
+          </thead>
+          <tbody id="rows-default">
+            <tr><td class="name-cell">Nordwind Group</td><td class="date-cell" data-i18n-datetime="2026-06-02T08:00:00Z"></td></tr>
+            <tr><td class="name-cell">Meridian Distribution</td><td class="date-cell" data-i18n-datetime="2026-07-18T13:22:00Z"></td></tr>
+            <tr><td class="name-cell">Solheim Trading — Nordic Regional Operations and Bonded Warehouse Division</td><td class="date-cell" data-i18n-datetime="2026-09-05T10:47:00Z"></td></tr>
+          </tbody>
+        </table>
+        <div class="list-footer">
+          <span id="footer-count" data-i18n="companies.footerCountFew" data-i18n-vars='{"shown":"3","total":"3"}'>Showing 3 of 3 companies</span>
+        </div>
+      </div>
+
+      <!-- ============ LOADING ============ -->
+      <div class="panel" id="content-loading" hidden>
+        <table class="plain-list">
+          <thead><tr><th data-i18n="companies.colName">Name</th><th style="width:220px;" data-i18n="companies.colCreated">Created</th></tr></thead>
+          <tbody>
+            <tr><td><div class="skeleton skeleton-cell"></div></td><td><div class="skeleton skeleton-cell" style="width:80px;"></div></td></tr>
+            <tr><td><div class="skeleton skeleton-cell" style="width:40%;"></div></td><td><div class="skeleton skeleton-cell" style="width:80px;"></div></td></tr>
+            <tr><td><div class="skeleton skeleton-cell" style="width:50%;"></div></td><td><div class="skeleton skeleton-cell" style="width:80px;"></div></td></tr>
+          </tbody>
+        </table>
+        <div class="list-footer" data-i18n="companies.loadingLabel">Loading companies…</div>
+      </div>
+
+      <!-- ============ TRUE EMPTY (should never happen, per AC-7) ============ -->
+      <div class="panel" id="content-empty" hidden>
+        <div class="empty-state">
+          <div class="glyph">🏢</div>
+          <h3 data-i18n="companies.emptyHeading">No companies yet</h3>
+          <p data-i18n="companies.emptyBody">This shouldn't happen on a provisioned tenant — every tenant starts with one default company. Contact support if you see this.</p>
+        </div>
+      </div>
+
+      <!-- ============ ERROR ============ -->
+      <div class="panel" id="content-error" hidden>
+        <div class="empty-state">
+          <div class="glyph">⚠</div>
+          <h3 data-i18n="companies.errorHeading">We couldn't load your companies</h3>
+          <p data-i18n="companies.errorBody">Try again, or contact support if this keeps happening.</p>
+          <button class="btn btn-secondary" onclick="setPersonaState('admin')"><span data-i18n="companies.retry">Retry</span></button>
+        </div>
+      </div>
+
+      <!-- ============ NO ACCESS (403 — no organization.company.view) ============ -->
+      <div class="panel" id="content-no-access" hidden>
+        <div class="empty-state">
+          <div class="glyph">🔒</div>
+          <h3 data-i18n="companies.noAccessHeading">You don't have access to view companies</h3>
+          <p data-i18n="companies.noAccessBody">Ask a tenant administrator for the organization.company.view permission.</p>
+        </div>
+      </div>
+
+      <!-- ============ MANY ROWS (scale note — see spec, "Thousands of rows") ============ -->
+      <div class="panel" id="content-many" hidden>
+        <table class="plain-list">
+          <thead><tr><th data-i18n="companies.colName">Name</th><th style="width:220px;" data-i18n="companies.colCreated">Created</th></tr></thead>
+          <tbody id="rows-many"><!-- filled by script --></tbody>
+        </table>
+        <p class="scale-note">
+          Illustrative only — a real tenant realistically holds at most a few dozen companies. If any tenant were
+          ever observed exceeding roughly a few hundred, this screen should move to the Data grid component
+          (components.md §8) rather than teach this plain list ad hoc virtualization. See spec, "Thousands of rows."
+        </p>
+        <div class="list-footer">
+          <span id="footer-count-many" data-i18n="companies.footerCountMany"
+                data-range-start="1" data-range-end="50" data-total="1204"
+                data-i18n-vars='{"rangeStart":"1","rangeEnd":"50","total":"1204"}'></span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            <button class="btn btn-ghost btn-sm" disabled>‹ Prev</button>
+            <button class="btn btn-ghost btn-sm">Next ›</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<div class="demo-controls">
+  <div class="title" data-i18n="companies.demoPanelTitle">Prototype controls</div>
+  <div class="group-label" data-i18n="companies.previewPersona">Preview as</div>
+  <select class="input" style="height:26px; font-size:11px;" id="persona-select" onchange="setPersonaState(this.value)">
+    <option value="admin">Administrator (view + create)</option>
+    <option value="viewer">Viewer (view only)</option>
+    <option value="none" data-i18n="companies.demoStateNoAccess">No permission (403)</option>
+  </select>
+  <select class="input" style="height:26px; font-size:11px;" id="scenario-select" onchange="setScenario(this.value)">
+    <option value="default" data-i18n="companies.demoStateDefault">Default (a few companies)</option>
+    <option value="loading" data-i18n="companies.demoStateLoading">Loading</option>
+    <option value="empty" data-i18n="companies.demoStateEmpty">Empty (should never happen)</option>
+    <option value="error" data-i18n="companies.demoStateError">Error</option>
+    <option value="many" data-i18n="companies.demoStateMany">Many rows (scale note)</option>
+  </select>
+  <div class="group-label" data-i18n="companies.previewLocale">Preview locale (review only)</div>
+  <select class="input locale-select" style="height:26px; font-size:11px;" onchange="previewLocale(this.value)">
+    <option value="en">English</option>
+    <option value="sv-SE">Svenska</option>
+  </select>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+
+<div class="modal-overlay" id="cmdk-modal" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true">
+    <input placeholder="Search records, or type a command…" autofocus>
+    <div class="results">
+      <div class="group-label">Navigate to</div>
+      <div class="result" onclick="location.href='first-run-landing.html'"><span>⌂</span> Home</div>
+    </div>
+  </div>
+</div>
+<div class="toast-stack"></div>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+<script>
+  // ---------------------------------------------------------------------
+  // "Many rows" demo data — generated once, not shipped as a literal
+  // 1,204-row fixture. The footer count intentionally uses a large number
+  // here specifically to make the locale-driven THOUSANDS-SEPARATOR
+  // difference visible (formatCount), which the default 3-row state is too
+  // small to demonstrate: 1,204 (en) vs 1 204 (sv-SE, non-breaking space).
+  // ---------------------------------------------------------------------
+  function buildManyRows() {
+    var tbody = document.getElementById("rows-many");
+    var names = ["Solheim Trading", "Meridian Distribution", "Havenport Wholesale", "Ashford Supply Group",
+      "Delta Ridge Traders", "Comet Bay Distribution", "Northgate Holdings", "Falkenberg Commerce"];
+    var html = "";
+    for (var i = 0; i < 50; i++) {
+      var d = new Date(2026, 0, 1 + i * 3);
+      html += "<tr><td class=\"name-cell\">" + names[i % names.length] + " " + (i + 1) + "</td>" +
+        "<td class=\"date-cell\" data-i18n-datetime=\"" + d.toISOString() + "\"></td></tr>";
+    }
+    tbody.innerHTML = html;
+  }
+  buildManyRows();
+
+  // The footer's {total} must go through formatCount() to actually show the
+  // locale-driven thousands-grouping difference (1,204 vs 1 204) — earlier
+  // draft of this file embedded the raw literal "1204" straight into
+  // data-i18n-vars, which interpolated identically in both locales and
+  // silently failed to demonstrate the thing this state exists to show.
+  // rangeStart/rangeEnd are left as plain digits: below 1,000, grouping
+  // makes no visible difference, so running them through formatCount too
+  // would only add noise, not signal.
+  function renderFooterCounts() {
+    var el = document.getElementById("footer-count-many");
+    var vars = JSON.parse(el.getAttribute("data-i18n-vars"));
+    vars.total = formatCount(parseInt(el.getAttribute("data-total"), 10));
+    vars.rangeStart = el.getAttribute("data-range-start");
+    vars.rangeEnd = el.getAttribute("data-range-end");
+    el.setAttribute("data-i18n-vars", JSON.stringify(vars));
+  }
+  renderFooterCounts();
+
+  // ---------------------------------------------------------------------
+  // Two independent demo axes: WHO is looking (permission) and WHAT the
+  // server returned (loading/empty/error/scale). Kept separate because in
+  // the real app they are genuinely orthogonal — a viewer can see an error
+  // just as easily as an administrator can.
+  // ---------------------------------------------------------------------
+  var currentPersona = "admin";
+  var currentScenario = "default";
+
+  function setPersonaState(persona) {
+    currentPersona = persona;
+    document.getElementById("persona-select").value = persona;
+    render();
+  }
+  function setScenario(scenario) {
+    currentScenario = scenario;
+    document.getElementById("scenario-select").value = scenario;
+    render();
+  }
+
+  function render() {
+    var header = document.getElementById("page-header-full");
+    var panels = ["default", "loading", "empty", "error", "many", "no-access"];
+
+    if (currentPersona === "none") {
+      // No organization.company.view at all: the whole list surface — including
+      // the "+ New company" action — is withheld, not merely disabled, per
+      // components.md §17's "No permission" rule (state plainly, offer no
+      // action the viewer isn't authorized for).
+      header.style.display = "none";
+      panels.forEach(function (p) { document.getElementById("content-" + p).hidden = (p !== "no-access"); });
+      return;
+    }
+
+    header.style.display = "";
+    panels.forEach(function (p) { document.getElementById("content-" + p).hidden = (p === "no-access") || (p !== currentScenario); });
+
+    var btn = document.getElementById("new-company-btn");
+    var reason = document.getElementById("new-company-reason");
+    if (currentPersona === "viewer") {
+      // aria-disabled, not the native `disabled` attribute — see
+      // components.md §1's correction. The button stays focusable so a
+      // keyboard/screen-reader user can actually reach its reason.
+      btn.setAttribute("aria-disabled", "true");
+      btn.title = t("companies.newButtonDisabledReason");
+      reason.textContent = t("companies.newButtonDisabledReason");
+    } else {
+      btn.removeAttribute("aria-disabled");
+      btn.removeAttribute("title");
+      reason.textContent = "";
+    }
+  }
+
+  function onNewCompanyClick() {
+    // aria-disabled does not stop the click event the way native `disabled`
+    // would — the handler itself must check it (components.md §1 correction).
+    if (document.getElementById("new-company-btn").getAttribute("aria-disabled") === "true") return;
+    showToast("success", t("companies.newButtonToast"));
+  }
+
+  // Re-render dynamic dates/footer after every locale switch (same reasoning
+  // as first-run-landing.html: applyI18n() cannot be safely called again
+  // from inside its own completion hook).
+  function previewLocale(loc) {
+    try { localStorage.setItem("aurora-locale", loc); } catch (e) { /* ignore */ }
+    renderFooterCounts(); // must run BEFORE applyI18n() reads data-i18n-vars
+    applyI18n(); // re-runs [data-i18n-datetime] scan and static-string lookups
+  }
+
+  render();
+</script>
+</body>
+</html>

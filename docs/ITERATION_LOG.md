@@ -193,3 +193,12 @@ analysed as if it were one. Both are now cases in the selftest. The allow side o
 formality; it is half of what the guard is.
 
 **Next:** integrate the three reworks as they return, each through a second reviewer. Then B-06.
+
+### Merged this iteration
+
+Reviews are now posted on each task's pull request. This table is the repository's own record of
+them, so a session with no GitHub access can still find the verdict and what it rested on.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| B-12 | #4 | APPROVE (second reviewer, Full) | senior-reviewer | Reproduced both carrying claims itself rather than accepting them. Mutated the tax implementation to naive and watched the new boundary property go red; 500 draws, 500 constructible, 188 phantom minor units against naive and 0 against shipped; confirmed rate and target are genuinely arbitrary (500 distinct rates) while sign, midpoint and currency are the fixed lists the remark claims. Broke the generator's construction deliberately to check the property goes red rather than being discarded. Probed twelve alternative assembly-name spellings through the package load context: no third bypass, and no culture-sensitive comparison anywhere. Reverting `src/` to the pre-rework commit turned 16 new tests red, confirming all four unbounded-range rows had been green-as-passing. Gate PASS at 440 executed, self-test 21/21. |

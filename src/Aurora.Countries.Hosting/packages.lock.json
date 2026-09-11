@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "dependencies": {
+    "net10.0": {
+      "NuGet.Versioning": {
+        "type": "Direct",
+        "requested": "[7.9.0, )",
+        "resolved": "7.9.0",
+        "contentHash": "r4sZuVpVqwSBLe4qYDrnpScqdyctlRXg0HSF5OoCGkeBc8b+o8BBYHuI/u1RoWYX78PbieijU13TBt71/Xf3lw=="
+      },
+      "System.Reflection.MetadataLoadContext": {
+        "type": "Direct",
+        "requested": "[10.0.12, )",
+        "resolved": "10.0.12",
+        "contentHash": "+DWu1fzj75I1FgdHSg3crgeZmfF2z55x1+OXF2IO2Lcq/iNgM9tL734pxAG0vo5iE82FVPHwbqUt31o8ipPBWg=="
+      },
+      "aurora.countries.contracts": {
+        "type": "Project",
+        "dependencies": {
+          "Aurora.Documents.Canonical": "[1.0.0, )",
+          "Aurora.SharedKernel": "[1.0.0, )"
+        }
+      },
+      "aurora.documents.canonical": {
+        "type": "Project",
+        "dependencies": {
+          "Aurora.SharedKernel": "[1.0.0, )"
+        }
+      },
+      "aurora.sharedkernel": {
+        "type": "Project"
+      }
+    }
+  }
+}

@@ -30,22 +30,25 @@ xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework maj
 - Research (9 files), design system with a computed WCAG audit and HTML prototypes, roadmap,
   glossary, SPEC-001/002, 29-task backlog.
 
-## In flight (three developers reworking, all Full tier)
-- **B-04 architecture fitness tests** — reviewed, **REJECT**, 2 mechanical majors (`docs/reviews/B-04.md`).
-  The reviewer planted eleven real violations in `src/` and watched every rule go red, so no rule in the
-  set is vacuous. Rework in flight: a `.csproj` comment describing a directory that does not exist, and
-  `Each_inert_rule_still_fires_against_its_fixture`, which fires no rule.
-- **B-05 catalog schema and privileges** — security re-review **CHANGES_REQUESTED**, 2 High. The
-  privilege oracle is bypassable by a column-level grant and by PG 17's `MAINTAIN`, and `aurora_app`
-  holds all four privileges on the tenant routing tables — the reviewer repointed another tenant's
-  database and cluster host as that role. Rework in flight.
-- **B-12 Country Package contracts** — peer review **CHANGES_REQUESTED** (4 majors) and security review
-  **CHANGES_REQUESTED** (1 High). The tax property generator cannot reach the failure region by
-  construction; `coreContractRange` may be unbounded; package structures may be cyclic; a README
-  enforcement claim is false; and the `Aurora.*` assembly rule is bypassable by name casing because the
-  loader binds case-insensitively while the check is `Ordinal`. One rework agent holds all of it.
+## In flight (six agents; every review so far has rejected)
+- **B-04 fitness rules** — rework 2. Second reviewer confirmed both majors fixed, then executed four
+  High bypasses. The worst: a production `.csproj` under any directory named `Fixtures/` vanished from
+  the scanned population, invisible to every rule including all six tenancy rules, suite green at 42/42.
+  It had been deferred as minor n-6 in the first review.
+- **B-05 catalog privileges** — rework 2. First rework held against all eight original attacks; the
+  second reviewer then took the tenant over with `INSERT` alone (no unique index on
+  `catalog.tenant.database_name`), and bypassed the new ACL oracle with a `SECURITY DEFINER` function,
+  because a function's default ACL is `EXECUTE TO PUBLIC` and the oracle does not read `pg_proc`.
+- **B-12 Country Package contracts** — rework 1, seven findings across a peer and a security review.
+- **ADR-0029 identity** — CHANGES_REQUESTED, **2 blockers, 9 high**, reviewed as a *design* before any
+  row was dispatched. Both blockers cross-tenant, both in territory no document owned: a membership
+  cache key with no tenant in it, and find-or-create on a platform-wide user record. Architect amending.
+- **ARCH-CORRECTIONS** (ADR-0030 fitness mechanism, ADR-0031 package contracts, ADR-0028 Amendment 1)
+  — in review.
+- **ARCH-TENANT-DOORS** — the architect deciding what B-04's T1–T6 may forbid, which B-06 needs.
 
-Each rework returns to a **second reviewer**, not to orchestrator verification — Full tier.
+**Design work merged:** three screen specs and working HTML prototypes (sign-in, first-run landing,
+companies list), localized, WCAG-audited against existing token pairs.
 
 ## Known risks
 1. **Usage limits kill agents mid-task, repeatedly** (five times so far). Mitigation works: developers

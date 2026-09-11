@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title id="page-title">Home — Nordwind Group · Aurora ERP</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  .setup-row { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); padding: 10px 0; border-bottom: 1px solid var(--color-border); }
+  .setup-row:last-child { border-bottom: none; }
+  .setup-row .lead { display: flex; align-items: center; gap: 10px; font-size: var(--font-size-body); color: var(--color-text); }
+  .setup-row .meta { color: var(--color-text-muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .reassure-panel {
+    display: flex; gap: var(--space-4); align-items: flex-start; padding: var(--space-5);
+    background: var(--color-surface-sunken); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  }
+  .reassure-panel .glyph { font-size: 26px; line-height: 1; opacity: .7; }
+  .reassure-panel h3 { font-size: var(--font-size-body-lg); font-weight: 600; margin-bottom: 4px; }
+  .reassure-panel p { font-size: var(--font-size-small); color: var(--color-text-muted); max-width: 60ch; }
+  .cta-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .coming-soon { font-size: 12px; color: var(--color-text-subtle); }
+  .skeleton-line { height: 14px; width: 70%; margin: 6px 0; }
+  .skeleton-block { height: 96px; }
+  .recent-empty { padding: 6px var(--space-2); font-size: 11px; color: var(--color-text-subtle); }
+  .lang-static { font-size: 12px; color: var(--color-text-muted); padding: 4px var(--space-2); }
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <header class="topbar">
+    <button class="icon-btn" title="Toggle navigation" aria-label="Toggle navigation" onclick="toggleRail()">☰</button>
+    <div class="brand"><span class="mark">A</span> Aurora ERP</div>
+
+    <!-- Single-company tenant, and the company's name is identical to the
+         tenant's (SPEC-001 BR-3: the default company is named FROM the
+         tenant's own display name) — per components.md §18's addition, the
+         switcher shows the name once, not "Nordwind Group ▸ Nordwind Group". -->
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('company-popover', event)" aria-haspopup="true">
+        <span class="company-badge" style="--badge-color:#2454CC">NG</span>
+        <span class="company-name">Nordwind Group</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="company-popover" hidden>
+        <div class="group-label">Nordwind Group</div>
+        <div class="popover-item active">
+          <span class="company-badge" style="--badge-color:#2454CC">NG</span>
+          <div><div>Nordwind Group</div><div class="meta">Your only company so far</div></div>
+        </div>
+        <hr>
+        <div class="popover-item" onclick="location.href='companies-list.html'" style="color:var(--color-accent)">+ Add another company</div>
+      </div>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="search-box"><span>🔍</span><input placeholder="Search this company…" onfocus="openModal('cmdk-modal'); this.blur();"></div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('cmdk-modal')">Commands <span class="kbd">⌘K</span></button>
+    <div class="switcher">
+      <button class="icon-btn" title="Notifications" aria-label="Notifications" onclick="togglePopover('notif-popover', event)">🔔</button>
+      <div class="popover" id="notif-popover" hidden style="right:0;left:auto;min-width:280px;">
+        <div class="group-label">Notifications</div>
+        <div class="popover-item" style="color:var(--color-text-muted);">Nothing yet — you'll see approvals, job results and mentions here.</div>
+      </div>
+    </div>
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('user-popover', event)">
+        <span class="company-badge" style="--badge-color:#57616C">AK</span>
+        <span class="chev">▾</span>
+      </button>
+      <!-- app-shell.md -> User menu: language is scoped to base English plus
+           whatever this tenant's installed Country Packages contribute. This
+           tenant has installed none (a deliberate, valid state per ADR-0008 —
+           "a tenant may enable zero or more" — chosen for this screen
+           precisely so it never has to assume a jurisdiction), so the row is
+           a static value, not a picker: there is nothing else to choose. -->
+      <div class="popover" id="user-popover" hidden style="right:0;left:auto;min-width:240px;">
+        <div class="popover-item"><div><div>alex@nordwind.example</div><div class="meta">Administrator</div></div></div>
+        <hr>
+        <div class="popover-item">Preferences</div>
+        <div class="lang-static">Language: English <span style="opacity:.7;">(only option — no Country Package installed yet)</span></div>
+        <hr>
+        <div class="popover-item">Sign out</div>
+      </div>
+    </div>
+  </header>
+
+  <nav class="nav-rail">
+    <div class="nav-section-label">Recent</div>
+    <div class="recent-empty">Nothing here yet — records you open will show up as you go.</div>
+
+    <div class="nav-section-label">Modules</div>
+    <a class="nav-item active" href="first-run-landing.html"><span class="ic">⌂</span><span class="label">Home</span></a>
+    <a class="nav-item" href="companies-list.html"><span class="ic">👤</span><span class="label">Master data</span></a>
+    <a class="nav-item"><span class="ic">🧾</span><span class="label">Sales</span></a>
+    <a class="nav-item"><span class="ic">📦</span><span class="label">Purchasing</span></a>
+    <a class="nav-item"><span class="ic">🏭</span><span class="label">Inventory</span></a>
+    <a class="nav-item"><span class="ic">⚙</span><span class="label">Manufacturing</span></a>
+    <a class="nav-item"><span class="ic">💰</span><span class="label">Finance</span></a>
+    <a class="nav-item"><span class="ic">🔧</span><span class="label">Settings</span></a>
+  </nav>
+
+  <main class="main">
+    <div class="page" style="max-width:920px;">
+      <div class="page-header">
+        <h1 data-i18n="firstRun.heading" data-i18n-vars='{"tenant":"Nordwind Group"}'>Welcome to Nordwind Group.</h1>
+        <div style="display:flex; gap:var(--space-2); align-items:center;">
+          <div class="theme-toggle" aria-label="Theme">
+            <button data-mode="light" onclick="setTheme('light')">Light</button>
+            <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+            <button data-mode="system" onclick="setTheme('system')">System</button>
+          </div>
+        </div>
+      </div>
+      <p class="muted" data-i18n="firstRun.subhead" style="margin-top:-8px;">Your system is set up and ready. Here's what's already in place — and where to go next.</p>
+
+      <!-- ============ DEFAULT / LOADED CONTENT ============ -->
+      <div id="content-default">
+        <div class="panel" style="margin-top:var(--space-2);">
+          <div class="panel-header"><h2 data-i18n="firstRun.setupHeading">What's already set up</h2></div>
+          <div class="panel-body">
+            <div class="setup-row">
+              <span class="lead"><span class="badge badge-success">Done</span> <span data-i18n="firstRun.companyDoneLabel">Default company created</span></span>
+              <span class="meta" data-i18n="firstRun.companyDoneMeta"
+                    data-i18n-vars='{"company":"Nordwind Group","date":"__DATE__"}'
+                    data-created-at="2026-09-11T09:14:00Z">Nordwind Group, created 2026-09-11</span>
+            </div>
+            <div class="setup-row">
+              <span class="lead"><span class="badge badge-success">Done</span> <span data-i18n="firstRun.rolesDoneLabel">Roles and permissions ready</span></span>
+              <span class="meta" data-i18n="firstRun.rolesDoneMeta" data-i18n-vars='{"roleCount":"12","permissionCount":"128"}'>12 built-in roles, 128 permissions — you hold the Administrator role</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="reassure-panel" style="margin-top:var(--space-4);">
+          <span class="glyph" aria-hidden="true">✓</span>
+          <div>
+            <h3 data-i18n="firstRun.emptyHeading">Nothing else exists yet — and that's expected</h3>
+            <p data-i18n="firstRun.emptyBody">Aurora ERP never adds sample data. Everything you see was created by setup; everything else starts with you — a company, a customer, an order.</p>
+          </div>
+        </div>
+
+        <div class="cta-row" style="margin-top:var(--space-5);">
+          <button class="btn btn-primary" onclick="location.href='companies-list.html'">
+            <span data-i18n="firstRun.primaryCta">View companies</span> →
+          </button>
+          <span class="coming-soon" data-i18n="firstRun.comingSoon">Coming soon: inviting teammates, installing Country Packages.</span>
+        </div>
+      </div>
+
+      <!-- ============ LOADING ============ -->
+      <div id="content-loading" hidden>
+        <p class="muted" data-i18n="firstRun.loadingLabel" style="margin:0 0 var(--space-2);">Loading your tenant…</p>
+        <div class="panel">
+          <div class="panel-body">
+            <div class="skeleton skeleton-line"></div>
+            <div class="skeleton skeleton-line" style="width:45%;"></div>
+            <div class="skeleton skeleton-line" style="width:60%;"></div>
+          </div>
+        </div>
+        <div class="skeleton skeleton-block" style="margin-top:var(--space-4);"></div>
+      </div>
+
+      <!-- ============ ERROR ============ -->
+      <div id="content-error" hidden>
+        <div class="empty-state" style="border:1px solid var(--color-border); border-radius:var(--radius-md); background:var(--color-surface);">
+          <div class="glyph">⚠</div>
+          <h3 data-i18n="firstRun.errorHeading">We couldn't load your tenant's setup status</h3>
+          <p data-i18n="firstRun.errorBody">Try again, or contact support if this keeps happening.</p>
+          <button class="btn btn-secondary" onclick="setDemoState('default')"><span data-i18n="firstRun.retry">Retry</span></button>
+        </div>
+      </div>
+
+      <!-- ============ NO ACCESS (permission-denied) ============ -->
+      <div id="content-no-access" hidden>
+        <div class="empty-state" style="border:1px solid var(--color-border); border-radius:var(--radius-md); background:var(--color-surface);">
+          <div class="glyph">👋</div>
+          <h3 data-i18n="firstRun.noAccessHeading" data-i18n-vars='{"tenant":"Nordwind Group"}'>Welcome to Nordwind Group.</h3>
+          <p data-i18n="firstRun.noAccessBody">Sign-in was successful. Ask your administrator for access to see what's set up here.</p>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<div class="demo-controls">
+  <div class="title" data-i18n="firstRun.demoPanelTitle">Prototype controls</div>
+  <select class="input" style="height:26px; font-size:11px;" onchange="setDemoState(this.value)" id="state-select">
+    <option value="default">Default (first-run)</option>
+    <option value="loading" data-i18n="firstRun.demoStateLoading">Loading</option>
+    <option value="error" data-i18n="firstRun.demoStateError">Error</option>
+    <option value="no-access">Limited role — no company-view permission</option>
+  </select>
+  <div class="group-label" style="font-size:10px;text-transform:uppercase;color:var(--color-text-subtle);margin-top:4px;" data-i18n="firstRun.previewLocale">Preview locale (review only)</div>
+  <select class="input locale-select" style="height:26px; font-size:11px;" onchange="previewLocale(this.value)">
+    <option value="en">English</option>
+    <option value="sv-SE">Svenska</option>
+  </select>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+
+<div class="modal-overlay" id="cmdk-modal" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true">
+    <input placeholder="Search records, or type a command…" autofocus>
+    <div class="results">
+      <div class="group-label">Navigate to</div>
+      <div class="result" onclick="location.href='companies-list.html'"><span>👤</span> Master data — Companies</div>
+    </div>
+  </div>
+</div>
+<div class="toast-stack"></div>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+<script>
+  // ---------------------------------------------------------------------
+  // Locale-driven date formatting demo (Principle 6): the "created" date
+  // is stored once as an ISO instant (data-created-at) and re-rendered
+  // through formatDateTime() on every locale change — never a literal
+  // "2026-09-11" baked into the string, which is what {date} looks like
+  // if you only read the STRINGS table without also reading this.
+  // ---------------------------------------------------------------------
+  function renderSetupDates() {
+    document.querySelectorAll("[data-created-at]").forEach(function (el) {
+      var vars = JSON.parse(el.getAttribute("data-i18n-vars"));
+      vars.date = formatDateTime(el.getAttribute("data-created-at"));
+      el.setAttribute("data-i18n-vars", JSON.stringify(vars));
+    });
+  }
+  // Run once, synchronously, before i18n.js's own DOMContentLoaded listener
+  // fires its first applyI18n() pass, so the very first paint already has a
+  // formatted date rather than the literal "__DATE__" placeholder token.
+  renderSetupDates();
+
+  // The "Preview locale (review only)" control (see spec, "Locale and
+  // formatting") drives both the date recompute and the string re-scan.
+  // Deliberately NOT wired through i18n.js's own setLocale()/onLocaleApplied
+  // hook: applyI18n() calls onLocaleApplied() at its own end, so an
+  // onLocaleApplied that itself called applyI18n() again would recurse
+  // forever. renderSetupDates() must also run BEFORE the scan (it rewrites
+  // the data-i18n-vars attribute applyI18n() is about to read), not after,
+  // which a plain onLocaleApplied hook cannot express either.
+  function previewLocale(loc) {
+    try { localStorage.setItem("aurora-locale", loc); } catch (e) { /* ignore */ }
+    renderSetupDates();
+    applyI18n();
+  }
+
+  // ---------------------------------------------------------------------
+  // Demo-only state switch — a stand-in for what the real page conditions
+  // on: whether the tenant/company/role query succeeded, and whether the
+  // signed-in user holds organization.company.view (see spec for exactly
+  // which permission and query this represents).
+  // ---------------------------------------------------------------------
+  function setDemoState(state) {
+    ["default", "loading", "error", "no-access"].forEach(function (s) {
+      document.getElementById("content-" + s).hidden = (s !== state);
+    });
+    document.getElementById("state-select").value = state;
+  }
+</script>
+</body>
+</html>
