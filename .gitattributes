@@ -1,0 +1,12 @@
+# Aurora ERP - line endings.
+#
+# .editorconfig mandates end_of_line = lf. That governs editors and `dotnet format`; this file
+# governs git itself, so a checkout on Windows cannot silently rewrite the working tree to CRLF
+# and leave `dotnet format --verify-no-changes` (verify.sh stage 2) fighting every file it reads.
+# Normalize on commit, check out LF everywhere.
+
+* text=auto eol=lf
+
+# Shell scripts must be LF regardless of any future per-platform override: CRLF here breaks the
+# shebang line on Linux, where scripts/verify.sh runs.
+*.sh text eol=lf
