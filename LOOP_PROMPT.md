@@ -45,6 +45,11 @@ Aim to finish 1 to 3 tasks per iteration. A short, completed iteration is better
 ### 4. Write good briefs
 Every brief contains: the task ID and title, the path to the spec, relevant ADRs and screen specs, the module and file boundaries, the Definition of Done from CLAUDE.md, and the expected return format. Ask for a short summary back (what changed, test results, deviations, open questions), not full logs.
 
+Also tell every implementing developer, in the brief:
+- **Commit on the task branch as soon as the work first compiles, then keep committing in small steps.** A usage limit or a session restart can kill an agent at any moment. Work already committed is safe; work sitting uncommitted in a worktree is one reclaimed container away from being lost. This has already nearly cost this project a complete, correct scaffold (see iteration 2).
+- The integration branch is `claude/multi-tenant-saas-erp-pv2nap`, not `main`. Branch from it, commit to `task/<TASK-ID>`, and neither merge nor push — the orchestrator integrates.
+- Which named quality gate applies. Early in the bootstrap `scripts/verify.sh` does not exist yet, so saying "run verify.sh" wastes a developer's time; name the real gate instead.
+
 ### 5. Integrate
 - When a senior-developer finishes: check its summary, confirm everything is committed on `task/<TASK-ID>`, remove its worktree with `git worktree remove <path>` (keep the branch), and set the task to `review`.
 - When a senior-reviewer finishes: save its review verbatim to docs/reviews/<TASK-ID>.md and commit it on main.
