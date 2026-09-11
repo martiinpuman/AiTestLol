@@ -41,17 +41,4 @@ internal static class MetadataNames
         string @namespace = reader.GetString(reference.Namespace);
         return @namespace.Length == 0 ? name : @namespace + "." + name;
     }
-
-    /// <summary>The assembly a type reference resolves to, or <c>null</c> when it is not an assembly.</summary>
-    public static string? AssemblyOf(MetadataReader reader, TypeReferenceHandle handle)
-    {
-        TypeReference reference = reader.GetTypeReference(handle);
-        return reference.ResolutionScope.Kind switch
-        {
-            HandleKind.AssemblyReference =>
-                reader.GetString(reader.GetAssemblyReference((AssemblyReferenceHandle)reference.ResolutionScope).Name),
-            HandleKind.TypeReference => AssemblyOf(reader, (TypeReferenceHandle)reference.ResolutionScope),
-            _ => null,
-        };
-    }
 }

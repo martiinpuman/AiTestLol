@@ -1,5 +1,4 @@
 using System.Collections.Immutable;
-using System.Linq;
 using System.Reflection;
 
 namespace Aurora.Architecture.Tests.Metadata;
@@ -71,31 +70,7 @@ internal sealed record ScannedType(
     ImmutableArray<string> InterfaceNames,
     ImmutableArray<ScannedField> Fields,
     ImmutableArray<ScannedProperty> Properties,
-    ImmutableArray<ScannedMethod> Methods,
-    bool IsCompilerGenerated)
-{
-    public string Namespace
-    {
-        get
-        {
-            int lastDot = FullName.LastIndexOf('.');
-            return lastDot < 0 ? string.Empty : FullName[..lastDot];
-        }
-    }
-
-    /// <summary>Every type this type mentions in a member signature, a local or an instruction.</summary>
-    public ImmutableArray<TypeUse> AllTypeUses =>
-    [
-        .. Fields.Select(static f => f.Type),
-        .. Properties.Select(static p => p.Type),
-        .. Methods.SelectMany(static m =>
-            new[] { m.ReturnType }
-                .Concat(m.Parameters)
-                .Concat(m.Body.Locals)
-                .Concat(m.Body.MemberReferences.Select(static r => r.Signature))
-                .Concat(m.Body.MemberReferences.SelectMany(static r => r.GenericArguments))),
-    ];
-}
+    ImmutableArray<ScannedMethod> Methods);
 
 /// <summary>One compiled assembly, read from its PE file without loading or executing it.</summary>
 internal sealed record ScannedAssembly(

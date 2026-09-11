@@ -19,8 +19,6 @@ namespace Aurora.Architecture.Tests.Metadata;
 /// </remarks>
 internal sealed record TypeUse(string Display, ImmutableHashSet<string> Names)
 {
-    public static readonly TypeUse None = new("<none>", ImmutableHashSet<string>.Empty);
-
     public static TypeUse Named(string fullName) =>
         new(fullName, ImmutableHashSet.Create(StringComparer.Ordinal, fullName));
 
