@@ -75,7 +75,7 @@ while read -r path; do
   if [ "${br}" = '?' ]; then
     fail "${path} — unreadable, prune it"
     stale=$((stale + 1))
-  elif [[ "${path}" == /tmp/review-* || "${path}" == /tmp/rereview-* ]]; then
+  elif [[ "${path}" == /tmp/review-* || "${path}" == /tmp/rereview-* || "${path}" == /tmp/sec-* ]]; then
     # A reviewer's detached scratch worktree. Transient by design and removed by
     # the reviewer; only worth reporting, never a broken invariant.
     say "${path} — reviewer scratch, in use or awaiting cleanup"
