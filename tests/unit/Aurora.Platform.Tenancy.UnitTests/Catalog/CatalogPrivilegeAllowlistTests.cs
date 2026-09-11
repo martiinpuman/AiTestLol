@@ -114,12 +114,18 @@ public sealed partial class CatalogPrivilegeAllowlistTests
     }
 
     [Fact]
-    public void No_grant_lets_the_request_path_update_a_column_a_tenant_or_a_host_resolves_by()
+    public void No_grant_lets_the_request_path_write_a_column_a_tenant_or_a_host_resolves_by()
     {
-        // A table-wide UPDATE on a table with routing columns, or a column UPDATE naming one, is
-        // the takeover the security re-review ran: rebind a host, repoint a tenant's database.
+        // Two re-reviews, two verbs. A table-wide UPDATE on a table with routing columns, or a
+        // column UPDATE naming one, is the first takeover: rebind a host, repoint a tenant's
+        // database. INSERT is the second: it writes every column of a new row by definition, so
+        // INSERT on such a table creates a routing decision of the request's own - a tenant whose
+        // database_name is another tenant's, a host for a tenant the request does not own - and no
+        // column list can narrow it, because provisioning has to supply exactly those columns.
+        // The request path therefore holds no INSERT on a routing table at all; the saga's writes
+        // are another principal's.
         int examined = 0;
-        foreach ((string table, AppRoleGrant grant) in Recorded.Where(r => r.Grant.Privilege.StartsWith("UPDATE", StringComparison.Ordinal)))
+        foreach ((string table, AppRoleGrant grant) in Recorded)
         {
             if (!CatalogSchemaAllowlist.RoutingColumns.TryGetValue(table, out IReadOnlySet<string>? routing))
             {
@@ -127,14 +133,21 @@ public sealed partial class CatalogPrivilegeAllowlistTests
             }
 
             examined++;
-            string? column = ColumnOf(grant.Privilege);
-            column.ShouldNotBeNull($"UPDATE on catalog.{table} is table-wide, and {table} has columns a request is routed by");
-            routing.ShouldNotContain(column, $"UPDATE({column}) on catalog.{table} lets the request path rewrite where a tenant or a host resolves");
+            grant.Privilege.StartsWith("INSERT", StringComparison.Ordinal).ShouldBeFalse(
+                $"{grant.Privilege} on catalog.{table} writes every column of a new row, the columns a tenant or a host resolves by included; "
+                + "the request path may not create a routing decision");
+
+            if (grant.Privilege.StartsWith("UPDATE", StringComparison.Ordinal))
+            {
+                string? column = ColumnOf(grant.Privilege);
+                column.ShouldNotBeNull($"UPDATE on catalog.{table} is table-wide, and {table} has columns a request is routed by");
+                routing.ShouldNotContain(column, $"UPDATE({column}) on catalog.{table} lets the request path rewrite where a tenant or a host resolves");
+            }
         }
 
-        // catalog.tenant's lifecycle columns are UPDATE grants on a table with routing columns, so
-        // this loop cannot have examined nothing.
-        _output.WriteLine($"Examined {examined} UPDATE grants on tables that hold routing columns.");
+        // catalog.tenant's SELECT and lifecycle-column UPDATE grants are grants on a table with
+        // routing columns, so this loop cannot have examined nothing.
+        _output.WriteLine($"Examined {examined} grants on tables that hold routing columns.");
         examined.ShouldBeGreaterThan(0);
     }
 

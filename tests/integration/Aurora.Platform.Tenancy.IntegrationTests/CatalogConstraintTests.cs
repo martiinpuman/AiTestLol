@@ -47,6 +47,31 @@ public sealed class CatalogConstraintTests
     }
 
     [Fact]
+    public async Task Two_tenants_cannot_resolve_to_one_database_on_one_cluster()
+    {
+        // The first shape of the security re-review's H-4: a second tenant row carrying another
+        // tenant's cluster_id and database_name, so that a host bound to it reaches that tenant's
+        // data. The grants stop the request path from inserting it at all; this is the rule the
+        // database keeps whoever inserts - one database on one cluster is one tenant's - so a bug
+        // in the principal that may insert cannot create it either. The entity derives the name
+        // from the key, so the only way to write this row is SQL, as the owner.
+        DatabaseCluster cluster = Unique.Cluster();
+        Tenant globex = Unique.Tenant(cluster);
+        await SaveAsync(cluster, globex);
+
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.tenant (id, key, display_name, state, cluster_id, database_name, residency_region, plan, created_at) " +
+            "SELECT @id, @key, 'Attacker', 'Active', t.cluster_id, t.database_name, t.residency_region, 'standard', now() " +
+            "FROM catalog.tenant t WHERE t.id = @globex",
+            ("id", Guid.CreateVersion7()),
+            ("key", Unique.TenantKey().Value),
+            ("globex", globex.Id.Value)));
+
+        refused.SqlState.ShouldBe(UniqueViolation);
+        refused.ConstraintName.ShouldBe("ux_tenant_cluster_id_database_name");
+    }
+
+    [Fact]
     public async Task A_tenant_cannot_be_routed_to_a_cluster_outside_its_region()
     {
         DatabaseCluster cluster = Unique.Cluster("nz");

@@ -4,7 +4,9 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
+using Aurora.Platform.Tenancy.Contracts;
 using Aurora.Platform.Tenancy.Tests;
+using Aurora.SharedKernel;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Shouldly;
@@ -273,25 +275,30 @@ public sealed class CatalogPrivilegeTests
     [Fact]
     public async Task The_app_role_cannot_repoint_where_a_tenant_or_a_host_resolves()
     {
-        // The takeover the security re-review ran against this migration with the grants B-05 first
-        // shipped - as aurora_app, no DDL, no superuser: unbind another tenant's hostname and bind it
-        // to your own; send one tenant's requests at another tenant's database; repoint a cluster at
-        // a host you control, so the resolver dials it carrying the real cluster credentials. Each
-        // statement is tried on rows this test owns, must be refused as 42501 - not a constraint
-        // violation, which would mean the privilege was there and only the data got in the way -
-        // and the rows must read back untouched.
+        // The takeovers two security re-reviews ran against this migration - as aurora_app, no DDL,
+        // no superuser. With the grants B-05 first shipped: unbind another tenant's hostname and
+        // bind it to your own; send one tenant's requests at another tenant's database; repoint a
+        // cluster at a host you control, so the resolver dials it carrying the real cluster
+        // credentials. With the grants the first rework kept, using INSERT alone: a tenant of the
+        // request's own whose routing columns are copied from another tenant's row, so a host of
+        // the request's choosing resolves to that tenant's database; and a host row for a tenant
+        // the request does not own - self-verified, or claiming the primary of a tenant that has
+        // none yet - which section 4.3's identity check can never see, because the tenant is
+        // genuine. Each statement is tried on rows this test owns, must be refused as 42501 - not
+        // a constraint violation, which would mean the privilege was there and only the data got
+        // in the way - and the rows must read back untouched.
         DatabaseCluster cluster = Unique.Cluster();
         Tenant acme = Unique.Tenant(cluster);
         Tenant globex = Unique.Tenant(cluster);
         string globexHost = Unique.Host();
-        await _catalog.SeedAsync(catalog => catalog.DatabaseClusters.Add(cluster));
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
+        TenantKey attackerKey = Unique.TenantKey();
+        await _catalog.SeedAsync(catalog =>
         {
-            writer.Tenants.Add(acme);
-            writer.Tenants.Add(globex);
-            writer.TenantHosts.Add(TenantHost.Register(globexHost, globex.Id, isPrimary: true, verifiedAt: Unique.Now));
-            await writer.SaveChangesAsync();
-        }
+            catalog.DatabaseClusters.Add(cluster);
+            catalog.Tenants.Add(acme);
+            catalog.Tenants.Add(globex);
+            catalog.TenantHosts.Add(TenantHost.Register(globexHost, globex.Id, isPrimary: true, verifiedAt: Unique.Now));
+        });
 
         (string What, string Sql, (string Name, object Value)[] Parameters)[] attempts =
         [
@@ -312,6 +319,14 @@ public sealed class CatalogPrivilegeTests
                 + "VALUES (@id, 'nz', 'attacker.example.net', 5432, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')", [("id", Unique.ClusterId().Value)]),
             ("remove the cluster",
                 "DELETE FROM catalog.database_cluster WHERE id = @cluster", [("cluster", cluster.Id.Value)]),
+            ("create a tenant of the request's own that resolves to another tenant's database",
+                "INSERT INTO catalog.tenant (id, key, display_name, state, cluster_id, database_name, residency_region, core_schema_version, plan, created_at) "
+                + "SELECT @id, @key, 'Attacker', 'Active', t.cluster_id, t.database_name, t.residency_region, t.core_schema_version, 'standard', now() "
+                + "FROM catalog.tenant t WHERE t.id = @globex", [("id", TenantId.Create().Value), ("key", attackerKey.Value), ("globex", globex.Id.Value)]),
+            ("register a self-verified host of the request's choosing for another tenant",
+                "INSERT INTO catalog.tenant_host (host, tenant_id, is_primary, verified_at) VALUES (@host, @globex, false, now())", [("host", Unique.Host()), ("globex", globex.Id.Value)]),
+            ("claim the primary host of a tenant that has none yet",
+                "INSERT INTO catalog.tenant_host (host, tenant_id, is_primary, verified_at) VALUES (@host, @acme, true, now())", [("host", Unique.Host()), ("acme", acme.Id.Value)]),
         ];
 
         foreach ((string what, string sql, (string Name, object Value)[] parameters) in attempts)
@@ -323,6 +338,9 @@ public sealed class CatalogPrivilegeTests
 
         await using CatalogDbContext reader = _catalog.OpenAsApp();
         (await reader.TenantHosts.SingleAsync(h => h.Host == globexHost)).TenantId.ShouldBe(globex.Id);
+        (await reader.TenantHosts.CountAsync(h => h.TenantId == globex.Id)).ShouldBe(1);
+        (await reader.TenantHosts.AnyAsync(h => h.TenantId == acme.Id)).ShouldBeFalse();
+        (await reader.Tenants.AnyAsync(t => t.Key == attackerKey)).ShouldBeFalse();
         Tenant acmeReadBack = await reader.Tenants.SingleAsync(t => t.Id == acme.Id);
         acmeReadBack.DatabaseName.ShouldBe(acme.DatabaseName);
         acmeReadBack.ClusterId.ShouldBe(cluster.Id);
