@@ -85,12 +85,14 @@ public sealed class TrustedPackageKey
                 $"{failure.Message}");
         }
 
-        if (key.KeySize != PackageSignature.KeySizeInBits)
+        string? curve = CurveOidOf(key);
+        if (!string.Equals(curve, PackageSignature.CurveOid, StringComparison.Ordinal))
         {
             return HostingErrors.HostConfiguration(
-                $"The trusted key pinned as '{expectedThumbprint}' is a {key.KeySize}-bit key; " +
-                $"package signing is ECDSA P-256 ({PackageSignature.KeySizeInBits}-bit) and nothing " +
-                $"else. Accepting a second curve would mean accepting the weakest one on the list.");
+                $"The trusted key pinned as '{expectedThumbprint}' is a {key.KeySize}-bit key on curve " +
+                $"'{curve ?? "<unnamed>"}'; package signing is ECDSA on P-256 " +
+                $"({PackageSignature.CurveOid}) and nothing else. Accepting a second curve would mean " +
+                $"accepting the weakest one on the list, and a key size alone does not name the curve.");
         }
 
         string actual = Convert.ToHexStringLower(SHA256.HashData(subjectPublicKeyInfo));
@@ -103,6 +105,16 @@ public sealed class TrustedPackageKey
         }
 
         return Result.Success(new TrustedPackageKey(actual, level, [.. subjectPublicKeyInfo]));
+    }
+
+    /// <summary>
+    /// The OID of the named curve <paramref name="key"/> is on, or <see langword="null"/> for a
+    /// curve given by explicit parameters — which is refused too: the one accepted curve has a name.
+    /// </summary>
+    private static string? CurveOidOf(ECDsa key)
+    {
+        ECCurve curve = key.ExportParameters(includePrivateParameters: false).Curve;
+        return curve.IsNamed ? curve.Oid.Value : null;
     }
 
     /// <summary>A verifier over this key. The caller disposes it.</summary>

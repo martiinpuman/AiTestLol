@@ -117,6 +117,32 @@ public sealed class CountryPackageHostOptionsTests
         trusted.Error.Description.ShouldContain("P-256");
     }
 
+    /// <summary>
+    /// The bit length is not the curve. secp256k1 is a 256-bit curve too, and a check on
+    /// <c>KeySize</c> alone accepted a key on it; the curve's OID is what says P-256.
+    /// </summary>
+    [Fact]
+    public void A_256_bit_key_on_a_curve_other_than_P_256_is_refused()
+    {
+        using ECDsa key = ECDsa.Create(ECCurve.CreateFromValue(Secp256k1Oid));
+        byte[] publicKey = key.ExportSubjectPublicKeyInfo();
+
+        key.KeySize.ShouldBe(
+            PackageSignature.KeySizeInBits,
+            "this case only bites if the key size alone cannot tell the curves apart");
+
+        Result<TrustedPackageKey> trusted = TrustedPackageKey.Create(
+            Convert.ToHexStringLower(SHA256.HashData(publicKey)),
+            PackageTrustLevel.FirstParty,
+            publicKey);
+
+        trusted.IsFailure.ShouldBeTrue();
+        trusted.Error.Description.ShouldContain("P-256");
+        trusted.Error.Description.ShouldContain(Secp256k1Oid);
+    }
+
+    private const string Secp256k1Oid = "1.3.132.0.10";
+
     [Fact]
     public void A_key_that_is_not_a_key_is_refused() =>
         TrustedPackageKey.Create("abcd", PackageTrustLevel.FirstParty, [1, 2, 3])

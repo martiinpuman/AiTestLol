@@ -26,7 +26,13 @@ public static class PackageSignature
     /// <summary>The detached signature file, beside the assembly in the package directory.</summary>
     public const string FileName = "package.sig";
 
-    /// <summary>The only curve accepted, in bits.</summary>
+    /// <summary>
+    /// The only curve accepted, by OID: P-256 (also called secp256r1 and prime256v1). The OID is
+    /// what is enforced — a key size alone does not name a curve, and secp256k1 is 256-bit too.
+    /// </summary>
+    public const string CurveOid = "1.2.840.10045.3.1.7";
+
+    /// <summary>The size of a key on that curve, in bits — for messages, not for the check.</summary>
     public const int KeySizeInBits = 256;
 
     /// <summary>The hash the signature is over.</summary>
