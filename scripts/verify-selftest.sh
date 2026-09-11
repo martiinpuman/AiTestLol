@@ -247,11 +247,29 @@ assert_nothing_ran_after() {
 # The count in stage 6's row is asserted here rather than only in the case that
 # makes it fail: it is printed on every run precisely so that a stage which
 # measured nothing cannot look like a stage on which everything passed.
+#
+# The number itself is kept: two later cases need to know how many tests a full
+# run executes on this tree, and reading it from the baseline is what lets them
+# keep discriminating as the suite grows instead of expiring at a literal.
+BASELINE_EXECUTED=""
+
 case_baseline() {
   case_begin "baseline: a clean tree passes, and stage 6 says how many tests ran"
   run_verify
   assert_pass || return 0
   assert_summary_row 6 "PASS" "test(s) executed" || return 0
+  BASELINE_EXECUTED="$(executed_count_from_summary)"
+}
+
+# The count stage 6 printed in its summary row; empty if the row has none.
+executed_count_from_summary() {
+  grep -E '^ 6[[:space:]]' -- "${VERIFY_DIR}/summary.txt" 2>/dev/null \
+    | grep -Eo '[0-9]+ test\(s\) executed' | grep -Eo '^[0-9]+' || true
+}
+
+require_baseline_count() {
+  [[ -n "${BASELINE_EXECUTED}" ]] \
+    || fail_case "the baseline case did not record an executed-test count" || return 1
 }
 
 case_any_cwd() {
@@ -476,6 +494,48 @@ case_unit_tests_vacuous() {
   assert_summary_row 6 "FAIL" "0 test(s) executed" || return 0
 }
 
+# The floor is compared in base ten, explicitly (10# in verify.sh). Without
+# that, a zero-padded AURORA_MIN_UNIT_TESTS is octal to bash: "0300" is 192, a
+# suite of 208 clears it, and the gate prints RESULT: PASS with no error output
+# at all - a floor the developer meant as 300, silently read as 192. The case
+# above sets the floor to 1, which is not zero-padded, so it could not tell.
+#
+# The probe is derived from the count the baseline observed rather than fixed
+# at "0300": its base-ten reading is above that count, so the gate as written
+# must fail, and its octal reading is at or below it, so the gate with 10#
+# removed would pass. A literal would stop discriminating - silently - the day
+# the suite grew past it. Both readings are printed so the choice is checkable.
+case_unit_tests_floor_is_read_in_base_ten() {
+  case_begin "stage 6: a zero-padded floor is read in base ten, not octal"
+  require_baseline_count || return 0
+  local probe
+  probe="$(octal_ambiguous_floor_above "${BASELINE_EXECUTED}")" \
+    || { fail_case "no zero-padded floor separates base ten from octal above ${BASELINE_EXECUTED} tests"; return 0; }
+  printf '    probe %s: %d in base ten (> %d executed), %d in octal (<= %d)\n' \
+    "${probe}" "$(( 10#${probe} ))" "${BASELINE_EXECUTED}" "$(( 8#${probe} ))" "${BASELINE_EXECUTED}"
+  VERIFY_ENV=("AURORA_MIN_UNIT_TESTS=${probe}")
+  run_verify
+  assert_fail_stage 6 || return 0
+  assert_stage_log_contains 6 "below the required minimum of ${probe}" || return 0
+  assert_summary_row 6 "FAIL" "${BASELINE_EXECUTED} test(s) executed" || return 0
+}
+
+# The smallest zero-padded value whose base-ten reading exceeds N while its
+# octal reading does not. Digits 0-7 only, so bash accepts it as octal without
+# an error - the silent variant, which is the one worth guarding against. No
+# such value exists below N = 8; then this prints nothing and fails.
+octal_ambiguous_floor_above() {
+  local n="$1" d
+  for (( d = n + 1; d <= n * 10 + 10; d++ )); do
+    [[ "${d}" =~ ^[0-7]+$ ]] || continue
+    if (( 8#${d} <= n )); then
+      printf '0%s' "${d}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # Stage 11 enforces 5.1's central promise - the gate never mutates what it
 # measures - and B-11 adds the stages that read lock files and the dependency
 # closure, which is the code most likely to regress it. The probe is an MSBuild
@@ -564,6 +624,7 @@ CASES=(
   case_unit_test_failure
   case_unit_test_host_aborts
   case_unit_tests_vacuous
+  case_unit_tests_floor_is_read_in_base_ten
   case_summary_tree_guard
   case_usage_errors
   case_option_skips_are_declared
