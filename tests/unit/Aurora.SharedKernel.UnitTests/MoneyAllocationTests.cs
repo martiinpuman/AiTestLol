@@ -125,4 +125,62 @@ public sealed class MoneyAllocationTests
     {
         Should.Throw<InvalidOperationException>(() => default(Money).Allocate(3));
     }
+
+    /// <summary>
+    /// A discount apportioned over three lines by the most natural weights there are: each line's
+    /// share of the document total, written as <c>lineAmount / documentTotal</c>.
+    /// </summary>
+    /// <remarks>
+    /// A <c>decimal</c> division carries 28 decimal places, and an implementation that multiplies
+    /// the amount by a weight of that shape exhausts <c>decimal</c>'s 28-29 significant digits and
+    /// rounds — silently, with no exception. One cent used to vanish here (review B-03, finding
+    /// B-1). Allocation now scales the weights to integers first, so no weight can be too precise
+    /// for it.
+    /// </remarks>
+    [Fact]
+    public void Ratio_weights_over_three_lines_still_add_up_to_the_discount()
+    {
+        Money discount = new(3914.33m, Nzd);
+
+        IReadOnlyList<Money> parts = discount.Allocate(
+            [5851.58m / 9400.65m, 2480.8m / 3508.02m, 7205.35m / 2643.21m]);
+
+        Money.Sum(parts, Nzd).ShouldBe(discount);
+        parts.ShouldAllBe(part => part.IsInWholeMinorUnits);
+    }
+
+    /// <summary>
+    /// The simplest allocation there is. One part takes everything, whatever its weight says,
+    /// because it is the only proportion of the whole there is.
+    /// </summary>
+    /// <remarks>
+    /// This used to return 6252019.1900000000000000000001 NZD — not a payable amount, and not the
+    /// amount it was given (review B-03, finding B-1).
+    /// </remarks>
+    [Fact]
+    public void A_single_line_weighted_by_a_third_takes_the_whole_amount_unchanged()
+    {
+        Money total = new(6252019.19m, Nzd);
+
+        IReadOnlyList<Money> parts = total.Allocate([1m / 3m]);
+
+        parts.ShouldBe([total]);
+        parts[0].IsInWholeMinorUnits.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Four ratio weights of mixed magnitude over a seven-figure total. One cent used to go
+    /// missing (review B-03, finding B-1).
+    /// </summary>
+    [Fact]
+    public void Four_ratio_weights_over_a_seven_figure_total_still_add_up()
+    {
+        Money total = new(7810283.36m, Nzd);
+
+        IReadOnlyList<Money> parts = total.Allocate(
+            [9649.37m / 9055.42m, 6827.95m / 6769.69m, 1774.05m / 5469.35m, 4729.04m / 9735.47m]);
+
+        Money.Sum(parts, Nzd).ShouldBe(total);
+        parts.ShouldAllBe(part => part.IsInWholeMinorUnits);
+    }
 }

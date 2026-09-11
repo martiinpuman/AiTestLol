@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Numerics;
 
 namespace Aurora.SharedKernel;
 
@@ -263,9 +264,13 @@ public readonly record struct Money : IComparable<Money>
     /// do not matter — <c>[1, 1, 2]</c> and <c>[25, 25, 50]</c> split identically.
     /// </para>
     /// <para>
-    /// Weights meet the amount at full <see cref="decimal"/> precision, so weights of extreme
-    /// magnitude can exhaust it. That surfaces as <see cref="OverflowException"/> from
-    /// <see cref="decimal"/> itself rather than as a quietly wrong split.
+    /// No weight is too precise for this. A weight written the obvious way — <c>lineAmount /
+    /// documentTotal</c> — carries 28 decimal places, and <c>decimal</c> multiplication rounds
+    /// <b>silently</b> once a product needs more than its 28-29 significant digits. Allocation
+    /// therefore does not multiply the amount by the weights at all: it scales the weights to
+    /// whole numbers once and runs the whole largest-remainder computation in
+    /// <see cref="BigInteger"/>, where nothing can round. It then checks the split it is about to
+    /// return against its own law and throws rather than hand back parts that do not add up.
     /// </para>
     /// </remarks>
     /// <param name="weights">One non-negative weight per part, not all zero.</param>
@@ -281,7 +286,7 @@ public readonly record struct Money : IComparable<Money>
         ArgumentNullException.ThrowIfNull(weights);
         AssertSpecified();
 
-        decimal weightTotal = AssertAllocatable(weights);
+        AssertAllocatable(weights);
 
         if (!IsInWholeMinorUnits)
         {
@@ -293,43 +298,53 @@ public readonly record struct Money : IComparable<Money>
                 $"policy, with Round(RoundingPolicy.CoreDefaultFor(currency))."));
         }
 
+        // From here to the sign being put back, every number is a whole one. The amount is a whole
+        // count of minor units by the precondition just checked, and the weights are scaled to
+        // whole numbers below, so each part's share is an integer division with an integer
+        // remainder. Nothing in this method can round, whatever precision a caller's weights carry.
+        decimal scale = MinorUnitScale(Currency);
+
         // The split runs on the magnitude and puts the sign back afterwards, so that a credit note
         // is divided exactly like the invoice it reverses instead of down its own rounding path.
-        decimal scale = MinorUnitScale(Currency);
-        decimal totalMinorUnits = Math.Abs(Amount) * scale;
+        BigInteger totalMinorUnits = (BigInteger)(Math.Abs(Amount) * scale);
 
-        decimal[] partMinorUnits = new decimal[weights.Count];
-        decimal[] remainders = new decimal[weights.Count];
-        decimal claimed = 0m;
+        BigInteger[] scaledWeights = ToCommonIntegerScale(weights);
+        BigInteger weightTotal = BigInteger.Zero;
+        foreach (BigInteger weight in scaledWeights)
+        {
+            weightTotal += weight;
+        }
+
+        BigInteger[] partMinorUnits = new BigInteger[weights.Count];
+        BigInteger[] remainders = new BigInteger[weights.Count];
+        BigInteger claimed = BigInteger.Zero;
 
         for (int part = 0; part < weights.Count; part++)
         {
-            // Exact integer arithmetic: `%` on decimal does not round, so both the whole minor
-            // units a part takes and the remainder that decides the leftover are exact, rather
-            // than the output of a division that already lost the digit being compared.
-            decimal share = totalMinorUnits * weights[part];
-            decimal remainder = share % weightTotal;
-
-            partMinorUnits[part] = (share - remainder) / weightTotal;
+            partMinorUnits[part] = BigInteger.DivRem(
+                totalMinorUnits * scaledWeights[part],
+                weightTotal,
+                out BigInteger remainder);
             remainders[part] = remainder;
             claimed += partMinorUnits[part];
         }
 
-        int leftover = (int)(totalMinorUnits - claimed);
+        int leftover = LeftoverMinorUnits(totalMinorUnits - claimed, weights);
         int[] byLargestRemainder = ByLargestRemainder(remainders);
         for (int rank = 0; rank < leftover; rank++)
         {
-            partMinorUnits[byLargestRemainder[rank]] += 1m;
+            partMinorUnits[byLargestRemainder[rank]] += BigInteger.One;
         }
 
         bool isCredit = IsNegative;
         Money[] allocation = new Money[weights.Count];
         for (int part = 0; part < allocation.Length; part++)
         {
-            decimal amount = partMinorUnits[part] / scale;
+            decimal amount = (decimal)partMinorUnits[part] / scale;
             allocation[part] = new Money(isCredit ? -amount : amount, Currency);
         }
 
+        AssertAddsUp(allocation, weights);
         return allocation;
     }
 
@@ -370,9 +385,13 @@ public readonly record struct Money : IComparable<Money>
     }
 
     /// <summary>
-    /// Refuses a set of weights that cannot divide anything, and returns their total.
+    /// Refuses a set of weights that cannot divide anything.
     /// </summary>
-    private static decimal AssertAllocatable(IReadOnlyList<decimal> weights)
+    /// <remarks>
+    /// Whether any weight is positive is asked of each weight rather than of their sum, so that
+    /// the check is a comparison of exact values and not of an addition.
+    /// </remarks>
+    private static void AssertAllocatable(IReadOnlyList<decimal> weights)
     {
         if (weights.Count == 0)
         {
@@ -381,7 +400,7 @@ public readonly record struct Money : IComparable<Money>
                 nameof(weights));
         }
 
-        decimal weightTotal = 0m;
+        bool anyWeightIsPositive = false;
         for (int part = 0; part < weights.Count; part++)
         {
             if (weights[part] < 0m)
@@ -395,18 +414,151 @@ public readonly record struct Money : IComparable<Money>
                     nameof(weights));
             }
 
-            weightTotal += weights[part];
+            if (weights[part] > 0m)
+            {
+                anyWeightIsPositive = true;
+            }
         }
 
-        if (weightTotal == 0m)
+        if (!anyWeightIsPositive)
         {
             throw new ArgumentException(
                 "Every weight is zero, so there is no share for any part to take. Weights are " +
                 "proportions of a total that must itself be greater than zero.",
                 nameof(weights));
         }
+    }
 
-        return weightTotal;
+    /// <summary>
+    /// The weights as whole numbers in one shared scale, so that the split can be computed without
+    /// a single rounding-capable operation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Weights are proportions: multiplying every one of them by the same power of ten changes no
+    /// part's share. Doing that once, exactly, is what makes the rest of allocation exact.
+    /// </para>
+    /// <para>
+    /// The alternative — multiplying the amount by each weight as a <see cref="decimal"/> — is
+    /// what this replaces. <c>decimal</c> is exact in base ten until a result needs more than its
+    /// 28-29 significant digits, at which point it rounds and says nothing. A weight written the
+    /// natural way, <c>lineAmount / documentTotal</c>, already carries 28 decimal places, so the
+    /// product crosses that line at four-figure amounts and a cent goes missing from an ordinary
+    /// invoice. Whole numbers have no such budget to exhaust.
+    /// </para>
+    /// </remarks>
+    private static BigInteger[] ToCommonIntegerScale(IReadOnlyList<decimal> weights)
+    {
+        int commonScale = 0;
+        for (int part = 0; part < weights.Count; part++)
+        {
+            commonScale = Math.Max(commonScale, weights[part].Scale);
+        }
+
+        BigInteger[] scaled = new BigInteger[weights.Count];
+        for (int part = 0; part < weights.Count; part++)
+        {
+            scaled[part] = Digits(weights[part])
+                * BigInteger.Pow(10, commonScale - weights[part].Scale);
+        }
+
+        return scaled;
+    }
+
+    /// <summary>
+    /// The digits of a non-negative <see cref="decimal"/> with its decimal point taken out: 1.25
+    /// gives 125, and 1.2500 gives 12500.
+    /// </summary>
+    /// <remarks>
+    /// Read out of the value's own 96-bit representation rather than computed, so that a weight
+    /// carrying every digit <c>decimal</c> can hold converts without multiplying anything and
+    /// therefore without any chance of rounding or overflow.
+    /// </remarks>
+    private static BigInteger Digits(decimal value)
+    {
+        Span<int> bits = stackalloc int[4];
+        decimal.GetBits(value, bits);
+
+        BigInteger digits = new((uint)bits[2]);
+        digits = (digits << 32) + (uint)bits[1];
+        return (digits << 32) + (uint)bits[0];
+    }
+
+    /// <summary>
+    /// The minor units still to hand out, having checked that they are a number the
+    /// largest-remainder method can hand out at all.
+    /// </summary>
+    /// <remarks>
+    /// In exact arithmetic this is always at least zero and always fewer than the number of parts,
+    /// because each part is short of its exact share by less than one whole minor unit. Checking it
+    /// rather than assuming it is the difference between a wrong split and a wrong split nobody
+    /// notices: the implementation this replaces arrived here with a fractional value and cast it
+    /// to <see cref="int"/>, so a leftover of 0.9999… became none and a cent left the invoice in
+    /// silence.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The leftover is not one that can be handed out.</exception>
+    private int LeftoverMinorUnits(BigInteger leftover, IReadOnlyList<decimal> weights)
+    {
+        if (leftover < BigInteger.Zero || leftover >= weights.Count)
+        {
+            throw new InvalidOperationException(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Splitting {this} over weights [{Describe(weights)}] left {leftover} minor units " +
+                $"to hand out, and the largest-remainder method can only ever have between 0 and " +
+                $"{weights.Count - 1}. Refusing to return a split that does not add up " +
+                $"(ADR-0021 §6)."));
+        }
+
+        return (int)leftover;
+    }
+
+    /// <summary>
+    /// Refuses to return an allocation that breaks the one law allocation exists to keep.
+    /// </summary>
+    /// <remarks>
+    /// Checked, not trusted. Every part is whole minor units and the parts add up to the amount by
+    /// construction above; this says so out loud anyway, because the failure mode is an invoice
+    /// whose lines do not match its total and nothing downstream of a wrong split can tell that it
+    /// was wrong.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The parts are unpayable or do not add up.</exception>
+    private void AssertAddsUp(Money[] allocation, IReadOnlyList<decimal> weights)
+    {
+        decimal allocated = 0m;
+        for (int part = 0; part < allocation.Length; part++)
+        {
+            if (!allocation[part].IsInWholeMinorUnits)
+            {
+                throw new InvalidOperationException(string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Splitting {this} over weights [{Describe(weights)}] gave part {part} " +
+                    $"{allocation[part]}, which is not a whole number of minor units and so cannot " +
+                    $"be paid. Refusing to return it (ADR-0021 §6)."));
+            }
+
+            allocated += allocation[part].Amount;
+        }
+
+        if (allocated != Amount)
+        {
+            throw new InvalidOperationException(string.Create(
+                CultureInfo.InvariantCulture,
+                $"Splitting {this} over weights [{Describe(weights)}] gave parts adding up to " +
+                $"{allocated}, not {Amount}. Refusing to return a split that loses or invents a " +
+                $"minor unit (ADR-0021 §6)."));
+        }
+    }
+
+    /// <summary>The weights as an invariant list, for an exception message that names the input.</summary>
+    private static string Describe(IReadOnlyList<decimal> weights)
+    {
+        string[] written = new string[weights.Count];
+        for (int part = 0; part < weights.Count; part++)
+        {
+            written[part] = weights[part].ToString(CultureInfo.InvariantCulture);
+        }
+
+        return string.Join(", ", written);
     }
 
     /// <summary>
@@ -418,7 +570,7 @@ public readonly record struct Money : IComparable<Money>
     /// remainders would depend on the sort implementation, and the same invoice could give its
     /// leftover cent to a different line on a different day.
     /// </remarks>
-    private static int[] ByLargestRemainder(decimal[] remainders)
+    private static int[] ByLargestRemainder(BigInteger[] remainders)
     {
         int[] order = new int[remainders.Length];
         for (int part = 0; part < order.Length; part++)
