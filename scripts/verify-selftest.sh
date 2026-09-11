@@ -15,7 +15,8 @@
 #
 # This is deliberately NOT a stage of verify.sh. It costs one full gate run per
 # case, and it mutates the working tree while it runs - which is precisely what
-# a gate must never do. Run it when verify.sh itself changes.
+# a gate must never do. Run it when verify.sh itself changes; name one or more
+# cases on the command line to run only those while working on one.
 #
 # Covers stages 0-3, 6 and 11 (task B-02). Stages 4, 5 and 7-10 arrive with
 # B-11; dependencies.md 1 rule 4 already demands six such cases for stage 4
@@ -131,8 +132,8 @@ fail_case() {
 }
 
 # A case this machine cannot run says so and is tallied apart from the passes.
-# "16/16 behaved as specified" has to mean sixteen properties demonstrated -
-# not fifteen, plus one that was never checked and counted as though it had.
+# A full score has to mean every property demonstrated - not all but one, plus
+# one that was never checked and counted as though it had been.
 skip_case() {
   printf '    %sSKIP%s %s\n' "${C_YELLOW}" "${C_RESET}" "$*"
   CASES_SKIPPED=$(( CASES_SKIPPED + 1 ))
