@@ -61,9 +61,9 @@ readonly FAIL_TAIL_LINES=40
 # 310 since B-04: Aurora.Architecture.Tests started hosting tests (109 of them) and
 # the two kernel-local assembly tests it supersedes were deleted, taking the suite
 # from 208 to 315. Leaving the floor at 200 would have let the whole architecture
-# assembly drop out of the run without the gate noticing. 330 since B-04's second
-# rework took that assembly to 126 tests and the suite to 332.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-330}"
+# assembly drop out of the run without the gate noticing. 340 since B-04's second
+# rework took that assembly to 136 tests and the suite to 342.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-340}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
