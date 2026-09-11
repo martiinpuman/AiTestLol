@@ -346,6 +346,61 @@ public sealed class CatalogPrivilegeTests
     }
 
     [Fact]
+    public async Task A_trigger_function_closed_to_the_app_role_still_fires_for_it()
+    {
+        // What the migration's default privilege rests on, and what ADR-0028 section 2 mechanism 3
+        // needs: PostgreSQL checks EXECUTE on a trigger function when the trigger is created, not
+        // when it fires. So the append-only trigger a later migration puts in catalog stays closed
+        // to aurora_app - recorded as [] in AppRoleObjectPrivileges, uncallable directly - and
+        // still raises on the role's UPDATE. Committed rather than rolled back for the same reason
+        // as the function test above; dropped whatever happens.
+        DatabaseCluster cluster = Unique.Cluster();
+        Tenant tenant = Unique.Tenant(cluster);
+        await _catalog.SeedAsync(catalog =>
+        {
+            catalog.DatabaseClusters.Add(cluster);
+            catalog.Tenants.Add(tenant);
+        });
+
+        string function = Unique.Identifier("refuse_update");
+        await using NpgsqlConnection migrator = await _catalog.OpenMigratorConnectionAsync();
+        await CatalogDatabaseFixture.ExecuteAsync(
+            migrator,
+            $"CREATE FUNCTION catalog.{function}() RETURNS trigger LANGUAGE plpgsql AS "
+            + $"'BEGIN RAISE EXCEPTION USING ERRCODE = ''P0001'', MESSAGE = ''{function} fired for '' || current_user; END'");
+        await CatalogDatabaseFixture.ExecuteAsync(
+            migrator,
+            $"CREATE TRIGGER {function} BEFORE UPDATE ON catalog.installed_package FOR EACH ROW EXECUTE FUNCTION catalog.{function}()");
+
+        try
+        {
+            await using (CatalogDbContext installer = _catalog.OpenAsApp())
+            {
+                installer.InstalledPackages.Add(InstalledPackage.Begin(tenant.Id, "nz", "1.0.0", "user:probe", Unique.Now));
+                await installer.SaveChangesAsync();
+            }
+
+            await using NpgsqlConnection app = await _catalog.OpenAppConnectionAsync();
+            await using (var update = new NpgsqlCommand("UPDATE catalog.installed_package SET state = 'Failed' WHERE tenant_id = @tenant", app))
+            {
+                update.Parameters.AddWithValue("tenant", tenant.Id.Value);
+
+                PostgresException raised = await Should.ThrowAsync<PostgresException>(() => update.ExecuteNonQueryAsync(), "the trigger");
+
+                raised.SqlState.ShouldBe("P0001", "the trigger's own error, not a privilege check");
+                raised.MessageText.ShouldBe($"{function} fired for {CatalogDatabaseFixture.AppRole}");
+            }
+
+            await RefusedAsAppAsync("calling the trigger function directly", $"SELECT catalog.{function}()", []);
+        }
+        finally
+        {
+            await CatalogDatabaseFixture.ExecuteAsync(migrator, $"DROP TRIGGER {function} ON catalog.installed_package");
+            await CatalogDatabaseFixture.ExecuteAsync(migrator, $"DROP FUNCTION catalog.{function}()");
+        }
+    }
+
+    [Fact]
     public async Task The_catalog_sets_exactly_one_default_privilege_and_it_closes_new_functions_to_PUBLIC()
     {
         // The one ALTER DEFAULT PRIVILEGES in the catalog, and why it is not the kind the
