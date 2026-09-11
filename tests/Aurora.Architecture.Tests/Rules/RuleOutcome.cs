@@ -31,9 +31,6 @@ internal enum ViolationSite
 
     /// <summary>A reference declared in a project file or its lock file.</summary>
     Declaration,
-
-    /// <summary>The shape of the population itself: an identity a rule depends on is absent from it.</summary>
-    Population,
 }
 
 /// <summary>One violation: what broke the rule, where the mechanism saw it, and the detail.</summary>

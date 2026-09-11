@@ -26,8 +26,9 @@ namespace Aurora.Architecture.Tests.Rules;
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> a context handed out by a member other than its constructor - a
-/// public factory method, a property, a field. ADR-0032 §4.2 assigns those to T10, T11 and T12,
-/// which are not in this project yet; until they land, that door is closed by nothing here.
+/// public factory method, a property, a field. ADR-0032 §4.2 assigns those to the rules that close
+/// the returning and constructing door, which are not in this project yet (their ids are being
+/// reallocated); until they land, that door is closed by nothing here.
 /// </para>
 /// </remarks>
 internal static class TenantDbContextConstructorRule
@@ -81,8 +82,9 @@ internal static class TenantDbContextConstructorRule
 /// <c>AddDbContextFactory</c> are included) or <c>AddPooledDbContextFactory</c>. That name selects
 /// the <i>population</i>, which is the safe direction for a name to be load-bearing: a call that
 /// dodges the name is not silently exempt here, it is outside this rule's population and inside
-/// T9's (ADR-0032 §4.1.1), which keys on the container surface. A call is a violation when its
-/// site is any assembly other than <c>Aurora.Platform.Tenancy</c>, whatever its arguments; or when,
+/// the container-surface rule ADR-0032 §4.1.1 describes (its id is being reallocated). A call is a
+/// violation when its site is any assembly other than <c>Aurora.Platform.Tenancy</c>, whatever its
+/// arguments; or when,
 /// inside that assembly, it has no generic argument or any generic argument other than exactly
 /// <c>Aurora.Platform.Tenancy.Catalog.CatalogDbContext</c> - a type parameter the rule cannot
 /// resolve included.
@@ -90,8 +92,8 @@ internal static class TenantDbContextConstructorRule
 /// <para>
 /// <b>What it cannot see:</b> a registration through any other container API -
 /// <c>AddScoped&lt;SalesDbContext&gt;()</c>, a <c>ServiceDescriptor</c> built from a <c>Type</c>
-/// value, the helper's <i>call site</i>. Those are T9's population, and until T9 lands they are
-/// covered by nothing in this project.
+/// value, the helper's <i>call site</i>. Those are the container-surface rule's population, and
+/// until it lands they are covered by nothing in this project.
 /// </para>
 /// </remarks>
 internal static class TenantDbContextRegistrationRule

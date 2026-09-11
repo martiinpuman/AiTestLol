@@ -66,8 +66,8 @@ public sealed class FixtureFidelityTests
         // here so that a registration naming it and a base chain reaching it are real compiler
         // output; CatalogFixture relabels the assembly half. If B-05 declares the catalog context at
         // another name this test cannot see it - nothing here can see that assembly - but T1 fires
-        // on its public constructor and T13 on its assembly, and TenancyNames.CatalogDbContext is
-        // what gets corrected.
+        // on its public constructor and the inventory's inertness guard turns red, and
+        // TenancyNames.CatalogDbContext is what gets corrected.
         typeof(global::Aurora.Platform.Tenancy.Catalog.CatalogDbContext).FullName
             .ShouldBe(Rules.TenancyNames.CatalogDbContext);
         typeof(global::Aurora.Platform.Tenancy.Catalog.CatalogDbContext).Assembly

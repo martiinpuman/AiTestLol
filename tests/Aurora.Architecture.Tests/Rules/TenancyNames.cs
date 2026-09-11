@@ -43,14 +43,16 @@ internal sealed record NonTenantContext(string FullName, string AssemblyName)
 /// <b>Exemptions are exact.</b> The same width is fatal in an exemption, because a too-wide
 /// exemption fails silently: matched by simple name, any <c>CatalogDbContext</c> anywhere escaped
 /// T1, T2 and the inertness guard (re-review m-1). The catalog context is therefore exempt only as
-/// the exact (full name, assembly) pair B-05 declares, and T13 reports both a look-alike and the
-/// pair's absence from its own assembly, so a rename fails loudly instead of exempting nothing.
+/// the exact (full name, assembly) pair B-05 declares; a look-alike is a tenant context, and a
+/// renamed or moved catalog context is one too, so either fails loudly instead of exempting
+/// nothing.
 /// </para>
 /// <para>
-/// <b>Allow-lists are exact assembly names.</b> A prefix let a new assembly authorise itself by
-/// choosing a name - <c>Aurora.Platform.TenancyBypass</c> passed both allow-lists (re-review m-2).
-/// An exact allow-list is extended only by editing it, which is a diff a reviewer sees, and T14
-/// checks that every entry names an assembly that exists.
+/// <b>Allow-lists are still prefixes, and that is a known, open gap.</b> A prefix lets a new
+/// assembly authorise itself by choosing a name - <c>Aurora.Platform.TenancyBypass</c> passes both
+/// allow-lists (re-review m-2). ADR-0032 §4.4 replaces them with exact names, but its first draft
+/// named a set that omitted the contracts assembly ADR-0027 §1 declares the proof types in, and
+/// the ADR is being revised; T3 and T6 keep the prefix until it settles, and README §6 records it.
 /// </para>
 /// </remarks>
 internal static class TenancyNames
@@ -105,11 +107,20 @@ internal static class TenancyNames
         TenantMigrationContextFactorySimpleName);
 
     /// <summary>
-    /// The assembly that implements the tenant context factories, applies the ADR-0007 §4.3
-    /// identity check, and is the one place the <c>AddDbContext</c> family may be called
-    /// (ADR-0007 §12.3, ADR-0032 §4.1, §4.4). Exact name; B-05 creates the project.
+    /// The one assembly in which the <c>AddDbContext</c> family may be called (ADR-0007 §4.2 as
+    /// amended by ADR-0032 §4.1 - the part of that ADR its review confirmed). An <b>exact</b> name,
+    /// because T2 keys on the call site's assembly and a prefix would be a name the call site could
+    /// choose. B-05 creates the project.
     /// </summary>
     public const string TenancyAssemblyName = "Aurora.Platform.Tenancy";
+
+    /// <summary>
+    /// The assembly-name <b>prefix</b> T3 and T6 allow-list. Known to be mintable:
+    /// <c>Aurora.Platform.TenancyBypass</c> passes it (re-review m-2). Kept as it was before this
+    /// rework until ADR-0032 §4.4's exact-name replacement settles which assemblies it must name;
+    /// see the remarks on this class.
+    /// </summary>
+    public const string TenancyAssemblyPrefix = "Aurora.Platform.Tenancy";
 
     /// <summary>
     /// The catalog context's full name, where B-05 declares it
@@ -123,10 +134,12 @@ internal static class TenancyNames
     /// looser (ADR-0032 §4.3).
     /// </summary>
     /// <remarks>
-    /// If B-05 lands the context at another name, T1 fires on its public constructor and T13 reports
-    /// its assembly as declaring no catalog context; whoever integrates B-05 changes this pair, a
-    /// reviewable diff. Any other type called <c>CatalogDbContext</c> - a product catalog in some
-    /// module, say - is a tenant context like every other <c>DbContext</c>, and T13 says so.
+    /// If B-05 lands the context at another name or in another assembly, it is a tenant context
+    /// to every rule here: T1 fires on its public constructor and the inertness guard in
+    /// <c>RuleInventoryTests</c> turns red, and whoever integrates B-05 changes this pair - a
+    /// reviewable diff, not a silent widening. Any other type called <c>CatalogDbContext</c> - a
+    /// product catalog in some module, say - is a tenant context like every other
+    /// <c>DbContext</c>, and the same guard says so.
     /// </remarks>
     public static readonly NonTenantContext CatalogContext = new(CatalogDbContext, TenancyAssemblyName);
 

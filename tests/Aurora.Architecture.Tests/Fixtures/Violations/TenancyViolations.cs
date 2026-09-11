@@ -143,7 +143,7 @@ internal static class ContainerRegistrations
     /// <summary>
     /// The helper's call site, where the concrete context finally appears. Its member name is not
     /// <c>AddDbContext*</c>, so it is outside T2's population by design; ADR-0032 §4.1.1 assigns the
-    /// call site to T9.
+    /// call site to the container-surface rule, which is a separate task.
     /// </summary>
     public static void RegisterThroughTheHelper(IServiceCollection services) =>
         services.AddTenantDbContext<TenantDbContextWithAnInternalConstructor>();

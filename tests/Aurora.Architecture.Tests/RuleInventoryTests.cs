@@ -81,12 +81,6 @@ public sealed class RuleInventoryTests
         (TenantDbContextRegistrationRule.Id, TenantDbContextRegistrationRule.Name,
             "an AddDbContext* call", "B-05 (the catalog registration inside Aurora.Platform.Tenancy)",
             static () => TenantDbContextRegistrationRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
-        (CatalogContextIdentityRule.Id, CatalogContextIdentityRule.Name,
-            "a type deriving from DbContext", "B-05 (Aurora.Platform.Tenancy and its CatalogDbContext)",
-            static () => CatalogContextIdentityRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
-        (AllowListExistenceRule.Id, AllowListExistenceRule.Name,
-            "the allow-listed assembly Aurora.Platform.Tenancy", "B-05",
-            static () => AllowListExistenceRule.Check(FixtureAssembly.AllViolations.Select(static type => type.AssemblyName))),
         (ModuleDependencyRule.Id, ModuleDependencyRule.Name,
             "two business modules to reference each other", "the first module after B-15",
             static () =>
@@ -161,18 +155,16 @@ public sealed class RuleInventoryTests
     }
 
     [Fact]
-    public void The_tenancy_assembly_does_not_exist_yet_which_is_why_T2_T13_and_T14_are_inert()
+    public void The_tenancy_assembly_does_not_exist_yet_which_is_why_T2_is_inert()
     {
-        // T2's one permitted call site, T13's exempt pair and T14's one allow-listed assembly all
-        // live in Aurora.Platform.Tenancy, which B-05 creates. Until then T2 has no call to examine
-        // and T13 no context, and T14 - honestly - reports the allow-listed assembly as missing.
+        // T2's one permitted call site - the catalog registration - lives in Aurora.Platform.Tenancy,
+        // which B-05 creates. Until then T2 has no AddDbContext* call to examine.
         SolutionLayout.ProductionAssemblies
             .Select(static assembly => assembly.Name)
             .ShouldNotContain(
                 TenancyNames.TenancyAssemblyName,
-                "B-05 has landed Aurora.Platform.Tenancy, so T2, T13 and T14 have their subjects. Move "
-                + "their rows from Inert to Live with floors (T2: the catalog registration, 1; T13: the "
-                + "catalog context, 1; T14: the allow-list entries, 2), raise the matching floors in "
+                "B-05 has landed Aurora.Platform.Tenancy, so T2 has its subject: the catalog registration. "
+                + "Move its row from Inert to Live with a floor of 1, raise the floor in "
                 + "TenancyRuleTests from 0, and delete this test.");
     }
 
@@ -243,6 +235,6 @@ public sealed class RuleInventoryTests
                 + $"fixture. It is not asleep, it is broken: {outcome.Describe()}");
         }
 
-        Inert.Length.ShouldBe(5, "five rules are inert today: T1, T2, T13, T14 and M1");
+        Inert.Length.ShouldBe(3, "three rules are inert today: T1, T2 and M1");
     }
 }

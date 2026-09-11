@@ -14,7 +14,7 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// full-name half can be compiled - a namespace is free to declare - and is, so a registration
 /// naming it and a base-type chain reaching it are real compiler output. The assembly half cannot
 /// be: this type is in <c>Aurora.Architecture.Tests</c>, so as compiled it is the pair's full name
-/// in the wrong assembly - which is itself a T13 violation, and is used as one - and
+/// in the wrong assembly - not the pair, therefore a tenant context, and used as one - and
 /// <c>Fixtures.CatalogFixture</c> relabels it into <c>Aurora.Platform.Tenancy</c> to produce the
 /// exempt pair.
 /// </para>

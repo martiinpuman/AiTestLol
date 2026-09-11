@@ -27,20 +27,10 @@ internal static class CatalogFixture
         [FixtureAssembly.CatalogStandIn with { AssemblyName = TenancyNames.TenancyAssemblyName }];
 
     /// <summary>
-    /// The stand-in as compiled: the right full name in the wrong assembly. A T13 look-alike, and a
-    /// tenant context for every other rule.
+    /// The stand-in as compiled: the right full name in the wrong assembly, which is not the pair
+    /// and so a tenant context to every rule.
     /// </summary>
     public static ImmutableArray<ScannedType> TheRightNameInTheWrongAssembly() => [FixtureAssembly.CatalogStandIn];
-
-    /// <summary>
-    /// <c>Aurora.Platform.Tenancy</c> present in the population with a context that is not the
-    /// catalog, and no catalog context at all: what a rename looks like to T13. The context derives
-    /// from <c>DbContext</c> directly, so it is recognised on its own.
-    /// </summary>
-    public static ImmutableArray<ScannedType> TheTenancyAssemblyWithoutTheCatalog() =>
-        FixtureAssembly.ViolationInAssembly(
-            nameof(TenantDbContextWithAPublicConstructor),
-            TenancyNames.TenancyAssemblyName);
 
     /// <summary>
     /// The <c>AddDbContext*</c> calls of <see cref="ContainerRegistrations"/> relabelled into
