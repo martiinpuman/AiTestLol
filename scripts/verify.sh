@@ -57,7 +57,8 @@ readonly FAIL_TAIL_LINES=40
 # catch a whole assembly dropping out of Aurora.sln, a misspelled Category trait
 # or a discovery failure, all of which move the count by tens or to zero. Re-round
 # it whenever a test project joins or leaves Aurora.sln.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-200}"
+# 419 executed at B-12 (SharedKernel 208, Countries.Contracts 136, Countries.Hosting 75).
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-410}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
