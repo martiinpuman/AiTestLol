@@ -53,6 +53,7 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     private readonly string _adminPassword = MintPassword();
     private readonly string _migratorPassword = MintPassword();
     private readonly string _appPassword = MintPassword();
+    private string _superuserCatalogConnectionString = null!;
 
     /// <summary>What the application would hold: the runtime role over the catalog database.</summary>
     public string AppConnectionString { get; private set; } = null!;
@@ -106,6 +107,7 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
 
         MigratorConnectionString = As(superuser, MigratorRole, _migratorPassword, CatalogDatabaseName);
         AppConnectionString = As(superuser, AppRole, _appPassword, CatalogDatabaseName);
+        _superuserCatalogConnectionString = new NpgsqlConnectionStringBuilder(superuser) { Database = CatalogDatabaseName }.ConnectionString;
 
         await using CatalogDbContext migrator = CreateContext(MigratorConnectionString);
         await migrator.Database.MigrateAsync();
@@ -130,6 +132,15 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
 
     /// <summary>What the provisioner holds when it creates, hardens and drops a database (ADR-0007 §8 steps 2-3).</summary>
     public Task<NpgsqlConnection> OpenAdminMaintenanceConnectionAsync() => OpenAsync(AdminMaintenanceConnectionString);
+
+    /// <summary>
+    /// The container's superuser, on the catalog database. For injecting a fault that needs
+    /// cluster-level DDL none of the three roles may issue — creating a role and granting it to
+    /// <c>aurora_app</c> — inside a transaction the test rolls back. Never for asserting what a role
+    /// can do: a superuser bypasses every privilege check, so a probe run on this connection proves
+    /// nothing about the privilege model that ships.
+    /// </summary>
+    public Task<NpgsqlConnection> OpenSuperuserConnectionAsync() => OpenAsync(_superuserCatalogConnectionString);
 
     internal static CatalogDbContext CreateContext(string connectionString)
     {

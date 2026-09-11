@@ -95,14 +95,22 @@ public sealed class CatalogPrivilegeTests
         await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
         await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
 
-        // The three shapes a privilege regression takes, inside a transaction that is rolled back:
-        // a §9.2 table created without recording what the app role may do to it, a privilege the
-        // allowlist does not name, and a recorded privilege that is no longer granted.
+        // Every shape a privilege regression takes, inside a transaction that is rolled back: a §9.2
+        // table created without recording what the app role may do to it; a privilege the allowlist
+        // does not name; a recorded privilege that is no longer granted; a column-level grant, which
+        // has_table_privilege cannot see at all; a privilege this code had never heard of (MAINTAIN
+        // arrived with PostgreSQL 17, the pinned version); and a grant to PUBLIC, which reaches the
+        // role without naming it. The last three are the security re-review's H-1: each one left the
+        // seven-privilege enumeration reporting a perfect match.
+        string arrival = Unique.Identifier("drift");
         foreach (string sql in new[]
                  {
-                     "CREATE TABLE catalog.operator_audit_event (id uuid PRIMARY KEY)",
+                     $"CREATE TABLE catalog.{arrival} (id uuid PRIMARY KEY)",
                      $"GRANT TRUNCATE ON catalog.tenant TO {CatalogDatabaseFixture.AppRole}",
-                     $"REVOKE DELETE ON catalog.tenant_host FROM {CatalogDatabaseFixture.AppRole}",
+                     $"REVOKE SELECT ON catalog.tenant_host FROM {CatalogDatabaseFixture.AppRole}",
+                     $"GRANT UPDATE (display_name) ON catalog.tenant TO {CatalogDatabaseFixture.AppRole}",
+                     $"GRANT MAINTAIN ON catalog.subscription TO {CatalogDatabaseFixture.AppRole}",
+                     "GRANT SELECT ON catalog.installed_package TO PUBLIC",
                  })
         {
             await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -114,12 +122,50 @@ public sealed class CatalogPrivilegeTests
 
         await transaction.RollbackAsync();
 
-        differences.Count.ShouldBe(3, string.Join(Environment.NewLine, differences));
-        differences.ShouldContain(d => d.Contains("catalog.operator_audit_event exists but", StringComparison.Ordinal));
+        differences.Count.ShouldBe(6, string.Join(Environment.NewLine, differences));
+        differences.ShouldContain(d => d.Contains($"catalog.{arrival} exists but", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds TRUNCATE on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
-        differences.ShouldContain(d => d.Contains("records DELETE on catalog.tenant_host, which aurora_app does not hold", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("records SELECT on catalog.tenant_host, which aurora_app does not hold", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds UPDATE(display_name) on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds MAINTAIN on catalog.subscription, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds SELECT on catalog.installed_package through PUBLIC, which the allowlist does not record", StringComparison.Ordinal));
 
         // And once rolled back, the grants match again - the failure above was the drift, not the test.
+        Differences(await PrivilegesHeldAsync(connection, null), CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_privilege_that_reaches_the_app_role_through_another_role_is_reported_with_the_role_it_came_through()
+    {
+        // GRANT REFERENCES ON catalog.tenant TO <role>; GRANT <role> TO aurora_app. The ACL names the
+        // other role, and aurora_app holds the privilege all the same, by inherited membership. The
+        // oracle has to follow membership, or this is the one grant that hides from it. Creating a
+        // role is cluster-level DDL none of the three roles may issue, so this fault alone is
+        // injected as the superuser, inside a transaction that is rolled back.
+        string role = Unique.Identifier("drift_role");
+        await using NpgsqlConnection connection = await _catalog.OpenSuperuserConnectionAsync();
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
+
+        foreach (string sql in new[]
+                 {
+                     $"CREATE ROLE {role}",
+                     $"GRANT {role} TO {CatalogDatabaseFixture.AppRole}",
+                     $"GRANT REFERENCES ON catalog.tenant TO {role}",
+                 })
+        {
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        List<string> differences = Differences(
+            await PrivilegesHeldAsync(connection, transaction), CatalogSchemaAllowlist.AppRolePrivileges);
+
+        await transaction.RollbackAsync();
+
+        differences.Count.ShouldBe(1, string.Join(Environment.NewLine, differences));
+        differences[0].ShouldContain($"holds REFERENCES on catalog.tenant through {role}, which the allowlist does not record");
+
+        // Rolled back, neither the role nor its grant is left behind.
         Differences(await PrivilegesHeldAsync(connection, null), CatalogSchemaAllowlist.AppRolePrivileges).ShouldBeEmpty();
     }
 
