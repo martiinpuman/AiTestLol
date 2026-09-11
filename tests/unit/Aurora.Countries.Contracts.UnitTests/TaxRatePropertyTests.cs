@@ -19,17 +19,21 @@ namespace Aurora.Countries.Contracts.UnitTests;
 /// <b>Which dimensions are genuinely arbitrary, and which are a fixed list.</b>
 /// </para>
 /// <para>
-/// Arbitrary: the <i>amount</i> — a random mantissa of up to eighteen digits at a random scale from
-/// zero to twenty, positive, negative and zero, so amounts run from sub-cent fractions to hundreds
-/// of trillions and carry far more decimal places than any currency; and the <i>rate</i> — every
-/// value <c>numeric(9,6)</c> can hold, drawn as a random whole number of millionths of a percent
-/// from zero to 999.999999, not a list of the rates that happen to exist today.
+/// Arbitrary, in the three properties over random amounts: the <i>amount</i> — a random mantissa
+/// of up to eighteen digits at a random scale from zero to twenty, positive, negative and zero, so
+/// amounts run from sub-cent fractions to hundreds of trillions and carry far more decimal places
+/// than any currency; and the <i>rate</i> — every value <c>numeric(9,6)</c> can hold, drawn as a
+/// random whole number of millionths of a percent from zero to 999.999999, not a list of the rates
+/// that happen to exist today. In the boundary property the amount is not drawn at all but
+/// <i>derived</i> (see <see cref="BoundaryCases"/>); its arbitrary dimensions are the rate and the
+/// target whole number of minor units.
 /// </para>
 /// <para>
 /// A fixed list: the three currencies (zero, two and three minor units, so nothing can pass by
-/// assuming cents) and the five midpoint rules, which are an enumeration and not a range. The
-/// rounding <i>scale</i> is not a dimension at all: tax is always rounded at the currency's minor
-/// unit, because tax that is not a whole number of minor units cannot be paid.
+/// assuming cents), the five midpoint rules, which are an enumeration and not a range — the two
+/// nearest rules only, where a property is about nearness — and, in the boundary property, the two
+/// signs. The rounding <i>scale</i> is not a dimension at all: tax is always rounded at the
+/// currency's minor unit, because tax that is not a whole number of minor units cannot be paid.
 /// </para>
 /// <para>
 /// <b>Why the second property is not the implementation restated.</b> <see cref="TaxRate.ApplyTo"/>
@@ -41,15 +45,26 @@ namespace Aurora.Countries.Contracts.UnitTests;
 /// <para>
 /// <b>What these were watched to fail on, and what they were not.</b> Truncating instead of rounding
 /// falsifies the nearest-multiple property on the first generated case. Rounding at the wrong scale
-/// falsifies both. But writing <see cref="TaxRate.ApplyTo"/> the obvious way — multiplying two
-/// decimals — passes every property here, because randomly drawn amounts almost never land where
-/// <c>decimal</c>'s twenty-eight digits run out <i>and</i> the shortfall reaches the cent. That case
-/// is pinned as an example instead, in
-/// <c>TaxRateTests.A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence</c>, and
-/// it is the only test in this suite that separates the two implementations. Saying so here rather
-/// than claiming these properties cover it is the point: a property test that cannot distinguish the
-/// right implementation from the wrong one is not covering that difference, however universal its
-/// name sounds.
+/// falsifies the first two. But writing <see cref="TaxRate.ApplyTo"/> the obvious way — multiplying
+/// two decimals — passes all three properties over random amounts, and not by bad luck: the random
+/// dimension cannot reach the region where <c>decimal</c> rounds. <see cref="Amounts"/> draws at
+/// most eighteen digits at a scale of at most twenty and <see cref="Rates"/> at most nine digits at
+/// scale six, so the naive product needs at most twenty-seven digits at a scale of at most
+/// twenty-eight and is always exactly representable. Widening those ranges would make the product
+/// round, but a random draw lands where that rounding reaches the minor unit with a probability too
+/// small to count on. Only constructing the amount gets there, which is what
+/// <see cref="Tax_one_ulp_short_of_a_half_minor_unit_is_not_rounded_up_to_it"/> does.
+/// </para>
+/// <para>
+/// <b>Watched to fail.</b> With <see cref="TaxRate.ApplyTo"/> replaced by
+/// <c>decimal.Round(amount * (percent / 100m), minorUnits, midpoint)</c>, the boundary property was
+/// falsified on its first generated case — 75357.989136884078610908818808 BHD at 965.230057% came
+/// back as 727377.962, where 727377.961 is the answer — and over 500 constructed draws the naive
+/// implementation returned a minor unit that does not exist in 197 of them (39%), against 0 for the
+/// shipped one, in 11 ms. The pinned example in
+/// <c>TaxRateTests.A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence</c> is
+/// kept beside it: it shows the mechanism in one readable line, and pins the premise that the
+/// obvious product really does land on the half.
 /// </para>
 /// </remarks>
 public sealed class TaxRatePropertyTests
@@ -99,6 +114,30 @@ public sealed class TaxRatePropertyTests
                         oneMinorUnit,
                         $"{testCase.Rate} of {testCase.Amount} came back as {tax}, which is more than " +
                         $"half a minor unit away from the exact product.");
+                })
+            .QuickCheckThrowOnFailure();
+    }
+
+    /// <summary>
+    /// The region the random dimension cannot reach: an amount whose exact tax falls one ulp short of
+    /// a half minor unit. The nearest whole minor unit is then the lower one under either nearest
+    /// rule, and that answer is fixed by the construction — not by <see cref="TaxRate.ApplyTo"/>.
+    /// An implementation that multiplies two decimals rounds the product onto the half and then
+    /// over it: a minor unit that does not exist, on an amount nobody would call unusual.
+    /// </summary>
+    [Fact]
+    public void Tax_one_ulp_short_of_a_half_minor_unit_is_not_rounded_up_to_it()
+    {
+        Prop.ForAll(
+                BoundaryCases().ToArbitrary(),
+                boundary =>
+                {
+                    Money tax = boundary.Rate.ApplyTo(boundary.Amount, boundary.Midpoint);
+
+                    tax.ShouldBe(
+                        boundary.NearestTax,
+                        $"{boundary.Rate} of {boundary.Amount} is one ulp short of the half minor " +
+                        $"unit above {boundary.NearestTax}, and came back as {tax}.");
                 })
             .QuickCheckThrowOnFailure();
     }
@@ -180,6 +219,102 @@ public sealed class TaxRatePropertyTests
         Gen.Choose(0, 999).SelectMany(percent =>
             Gen.Choose(0, 999_999).Select(millionths =>
                 ContractTestValues.Rate(percent + AtScale(millionths, 6))));
+
+    /// <summary>
+    /// A case built to sit one ulp below the half-minor-unit boundary, with the answer the
+    /// construction guarantees: the exact tax is strictly between <see cref="NearestTax"/> and the
+    /// half above it, so the nearest whole minor unit is <see cref="NearestTax"/> under either
+    /// nearest-rounding rule.
+    /// </summary>
+    private sealed record BoundaryCase(
+        Money Amount,
+        TaxRate Rate,
+        MidpointRounding Midpoint,
+        Money NearestTax);
+
+    /// <summary>
+    /// Arbitrary rate (zero excluded: no amount taxes to half a minor unit at zero percent) and
+    /// target whole number of minor units; a fixed list of two signs, three currencies and the two
+    /// nearest rounding rules; and an amount <i>derived</i> from them rather than drawn.
+    /// </summary>
+    /// <remarks>
+    /// The amount is the one whose exact tax would be exactly <c>target + ½</c> minor units, written
+    /// with every decimal place a <c>decimal</c> has room for at that magnitude and truncated there
+    /// — so it carries decimal's full precision, and its last place is the smallest step a decimal
+    /// can take. When the truncation happens to be exact the amount is stepped down one such ulp
+    /// instead. Either way the exact tax lands strictly between <c>target</c> and the half above it,
+    /// and the construction checks that before handing the case over: a generator that silently
+    /// produced cases outside its own region would make the property vacuous, not wrong.
+    /// </remarks>
+    private static Gen<BoundaryCase> BoundaryCases() =>
+        Currencies().SelectMany(currency =>
+            Rates().Where(rate => !rate.IsZero).SelectMany(rate =>
+                Gen.Choose(0, 999_999_999).SelectMany(targetMinorUnits =>
+                    Gen.Elements(1, -1).SelectMany(sign =>
+                        Gen.Elements(MidpointRounding.AwayFromZero, MidpointRounding.ToEven).Select(midpoint =>
+                            OneUlpShortOfTheHalf(currency, rate, targetMinorUnits, sign, midpoint))))));
+
+    private static BoundaryCase OneUlpShortOfTheHalf(
+        Currency currency,
+        TaxRate rate,
+        int targetMinorUnits,
+        int sign,
+        MidpointRounding midpoint)
+    {
+        (BigInteger rateUnits, int rateScale) = Parts(rate.AsPercentage.AsPercent);
+
+        // boundary = (2·target + 1) / (2·10^minorUnits)  ÷  rateUnits / (100·10^rateScale),
+        // first as a whole number of 10^-28, then with the scale reduced until it fits a decimal.
+        BigInteger numerator =
+            ((2 * (BigInteger)targetMinorUnits) + 1) * Pow10(rateScale + 2 + DecimalMaxScale);
+        BigInteger denominator = 2 * Pow10(currency.MinorUnits) * rateUnits;
+        BigInteger mantissa = BigInteger.DivRem(numerator, denominator, out BigInteger remainder);
+        bool exact = remainder.IsZero;
+
+        int scale = DecimalMaxScale;
+        while (mantissa >= DecimalMantissaLimit)
+        {
+            mantissa = BigInteger.DivRem(mantissa, 10, out BigInteger dropped);
+            exact &= dropped.IsZero;
+            scale--;
+        }
+
+        if (exact)
+        {
+            mantissa -= 1;
+        }
+
+        // tax·10^minorUnits = mantissa·rateUnits / 10^(scale + rateScale + 2 - minorUnits), and it
+        // must sit strictly above target: doubled, on one denominator.
+        BigInteger twiceTax = 2 * mantissa * rateUnits * Pow10(currency.MinorUnits);
+        BigInteger twiceTarget = 2 * (BigInteger)targetMinorUnits * Pow10(scale + rateScale + 2);
+        if (twiceTax <= twiceTarget)
+        {
+            throw new InvalidOperationException(
+                $"The boundary construction is wrong: {mantissa}E-{scale} {currency} at {rate} taxes " +
+                $"to at most {targetMinorUnits} minor units, not just under {targetMinorUnits} + ½.");
+        }
+
+        return new BoundaryCase(
+            new Money(FromParts(sign * mantissa, scale), currency),
+            rate,
+            midpoint,
+            new Money(FromParts(sign * targetMinorUnits, currency.MinorUnits), currency));
+    }
+
+    private const int DecimalMaxScale = 28;
+
+    /// <summary>One past the largest mantissa a decimal can carry: 2^96.</summary>
+    private static readonly BigInteger DecimalMantissaLimit = BigInteger.One << 96;
+
+    private static decimal FromParts(BigInteger units, int scale)
+    {
+        BigInteger magnitude = BigInteger.Abs(units);
+        int lo = (int)(uint)(magnitude & uint.MaxValue);
+        int mid = (int)(uint)((magnitude >> 32) & uint.MaxValue);
+        int hi = (int)(uint)((magnitude >> 64) & uint.MaxValue);
+        return new decimal(lo, mid, hi, units.Sign < 0, (byte)scale);
+    }
 
     private static decimal AtScale(long mantissa, int scale)
     {

@@ -72,9 +72,12 @@ into whole numbers, works in `BigInteger`, rounds once at the currency's minor u
 package's own `MidpointRounding` rule, and checks the result is payable before returning it. The
 *scale* is not the package's to choose — tax that is not a whole number of minor units cannot be
 paid, and a rule declared at two decimal places would be wrong for a company trading in yen.
-`TaxRateTests.A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence` is the case
-that separates it from the obvious implementation — one cent, on one line, from an amount nobody
-would call unusual.
+Two tests separate it from the obvious implementation: the pinned example
+`TaxRateTests.A_product_too_precise_for_decimal_does_not_round_a_cent_into_existence` — one cent, on
+one line, from an amount nobody would call unusual — and the constructed-boundary property in
+`TaxRatePropertyTests`, which derives amounts one ulp short of a half minor unit and fails the
+obvious implementation on its first case. The random properties there cannot reach that region, and
+the file says so.
 
 **The report box mapping is a closed hierarchy.** `ReportBoxSource` has a `private protected`
 constructor and three nested sealed cases, so a package cannot add a fourth. ADR-0008 §11 wants the
