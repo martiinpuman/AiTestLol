@@ -476,6 +476,42 @@ public sealed class TenancyRuleTests
     }
 
     [Fact]
+    public void T5_fires_on_a_hosted_service_holding_a_scope_whatever_its_registration_is_called()
+    {
+        // Re-review H-3 (A4). AddHostedService contains no "Singleton", so a rule keyed on that word
+        // never put the worker in its singleton set. A hosted service is a singleton by shape - the
+        // exact framework interface - and the shape is what the rule reads.
+        RuleOutcome outcome = TenantScopeSingletonRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, nameof(HostedServiceHoldingAScope), ViolationSite.Field);
+        TenantScopeSingletonRule.HostedServiceTypeNames(Fixtures)
+            .ShouldContain(typeof(HostedServiceHoldingAScope).FullName!);
+    }
+
+    [Fact]
+    public void T5_fires_on_a_BackgroundService_holding_the_DDL_path_handle()
+    {
+        // B-08's shape: a worker deriving from the framework base, one hop from the name the rule
+        // matches, holding the handle for its whole life.
+        RuleOutcome outcome = TenantScopeSingletonRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, nameof(BackgroundWorkerHoldingAHandle), ViolationSite.Field);
+        TenantScopeSingletonRule.HostedServiceTypeNames(Fixtures)
+            .ShouldContain(typeof(BackgroundWorkerHoldingAHandle).FullName!);
+    }
+
+    [Fact]
+    public void T5_says_how_many_of_the_types_it_examined_have_singleton_lifetime()
+    {
+        // First review n-7: the count named a population it did not measure. Two registered
+        // singletons and two hosted services are the fixture's singleton-lifetime types.
+        RuleOutcome outcome = TenantScopeSingletonRule.Check(Fixtures);
+
+        outcome.SubjectKind.ShouldBe("types, of which 4 have singleton lifetime");
+        outcome.SubjectsExamined.ShouldBe(FixtureAssembly.AllViolations.Length);
+    }
+
+    [Fact]
     public void T5_stays_silent_on_a_scoped_registration_of_a_type_that_holds_a_scope()
     {
         RuleOutcome outcome = TenantScopeSingletonRule.Check(Fixtures);

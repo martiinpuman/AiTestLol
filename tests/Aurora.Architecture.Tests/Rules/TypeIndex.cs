@@ -80,12 +80,23 @@ internal sealed class TypeIndex
         return false;
     }
 
+    /// <summary>
+    /// Does <paramref name="type"/> or any base type within the population declare
+    /// <paramref name="interfaceFullName"/> in its interface list?
+    /// </summary>
+    /// <remarks>
+    /// Metadata lists an interface on the type that declares it, not on every type that inherits
+    /// it, so a derived type implements an interface through a base it never names. A rule reading
+    /// one interface list would miss the hosted service that inherits <c>IHostedService</c> from a
+    /// base class - the same shape as T5's inherited-field case, and walked the same way.
+    /// </remarks>
+    public bool Implements(ScannedType type, string interfaceFullName) =>
+        Chain(type).Any(current => current.InterfaceNames.Contains(interfaceFullName, StringComparer.Ordinal));
+
     /// <summary>Every field and property of a type and of its base types within the population.</summary>
     public IEnumerable<(string Owner, string Member, TypeUse Type, bool IsStatic)> MembersOf(ScannedType type)
     {
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-
-        for (ScannedType? current = type; current is not null && seen.Add(current.FullName);)
+        foreach (ScannedType current in Chain(type))
         {
             foreach (ScannedField field in current.Fields)
             {
@@ -96,7 +107,17 @@ internal sealed class TypeIndex
             {
                 yield return (current.FullName, property.Name, property.Type, property.IsStatic);
             }
+        }
+    }
 
+    /// <summary>A type and every base type of it the population contains, nearest first.</summary>
+    private IEnumerable<ScannedType> Chain(ScannedType type)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        for (ScannedType? current = type; current is not null && seen.Add(current.FullName);)
+        {
+            yield return current;
             current = current.BaseTypeName is null ? null : Find(current.BaseTypeName);
         }
     }

@@ -20,9 +20,10 @@
     rule set to catch. IL is where that violation is visible. README.md 7 records the deviation.
 
     The EntityFrameworkCore reference and the ASP.NET framework reference exist for ONE reason:
-    the deliberately-violating fixtures in Fixtures/ derive from the real DbContext and use the
-    real IHttpContextAccessor, so the tenancy rules are proven to fire against the framework types
-    they name rather than against look-alikes. FixtureFidelityTests asserts exactly that, so this
+    the deliberately-violating fixtures in Fixtures/ derive from the real DbContext, use the real
+    IHttpContextAccessor, and implement the real IHostedService / derive from the real
+    BackgroundService, so the tenancy rules are proven to fire against the framework types they
+    name rather than against look-alikes. FixtureFidelityTests asserts exactly that, so this
     comment is checked rather than trusted. No rule and no production code depends on either.
   -->
 

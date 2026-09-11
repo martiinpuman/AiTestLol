@@ -77,30 +77,44 @@ internal static class TenantDbContextFactoryRule
 /// database.
 /// </para>
 /// <para>
-/// <b>What the mechanism inspects, in two halves:</b>
+/// <b>What the mechanism inspects, in three parts:</b>
 /// </para>
 /// <list type="number">
 ///   <item><description>
 ///     <b>Static holders.</b> Any <c>static</c> field or property in production code whose type
 ///     names a <c>TenantScope</c>, a <c>TenantDatabaseHandle</c> or their <c>TenantAccess</c> base.
-///     A static is a singleton whether or not a container knows about it, and this half needs no
+///     A static is a singleton whether or not a container knows about it, and this part needs no
 ///     registration call to find it. The base type is in the set deliberately: a field typed
 ///     <c>TenantAccess</c> holds one tenant's proof exactly as the derived types do.
 ///   </description></item>
 ///   <item><description>
 ///     <b>Container singletons.</b> Every generic call whose member name contains
 ///     <c>Singleton</c> - <c>AddSingleton</c>, <c>TryAddSingleton</c>, <c>AddKeyedSingleton</c>,
-///     <c>ServiceDescriptor.Singleton</c> - contributes its generic arguments as singleton types;
-///     each is then checked, through its base-type chain, for a field or property naming any of
-///     those three.
+///     <c>ServiceDescriptor.Singleton</c> - contributes its generic arguments as singleton types.
+///   </description></item>
+///   <item><description>
+///     <b>Hosted services, by shape.</b> Every type whose base chain reaches
+///     <c>Microsoft.Extensions.Hosting.BackgroundService</c>, or whose interface list - its own or
+///     a base type's - names <c>Microsoft.Extensions.Hosting.IHostedService</c>. A hosted service is
+///     a container singleton however its registration is spelled, and <c>AddHostedService</c>
+///     contains no "Singleton", so the re-review's background worker (H-3) was never in the second
+///     set. This part keys on the exact framework names rather than on a member name, because a
+///     type cannot be hosted without them (ADR-0032 §2); B-07's saga and B-08's runner are this
+///     shape and hold a <c>TenantDatabaseHandle</c> for their whole life.
 ///   </description></item>
 /// </list>
 /// <para>
+/// Each type in the second and third sets is checked, through its base-type chain, for a field or
+/// property naming any of the three proof types.
+/// </para>
+/// <para>
 /// <b>What it cannot see:</b> a registration whose service and implementation types are
 /// <c>Type</c> values rather than generic arguments (<c>new ServiceDescriptor(typeof(X),
-/// typeof(Y), ServiceLifetime.Singleton)</c>), and a scope reached through a captured closure
-/// rather than a declared member. The name of this rule says "field or property", not "held", for
-/// that reason.
+/// typeof(Y), ServiceLifetime.Singleton)</c>); a singleton whose implementation appears only inside
+/// a factory lambda (<c>AddSingleton&lt;IFoo&gt;(sp =&gt; new Impl())</c> names <c>IFoo</c> as its
+/// generic argument and <c>Impl</c> only in a compiler-generated closure); and a scope reached
+/// through a captured closure rather than a declared member. The name of this rule says "field or
+/// property", not "held", for that reason.
 /// </para>
 /// </remarks>
 internal static class TenantScopeSingletonRule
@@ -108,7 +122,7 @@ internal static class TenantScopeSingletonRule
     public const string Id = "T5";
 
     public const string Name =
-        "No static or singleton-registered type has a TenantScope, TenantDatabaseHandle or TenantAccess field or property";
+        "No static, singleton-registered or hosted type has a TenantScope, TenantDatabaseHandle or TenantAccess field or property";
 
     public static bool IsSingletonRegistration(string memberName) =>
         memberName.Contains("Singleton", StringComparison.Ordinal);
@@ -123,14 +137,30 @@ internal static class TenantScopeSingletonRule
             .SelectMany(static argument => argument.Names),
     ];
 
+    /// <summary>Every type that is a hosted service by shape, whatever its registration is called.</summary>
+    public static ImmutableHashSet<string> HostedServiceTypeNames(TypeIndex index) =>
+    [
+        .. index.All
+            .Where(type =>
+                index.DerivesFrom(type, TenancyNames.BackgroundService)
+                || index.Implements(type, TenancyNames.HostedService))
+            .Select(static type => type.FullName),
+    ];
+
+    /// <summary>Every type with singleton lifetime: registered as one, or hosted.</summary>
+    public static ImmutableHashSet<string> SingletonLifetimeTypeNames(TypeIndex index) =>
+        SingletonRegisteredTypeNames(index.All).Union(HostedServiceTypeNames(index));
+
     public static RuleOutcome Check(TypeIndex index)
     {
-        ImmutableHashSet<string> singletons = SingletonRegisteredTypeNames(index.All);
+        ImmutableHashSet<string> singletons = SingletonLifetimeTypeNames(index);
 
+        // The count is every type; the kind says how many of them the singleton half actually
+        // examined, so "no violations" cannot hide a singleton set that collapsed to zero.
         return RuleOutcome.From(
             Id,
             Name,
-            "types, plus the types named by singleton registrations",
+            FormattableString.Invariant($"types, of which {singletons.Count} have singleton lifetime"),
             index.All.Length,
             [.. StaticHolders(index), .. SingletonHolders(index, singletons)]);
     }
@@ -156,6 +186,7 @@ internal static class TenantScopeSingletonRule
         select new RuleViolation(
             $"{member.Owner}.{member.Member}",
             ViolationSite.Field,
-            $"{registered} is registered as a singleton and holds a tenant proof in {member.Type.Display}; "
-            + "a singleton serves one tenant's proof to another tenant's request (ADR-0007 §10.4)");
+            $"{registered} has singleton lifetime (registered as one, or hosted) and holds a tenant proof in "
+            + $"{member.Type.Display}; a singleton serves one tenant's proof to another tenant's request "
+            + "(ADR-0007 §10.4)");
 }

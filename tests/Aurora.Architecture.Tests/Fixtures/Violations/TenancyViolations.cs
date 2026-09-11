@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 namespace Aurora.Architecture.Tests.Fixtures.Violations;
 
@@ -227,6 +228,56 @@ internal sealed class SingletonCacheHoldingAScope
     public bool Knows(TenantScope scope) => ReferenceEquals(_scope, scope);
 }
 
+/// <summary>
+/// A background worker holding the scope of whichever tenant it last ran for. A hosted service is a
+/// container singleton whether or not the word appears in its registration.
+/// </summary>
+/// <remarks>
+/// <b>Deliberately violating fixture (T5, hosted half).</b> The re-review's A4: registered through
+/// <c>AddHostedService</c>, which contains no "Singleton", so a rule keyed on that word never saw
+/// it. Uses the real <c>Microsoft.Extensions.Hosting.IHostedService</c>, which is what the rule
+/// matches on; B-07's provisioning saga is this shape.
+/// </remarks>
+internal sealed class HostedServiceHoldingAScope : IHostedService, IAsyncDisposable
+{
+    private TenantScope? _scope;
+
+    public Task StartAsync(CancellationToken cancellationToken)
+    {
+        _scope = new TenantScope();
+        return Task.CompletedTask;
+    }
+
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        _scope = null;
+        return Task.CompletedTask;
+    }
+
+    public bool IsWarm => _scope?.IsActive == true;
+
+    public ValueTask DisposeAsync() => _scope?.DisposeAsync() ?? ValueTask.CompletedTask;
+}
+
+/// <summary>A migration runner holding the DDL-path proof across runs: B-08's shape, with the defect.</summary>
+/// <remarks>
+/// <b>Deliberately violating fixture (T5, hosted half).</b> Derives from the real
+/// <c>Microsoft.Extensions.Hosting.BackgroundService</c>, one hop from the framework type the rule
+/// matches on.
+/// </remarks>
+internal sealed class BackgroundWorkerHoldingAHandle : BackgroundService
+{
+    private TenantDatabaseHandle? _handle;
+
+    protected override Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        _handle = new TenantDatabaseHandle { DatabaseName = "aurora_t_fixture" };
+        return Task.CompletedTask;
+    }
+
+    public bool HoldsADatabase => _handle is not null;
+}
+
 /// <summary>A per-request type holding a scope, which is correct and must not be reported.</summary>
 /// <remarks><b>Deliberately compliant fixture (T5).</b></remarks>
 internal sealed class ScopedHandlerHoldingAScope
@@ -253,6 +304,17 @@ internal static class LifetimeRegistrations
     /// <summary>Compliant: a scoped registration of a type that holds a scope is exactly right.</summary>
     public static void RegisterScopedHandler(IServiceCollection services) =>
         services.AddScoped<ScopedHandlerHoldingAScope>();
+
+    /// <summary>
+    /// The violation the re-review executed: hosted, therefore a singleton, through a member whose
+    /// name a "Singleton"-keyed rule never matched.
+    /// </summary>
+    public static void RegisterHostedService(IServiceCollection services) =>
+        services.AddHostedService<HostedServiceHoldingAScope>();
+
+    /// <summary>The same, for the migration-runner shape.</summary>
+    public static void RegisterBackgroundWorker(IServiceCollection services) =>
+        services.AddHostedService<BackgroundWorkerHoldingAHandle>();
 }
 
 /// <summary>A component reading the tenant out of the HTTP context, which a Blazor circuit has not got.</summary>

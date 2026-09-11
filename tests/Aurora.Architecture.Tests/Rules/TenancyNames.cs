@@ -58,6 +58,16 @@ internal static class TenancyNames
     /// <summary>The EF Core base class every module context derives from.</summary>
     public const string DbContext = "Microsoft.EntityFrameworkCore.DbContext";
 
+    /// <summary>
+    /// The interface every hosted service implements. A hosted service is a container singleton
+    /// whatever its registration is called, which is why T5 keys on this exact framework name and
+    /// not on a member name (re-review H-3).
+    /// </summary>
+    public const string HostedService = "Microsoft.Extensions.Hosting.IHostedService";
+
+    /// <summary>The framework base class of a background worker: implements <see cref="HostedService"/>, one hop away.</summary>
+    public const string BackgroundService = "Microsoft.Extensions.Hosting.BackgroundService";
+
     /// <summary>ADR-0007 §3.4. Matched by simple name - see the remarks on this class.</summary>
     public const string TenantScopeSimpleName = "TenantScope";
 

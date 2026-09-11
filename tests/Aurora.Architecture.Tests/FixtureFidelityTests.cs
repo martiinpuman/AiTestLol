@@ -5,6 +5,7 @@ using Aurora.Architecture.Tests.Fixtures.Violations;
 using Aurora.Architecture.Tests.Metadata;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting;
 using Shouldly;
 using Xunit;
 
@@ -32,6 +33,18 @@ public sealed class FixtureFidelityTests
 
         // And the name the rules match on is the one this real type carries.
         typeof(DbContext).FullName.ShouldBe(Rules.TenancyNames.DbContext);
+    }
+
+    [Fact]
+    public void The_hosted_service_fixtures_use_the_real_hosting_types_the_rule_matches_on()
+    {
+        // T5 keys on the exact framework names, not on how a hosted service is registered. These
+        // are the names it matches, and the fixtures carry them because they use the real types.
+        typeof(IHostedService).IsAssignableFrom(typeof(HostedServiceHoldingAScope)).ShouldBeTrue();
+        typeof(BackgroundWorkerHoldingAHandle).BaseType.ShouldBe(typeof(BackgroundService));
+
+        typeof(IHostedService).FullName.ShouldBe(Rules.TenancyNames.HostedService);
+        typeof(BackgroundService).FullName.ShouldBe(Rules.TenancyNames.BackgroundService);
     }
 
     [Fact]

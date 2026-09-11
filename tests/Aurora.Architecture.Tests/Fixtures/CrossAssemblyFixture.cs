@@ -62,6 +62,29 @@ internal static class CrossAssemblyFixture
     }
 
     /// <summary>
+    /// A worker in one assembly deriving from a hosted-service base in another. Metadata lists
+    /// <c>IHostedService</c> on the base only, so recognising the worker as hosted takes the same
+    /// cross-assembly hop.
+    /// </summary>
+    public static ImmutableArray<ScannedType> WorkerDerivingFromAHostedBaseInAnotherAssembly()
+    {
+        ScannedType hostedBase = FixtureAssembly.Violation(nameof(HostedServiceHoldingAScope)).Single() with
+        {
+            FullName = "Aurora.Platform.Tenancy.TenantJobBase",
+            AssemblyName = TenancyNames.TenancyAssemblyName,
+        };
+
+        ScannedType worker = FixtureAssembly.Violation(nameof(PeriodCloseTakingTimeAsAParameter)).Single() with
+        {
+            FullName = "Aurora.Modules.Sales.Infrastructure.SalesWarmupJob",
+            AssemblyName = ModuleAssemblyName,
+            BaseTypeName = hostedBase.FullName,
+        };
+
+        return [hostedBase, worker];
+    }
+
+    /// <summary>
     /// A type in one assembly deriving from a type in another that declares the field. The T5
     /// question - does a singleton hold a scope - is asked through the same walk.
     /// </summary>

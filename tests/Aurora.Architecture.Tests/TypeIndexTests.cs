@@ -51,6 +51,18 @@ public sealed class TypeIndexTests
     }
 
     [Fact]
+    public void Implements_walks_the_base_chain_across_an_assembly_boundary()
+    {
+        TypeIndex index = TypeIndex.Of(CrossAssemblyFixture.WorkerDerivingFromAHostedBaseInAnotherAssembly());
+        ScannedType worker = index.Find("Aurora.Modules.Sales.Infrastructure.SalesWarmupJob")!;
+
+        worker.InterfaceNames.ShouldBeEmpty("the worker names no interface of its own; the base does");
+        index.Implements(worker, TenancyNames.HostedService).ShouldBeTrue(
+            "a worker inheriting IHostedService from a base in another assembly is a hosted service");
+        TenantScopeSingletonRule.HostedServiceTypeNames(index).ShouldContain(worker.FullName);
+    }
+
+    [Fact]
     public void A_tenant_context_is_recognised_through_a_base_type_in_another_assembly()
     {
         // The shared recognition T1 and T2 both call. If the walk stops at the boundary this
