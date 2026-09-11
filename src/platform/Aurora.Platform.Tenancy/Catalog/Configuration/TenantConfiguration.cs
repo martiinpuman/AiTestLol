@@ -52,6 +52,13 @@ internal sealed class TenantConfiguration : IEntityTypeConfiguration<Tenant>
         // Unique for the life of the row, tombstone included: a key is never reused (ADR-0007 11.4).
         builder.HasIndex(tenant => tenant.Key).IsUnique().HasDatabaseName("ux_tenant_key");
 
+        // One database on one cluster is one tenant's. A second row carrying another tenant's
+        // cluster_id and database_name would make every host bound to it reach that tenant's data
+        // (the second security re-review's H-4, first shape). The grants keep the request path from
+        // inserting such a row at all; this keeps every principal from it, a bug in the provisioner
+        // included. Both columns are null only on a tombstone, where nulls are distinct.
+        builder.HasIndex(tenant => new { tenant.ClusterId, tenant.DatabaseName }).IsUnique().HasDatabaseName("ux_tenant_cluster_id_database_name");
+
         // The outbox sweep tiers active tenants by recent activity (ADR-0007 10.3) and every fan-out
         // job selects on state (10.2).
         builder.HasIndex(tenant => new { tenant.State, tenant.LastActivityAt }).HasDatabaseName("ix_tenant_state_last_activity_at");

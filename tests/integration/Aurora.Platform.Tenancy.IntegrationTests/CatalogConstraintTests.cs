@@ -13,9 +13,11 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// <summary>
 /// The rules the catalog database keeps on its own, each shown to bite. Where the entities
 /// already refuse the bad value, the row is written with SQL — the point is that the database
-/// refuses it even when code did not — as the role that may write that table: <c>aurora_app</c>
-/// for a tenant or a host, <c>aurora_migrator</c> for a cluster, a subscription, or a lifecycle
-/// column the request path may not touch (<c>CatalogSchemaAllowlist.AppRolePrivileges</c>).
+/// refuses it even when code did not — as a role that may write that table: <c>aurora_app</c>
+/// for the lifecycle column it may move, <c>aurora_migrator</c> for everything the request path
+/// only reads — a cluster, a subscription, a tenant, a host
+/// (<c>CatalogSchemaAllowlist.AppRolePrivileges</c>). A constraint proven as the owner is proven
+/// for every principal, the one that may insert included.
 /// </summary>
 [Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
@@ -36,12 +38,14 @@ public sealed class CatalogConstraintTests
         DatabaseCluster cluster = Unique.Cluster();
         Tenant first = Unique.Tenant(cluster);
         await SaveAsync(cluster, first);
-        Tenant second = Tenant.Reserve(TenantId.Create(), first.Key, "Another Acme", cluster, "standard", Unique.Now);
 
-        await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.Tenants.Add(second);
+        // On another cluster, so that only the key collides: a key is unique across the fleet, not
+        // per cluster, and the same key on the same cluster would derive the same database name and
+        // trip ux_tenant_cluster_id_database_name first.
+        DatabaseCluster otherCluster = Unique.Cluster();
+        Tenant second = Tenant.Reserve(TenantId.Create(), first.Key, "Another Acme", otherCluster, "standard", Unique.Now);
 
-        PostgresException refused = await ShouldBeRefusedAsync(() => writer.SaveChangesAsync());
+        PostgresException refused = await ShouldBeRefusedAsync(() => SaveAsync(otherCluster, second));
         refused.SqlState.ShouldBe(UniqueViolation);
         refused.ConstraintName.ShouldBe("ux_tenant_key");
     }
@@ -78,7 +82,7 @@ public sealed class CatalogConstraintTests
         await SaveAsync(cluster);
 
         // The entity copies the cluster's region, so the only way to write this row is to bypass it.
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "INSERT INTO catalog.tenant (id, key, display_name, state, cluster_id, database_name, residency_region, plan, created_at) " +
             "VALUES (@id, @key, 'Misrouted', 'Provisioning', @cluster, 'aurora_t_misrouted', 'eu-west', 'standard', now())",
             ("id", Guid.CreateVersion7()),
@@ -92,7 +96,7 @@ public sealed class CatalogConstraintTests
     [Fact]
     public async Task A_tenant_that_is_not_deleted_must_have_its_routing_columns()
     {
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "INSERT INTO catalog.tenant (id, key, state, created_at) VALUES (@id, @key, 'Active', now())",
             ("id", Guid.CreateVersion7()),
             ("key", Unique.TenantKey().Value)));
@@ -105,7 +109,7 @@ public sealed class CatalogConstraintTests
     public async Task A_deleted_tenant_may_be_a_tombstone_of_id_key_and_dates_and_only_a_deleted_one_has_deleted_at()
     {
         // The tombstone shape of ADR-0007 11.4 is writable...
-        await ExecuteAsAppAsync(
+        await ExecuteAsOwnerAsync(
             "INSERT INTO catalog.tenant (id, key, state, created_at, deleted_at) VALUES (@id, @key, 'Deleted', now(), now())",
             ("id", Guid.CreateVersion7()),
             ("key", Unique.TenantKey().Value));
@@ -141,7 +145,7 @@ public sealed class CatalogConstraintTests
     [Fact]
     public async Task A_key_the_TenantKey_type_would_refuse_cannot_be_stored_either()
     {
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "INSERT INTO catalog.tenant (id, key, state, created_at, deleted_at) VALUES (@id, 'Acme_Trading', 'Deleted', now(), now())",
             ("id", Guid.CreateVersion7())));
 
@@ -156,11 +160,11 @@ public sealed class CatalogConstraintTests
         Tenant tenant = Unique.Tenant(cluster);
         await SaveAsync(cluster, tenant);
 
-        await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.TenantHosts.Add(TenantHost.Register(Unique.Host(), tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
-        writer.TenantHosts.Add(TenantHost.Register(Unique.Host(), tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
-
-        PostgresException refused = await ShouldBeRefusedAsync(() => writer.SaveChangesAsync());
+        PostgresException refused = await ShouldBeRefusedAsync(() => _catalog.SeedAsync(owner =>
+        {
+            owner.TenantHosts.Add(TenantHost.Register(Unique.Host(), tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
+            owner.TenantHosts.Add(TenantHost.Register(Unique.Host(), tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
+        }));
         refused.SqlState.ShouldBe(UniqueViolation);
         refused.ConstraintName.ShouldBe("ux_tenant_host_primary");
     }
@@ -172,7 +176,7 @@ public sealed class CatalogConstraintTests
         Tenant tenant = Unique.Tenant(cluster);
         await SaveAsync(cluster, tenant);
 
-        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsAppAsync(
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
             "INSERT INTO catalog.tenant_host (host, tenant_id, is_primary) VALUES ('Acme.Aurora.Test', @tenant, false)",
             ("tenant", tenant.Id.Value)));
 
@@ -252,20 +256,17 @@ public sealed class CatalogConstraintTests
         refused.ConstraintName.ShouldBe("fk_tenant_cluster_in_region");
     }
 
-    /// <summary>The cluster as the owner - the request path only reads clusters - then the tenant, if any, as the request path.</summary>
-    private async Task SaveAsync(DatabaseCluster cluster, Tenant? tenant = null)
-    {
-        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
-
-        if (tenant is null)
+    /// <summary>The cluster and the tenant, if any, as the owner: the request path reads both and creates neither.</summary>
+    private Task SaveAsync(DatabaseCluster cluster, Tenant? tenant = null) =>
+        _catalog.SeedAsync(owner =>
         {
-            return;
-        }
+            owner.DatabaseClusters.Add(cluster);
 
-        await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.Tenants.Add(tenant);
-        await writer.SaveChangesAsync();
-    }
+            if (tenant is not null)
+            {
+                owner.Tenants.Add(tenant);
+            }
+        });
 
     private Task ExecuteAsAppAsync(string sql, params (string Name, object Value)[] parameters) =>
         ExecuteAsync(_catalog.OpenAppConnectionAsync, sql, parameters);

@@ -61,11 +61,7 @@ public sealed class CatalogTenantStateTests
         foreach (TenantState state in lifecycle)
         {
             Tenant tenant = Unique.Tenant(cluster);
-            await using (CatalogDbContext writer = _catalog.OpenAsApp())
-            {
-                writer.Tenants.Add(tenant);
-                await writer.SaveChangesAsync();
-            }
+            await _catalog.SeedAsync(owner => owner.Tenants.Add(tenant));
 
             // B-05 gives Tenant only the two transitions the provisioning saga's ends need
             // (ADR-0007 §8 steps 1 and 8); the methods that reach the other six arrive with the
@@ -89,12 +85,11 @@ public sealed class CatalogTenantStateTests
     {
         DatabaseCluster cluster = Unique.Cluster();
         Tenant tenant = Unique.Tenant(cluster);
-        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
+        await _catalog.SeedAsync(owner =>
         {
-            writer.Tenants.Add(tenant);
-            await writer.SaveChangesAsync();
-        }
+            owner.DatabaseClusters.Add(cluster);
+            owner.Tenants.Add(tenant);
+        });
 
         PostgresException refused = await Should.ThrowAsync<PostgresException>(() => StampAsync(tenant.Id, state));
 

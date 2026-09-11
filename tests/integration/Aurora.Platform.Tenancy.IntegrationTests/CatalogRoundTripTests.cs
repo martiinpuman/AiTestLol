@@ -12,9 +12,11 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 
 /// <summary>
 /// Every entity round-trips through PostgreSQL, typed identifiers and value objects included —
-/// written as the role that may write it (a cluster and a subscription as <c>aurora_migrator</c>,
-/// the rest as <c>aurora_app</c>) and read back as <c>aurora_app</c> — which is also where EF Core
-/// is shown to accept the generic <c>EntityIdConverter</c> in materialisation and in a <c>WHERE</c>.
+/// written as the role that may write it (a cluster, a subscription, a tenant and its hosts as
+/// <c>aurora_migrator</c>, standing in for the provisioning saga's principal; a tenant's activity
+/// and an installed package as <c>aurora_app</c>) and read back as <c>aurora_app</c> — which is
+/// also where EF Core is shown to accept the generic <c>EntityIdConverter</c> in materialisation
+/// and in a <c>WHERE</c>.
 /// </summary>
 [Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
@@ -87,13 +89,21 @@ public sealed class CatalogRoundTripTests
         Tenant tenant = Unique.Tenant(cluster);
         await SaveAsync(cluster, tenant);
 
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
+        // Activation is the saga's write (ADR-0007 §8 step 8) and activated_at is not the request
+        // path's to set; recording activity is the request path's own (§10.1). Each as its role.
+        await using (CatalogDbContext saga = _catalog.OpenAsMigrator())
         {
             // Queries do not track by default (ADR-0003 rule 4); a unit of work that writes opts in.
-            Tenant tracked = await writer.Tenants.AsTracking().SingleAsync(t => t.Id == tenant.Id);
+            Tenant tracked = await saga.Tenants.AsTracking().SingleAsync(t => t.Id == tenant.Id);
             tracked.Activate(coreSchemaVersion: 1, Unique.Now.AddSeconds(30));
+            await saga.SaveChangesAsync();
+        }
+
+        await using (CatalogDbContext request = _catalog.OpenAsApp())
+        {
+            Tenant tracked = await request.Tenants.AsTracking().SingleAsync(t => t.Id == tenant.Id);
             tracked.RecordActivity(Unique.Now.AddMinutes(1));
-            await writer.SaveChangesAsync();
+            await request.SaveChangesAsync();
         }
 
         await using CatalogDbContext reader = _catalog.OpenAsApp();
@@ -116,15 +126,19 @@ public sealed class CatalogRoundTripTests
         DateOnly from = new(2026, 10, 1);
 
         await SaveAsync(cluster, tenant);
-        await using (CatalogDbContext writer = _catalog.OpenAsApp())
+        await _catalog.SeedAsync(owner =>
         {
-            writer.TenantHosts.Add(TenantHost.Register(primaryHost, tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
-            writer.TenantHosts.Add(TenantHost.Register(customHost, tenant.Id, isPrimary: false, verifiedAt: null));
-            writer.InstalledPackages.Add(InstalledPackage.Begin(tenant.Id, "nz", "1.2.0", "user:7f3a", Unique.Now));
-            await writer.SaveChangesAsync();
-        }
+            owner.TenantHosts.Add(TenantHost.Register(primaryHost, tenant.Id, isPrimary: true, verifiedAt: Unique.Now));
+            owner.TenantHosts.Add(TenantHost.Register(customHost, tenant.Id, isPrimary: false, verifiedAt: null));
+            owner.Subscriptions.Add(Subscription.Start(subscriptionId, tenant.Id, "standard", 25, from, from.AddYears(1)));
+        });
 
-        await _catalog.SeedAsync(owner => owner.Subscriptions.Add(Subscription.Start(subscriptionId, tenant.Id, "standard", 25, from, from.AddYears(1))));
+        // The installer's write (ADR-0008 §5.1 step 9) is the one of these the request path makes.
+        await using (CatalogDbContext installer = _catalog.OpenAsApp())
+        {
+            installer.InstalledPackages.Add(InstalledPackage.Begin(tenant.Id, "nz", "1.2.0", "user:7f3a", Unique.Now));
+            await installer.SaveChangesAsync();
+        }
 
         await using CatalogDbContext reader = _catalog.OpenAsApp();
         TenantId tenantId = tenant.Id;
@@ -149,13 +163,11 @@ public sealed class CatalogRoundTripTests
         package.InstalledBy.ShouldBe("user:7f3a");
     }
 
-    /// <summary>The cluster as the owner - the request path only reads clusters - then the tenant as the request path.</summary>
-    private async Task SaveAsync(DatabaseCluster cluster, Tenant tenant)
-    {
-        await _catalog.SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
-
-        await using CatalogDbContext writer = _catalog.OpenAsApp();
-        writer.Tenants.Add(tenant);
-        await writer.SaveChangesAsync();
-    }
+    /// <summary>The cluster and the tenant as the owner: the request path reads both and creates neither.</summary>
+    private Task SaveAsync(DatabaseCluster cluster, Tenant tenant) =>
+        _catalog.SeedAsync(owner =>
+        {
+            owner.DatabaseClusters.Add(cluster);
+            owner.Tenants.Add(tenant);
+        });
 }

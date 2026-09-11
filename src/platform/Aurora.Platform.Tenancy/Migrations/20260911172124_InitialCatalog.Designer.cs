@@ -271,6 +271,10 @@ namespace Aurora.Platform.Tenancy.Migrations
                         .IsUnique()
                         .HasDatabaseName("ux_tenant_key");
 
+                    b.HasIndex("ClusterId", "DatabaseName")
+                        .IsUnique()
+                        .HasDatabaseName("ux_tenant_cluster_id_database_name");
+
                     b.HasIndex("ClusterId", "ResidencyRegion")
                         .HasDatabaseName("ix_tenant_cluster_id_residency_region");
 

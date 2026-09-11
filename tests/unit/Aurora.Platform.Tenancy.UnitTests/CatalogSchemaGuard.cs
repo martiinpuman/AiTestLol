@@ -281,10 +281,11 @@ public static class CatalogSchemaAllowlist
     /// <summary>
     /// The columns that are the routing decision (ADR-0007 §3.2, §3.5): which tenant a host
     /// resolves to, which cluster and database a tenant resolves to, and everything about a
-    /// cluster, its host and its secret references included. The request path reads them and, for
-    /// a new tenant or host, inserts them; nothing on the request path updates them. So no
-    /// <c>UPDATE</c> in <see cref="AppRolePrivileges"/> names one, and none is table-wide on a
-    /// table that has one — <c>CatalogPrivilegeAllowlistTests</c> holds the record to that, and
+    /// cluster, its host and its secret references included. The request path reads them and
+    /// writes none of them, by any verb: no <c>UPDATE</c> in <see cref="AppRolePrivileges"/> names
+    /// one, none is table-wide on a table that has one, and no table that has one grants
+    /// <c>INSERT</c> — because <c>INSERT</c> writes every column of a new row, and a new row is a
+    /// routing decision too. <c>CatalogPrivilegeAllowlistTests</c> holds the record to that, and
     /// <c>CatalogPrivilegeTests</c> holds the database to the record and tries the writes as the
     /// role.
     /// </summary>
@@ -318,21 +319,37 @@ public static class CatalogSchemaAllowlist
     /// <para>
     /// The decision, table by table. <c>database_cluster</c> is read-only: nothing in ADR-0007 has
     /// the application registering or editing a cluster; it is operator seed data, written as
-    /// <c>aurora_migrator</c>. <c>tenant</c> and <c>tenant_host</c> are inserted by the
-    /// provisioning saga and never deleted, and on <c>tenant</c> only the lifecycle columns a named
-    /// component moves are updatable — never the <see cref="RoutingColumns"/>. <c>subscription</c>
-    /// has no writer yet — no backlog row bills anyone — so it is read-only until one does.
-    /// <c>installed_package</c> is the package installer's. No table grants <c>DELETE</c>: §11.4
-    /// tombstones a tenant, a subscription closes with <c>valid_to</c>, <c>DROP DATABASE</c> is
-    /// <c>aurora_admin</c>'s.
+    /// <c>aurora_migrator</c>. <c>tenant</c> and <c>tenant_host</c> are read-only on the routing
+    /// decision: the request path creates neither a tenant nor a host, because <c>INSERT</c> writes
+    /// every column of a new row and a new row is a routing decision — a tenant whose
+    /// <c>database_name</c> is another tenant's, a host for a tenant the request does not own
+    /// (the second security re-review, H-4). On <c>tenant</c> only the lifecycle columns a named
+    /// request-path component moves are updatable, never the <see cref="RoutingColumns"/>.
+    /// <c>subscription</c> has no writer yet — no backlog row bills anyone — so it is read-only
+    /// until one does. <c>installed_package</c> is the package installer's. No table grants
+    /// <c>DELETE</c>: §11.4 tombstones a tenant, a subscription closes with <c>valid_to</c>,
+    /// <c>DROP DATABASE</c> is <c>aurora_admin</c>'s.
     /// </para>
     /// <para>
-    /// What is deliberately not here. The §11.4 offboarding transitions — <c>suspended_at</c>,
+    /// What is deliberately not here, and whose it is. The provisioning saga's own catalog writes —
+    /// <c>ReserveTenant</c> inserting the tenant (ADR-0007 §8 step 1), <c>RegisterRouting</c>
+    /// inserting the host and moving the tenant to <c>Active</c> with its <c>core_schema_version</c>
+    /// and <c>activated_at</c> (step 8), the reaper setting <c>ProvisioningFailed</c> — are not the
+    /// request path's and are not granted to it. They are issued as the saga's own principal, which
+    /// is the architect's decision to name; B-07 grants that principal what it needs in its own
+    /// migration. The same holds for the §11.4 offboarding transitions — <c>suspended_at</c>,
     /// <c>deletion_due_at</c>, <c>deleted_at</c>, and tombstoning the routing columns of a deleted
-    /// tenant — have no backlog row, and whether such operator-grade writes get a fourth catalog
-    /// role or grants to this one with the writer named is the architect's open question from the
-    /// B-05 security re-review. Until it is answered the request path holds none of them, and the
-    /// task that lands them grants what it needs in its own migration.
+    /// tenant — which have no backlog row yet. Until each is landed the request path holds none of
+    /// them.
+    /// </para>
+    /// <para>
+    /// A grant here has a column axis and no row axis. The catalog is shared by design, so
+    /// <c>UPDATE(state)</c> reaches every tenant's row, not the one the request was resolved for,
+    /// and <c>installed_package</c> is writable for any tenant id. No grant can narrow that; the
+    /// caller must, by naming the tenant it acts for and checking it against the resolved scope.
+    /// That obligation belongs to the tasks that issue the writes (B-06.2, B-08, B-13), and it is
+    /// why a request-path write to the catalog is the exception that needs a named component and
+    /// not the rule.
     /// </para>
     /// </remarks>
     public static readonly IReadOnlyDictionary<string, IReadOnlyList<AppRoleGrant>> AppRolePrivileges =
@@ -345,16 +362,13 @@ public static class CatalogSchemaAllowlist
             ["tenant"] =
             [
                 new("SELECT", "every request: ITenantConnectionResolver (B-06.1) resolves the tenant's cluster and database; ITenantScopeFactory (B-06.3) and the skew check (B-08.3) read state and core_schema_version"),
-                new("INSERT", "ReserveTenant, provisioning saga step 1 (B-07.1)"),
-                new("UPDATE(state)", "RegisterRouting, saga step 8 (B-07.4) sets Active; the reaper (B-07.1) sets ProvisioningFailed; the identity check (B-06.2), the migration runner's quarantine (B-08.2) and the skew check (B-08.3) set SchemaBlocked"),
-                new("UPDATE(core_schema_version)", "RegisterRouting, saga step 8 (B-07.4); the migration runner after each tenant migrates (B-08.1)"),
-                new("UPDATE(activated_at)", "RegisterRouting, saga step 8 (B-07.4)"),
+                new("UPDATE(state)", "the identity check (B-06.2), the migration runner's quarantine (B-08.2) and the skew check (B-08.3) set SchemaBlocked; the provisioning saga's own transitions are its principal's, not this role's"),
+                new("UPDATE(core_schema_version)", "the migration runner after each tenant migrates (B-08.1)"),
                 new("UPDATE(last_activity_at)", "the tenant's own scope open, at most once a minute (ADR-0007 §10.1; B-06.3)"),
             ],
             ["tenant_host"] =
             [
-                new("SELECT", "every request: resolving the tenant from the request's host (ADR-0007 §3.2 strategy 1)"),
-                new("INSERT", "RegisterRouting, provisioning saga step 8 (B-07.4)"),
+                new("SELECT", "every request: resolving the tenant from the request's host (ADR-0007 §3.2 strategy 1); RegisterRouting (B-07.4) inserts a host as the saga's principal, not this role"),
             ],
             ["subscription"] =
             [

@@ -127,10 +127,11 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     internal CatalogDbContext OpenAsMigrator() => CreateContext(MigratorConnectionString);
 
     /// <summary>
-    /// Writes rows the request path may only read — clusters are operator seed data, subscriptions
-    /// have no writer yet — and stamps the lifecycle columns no request-path component may touch,
-    /// as <c>aurora_migrator</c>, the owner. What a test then proves about <c>aurora_app</c> is
-    /// proved on rows it did not need to be able to write.
+    /// Writes rows the request path may only read — clusters are operator seed data, tenants and
+    /// hosts are the provisioning saga's to create, subscriptions have no writer yet — and stamps
+    /// the lifecycle columns no request-path component may touch, as <c>aurora_migrator</c>, the
+    /// owner. What a test then proves about <c>aurora_app</c> is proved on rows it did not need to
+    /// be able to write.
     /// </summary>
     internal async Task SeedAsync(Action<CatalogDbContext> seed)
     {

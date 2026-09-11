@@ -181,6 +181,13 @@ namespace Aurora.Platform.Tenancy.Migrations
                 columns: new[] { "state", "last_activity_at" });
 
             migrationBuilder.CreateIndex(
+                name: "ux_tenant_cluster_id_database_name",
+                schema: "catalog",
+                table: "tenant",
+                columns: new[] { "cluster_id", "database_name" },
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "ux_tenant_key",
                 schema: "catalog",
                 table: "tenant",
@@ -231,21 +238,29 @@ namespace Aurora.Platform.Tenancy.Migrations
             //
             // Where the grants stop, and why. The rows in these tables are the routing decision:
             // which tenant a host resolves to, which cluster and database a tenant resolves to,
-            // which host a cluster is. A request that could rewrite them could rebind another
+            // which host a cluster is. A request that could write them could rebind another
             // tenant's hostname, send one tenant's requests at another tenant's database, or point
-            // the resolver at a host of its own choosing carrying the real cluster credentials. So
-            // database_cluster is read-only (operator seed data, written as aurora_migrator);
-            // tenant and tenant_host may be inserted by the provisioning saga, and on tenant only
-            // the lifecycle columns a named component moves are updatable, never the columns a
-            // tenant resolves by; and no table grants DELETE - section 11.4 tombstones a tenant, a
-            // subscription closes with valid_to, and DROP DATABASE is aurora_admin's. A write
-            // privilege with no component to name is not granted: the task that needs it grants
-            // it in its own migration, naming itself.
+            // the resolver at a host of its own choosing carrying the real cluster credentials -
+            // and INSERT is such a write. It fills every column of a new row, so a table-wide
+            // INSERT on tenant or tenant_host lets a request create a tenant of its own that
+            // resolves to another tenant's database, or a self-verified host for a tenant it does
+            // not own; and no column list narrows it, because provisioning has to supply exactly
+            // those columns (the second security re-review, H-4). So the request path only reads
+            // the routing decision: database_cluster, tenant and tenant_host are SELECT, and on
+            // tenant only the lifecycle columns a named request-path component moves are
+            // updatable, never the columns a tenant resolves by. Creating a tenant and its host
+            // and activating it are the provisioning saga's writes (ADR-0007 section 8 steps 1 and
+            // 8), issued as the saga's own principal, not this role: which principal is the
+            // architect's decision, and its grants arrive with B-07 in a migration that names it.
+            // No table grants DELETE - section 11.4 tombstones a tenant, a subscription closes with
+            // valid_to, and DROP DATABASE is aurora_admin's. A write privilege with no component to
+            // name is not granted: the task that needs it grants it in its own migration, naming
+            // itself.
             migrationBuilder.Sql("GRANT USAGE ON SCHEMA catalog TO aurora_app;");
             migrationBuilder.Sql("GRANT SELECT ON catalog.database_cluster TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT ON catalog.tenant TO aurora_app;");
-            migrationBuilder.Sql("GRANT UPDATE (state, core_schema_version, activated_at, last_activity_at) ON catalog.tenant TO aurora_app;");
-            migrationBuilder.Sql("GRANT SELECT, INSERT ON catalog.tenant_host TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT ON catalog.tenant TO aurora_app;");
+            migrationBuilder.Sql("GRANT UPDATE (state, core_schema_version, last_activity_at) ON catalog.tenant TO aurora_app;");
+            migrationBuilder.Sql("GRANT SELECT ON catalog.tenant_host TO aurora_app;");
             migrationBuilder.Sql("GRANT SELECT ON catalog.subscription TO aurora_app;");
             migrationBuilder.Sql("GRANT SELECT, INSERT, UPDATE ON catalog.installed_package TO aurora_app;");
         }
