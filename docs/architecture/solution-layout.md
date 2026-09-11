@@ -1,7 +1,9 @@
 # Solution layout and the `scripts/verify.sh` spec
 
-Status: accepted v1 · Author: architect · Date: 2026-09-11
-Companion: `modules.md`, `testing-strategy.md`, `../decisions/ADR-0007-...`, `../decisions/ADR-0008-...`
+Status: accepted **v2** · Author: architect · Date: 2026-09-11
+Companion: `modules.md`, `testing-strategy.md`, `dependencies.md`, `../decisions/ADR-0007-...`, `../decisions/ADR-0008-...`
+
+**Changes in v2** (2026-09-11, B-01 peer review finding **S-1**): §5.2 stage 4 and the §6 **B-11** acceptance criteria now describe the two-tier dependency gate decided in `../decisions/ADR-0026-dependency-supply-chain-gate.md`.
 
 This document is written as **bootstrap work for senior developers**. The architect writes no code; §6 lists the tasks to hand to the project-manager.
 
@@ -61,7 +63,7 @@ tests/
 scripts/
   dev-env.sh      # exists: PATH for /usr/share/dotnet, starts Docker if needed
   verify.sh       # the single quality gate (§5)
-  check-dependencies.sh
+  check-dependencies.sh   # stage 4; also `--update-closure` (dependencies.md §7.3)
   new-module.sh   # scaffolds the 4 projects + schema + isolation test, from templates
 
 artifacts/        # git-ignored: build output, TRX, coverage, verify logs
@@ -159,7 +161,7 @@ One command, one gate. The integration branch must always pass it (`CLAUDE.md`).
 | 1 | Restore | `dotnet restore --locked-mode` | Any `packages.lock.json` is stale — i.e. someone changed a dependency without committing the lock |
 | 2 | Format & style | `dotnet format --verify-no-changes --severity warn` | Any formatting or style deviation |
 | 3 | Build | `dotnet build -c Release --no-restore` | Any warning (warnings are errors) |
-| 4 | Dependency licence gate | `scripts/check-dependencies.sh` — `dotnet list package --include-transitive --format json` cross-checked against `docs/architecture/dependencies.md` | A package appears that is not listed in `dependencies.md`, or is listed with a non-permissive licence |
+| 4 | Dependency licence gate | `scripts/check-dependencies.sh` — reads every project's `packages.lock.json` and the resolved `.nuspec` of each package (offline), cross-checked against `dependencies.md` §2/§3 for **direct** packages and `dependency-closure.md` for **transitive** ones | A **direct** package is absent from `dependencies.md`; a **transitive** package is absent from `dependency-closure.md`, or a closure row is no longer in the graph; a resolved licence differs from the recorded one or is not on the accepted SPDX list; a package from the `dependencies.md` §5 rejection list appears anywhere. Full list: `dependencies.md` §1 rule 4 and ADR-0026 |
 | 5 | Vulnerability gate | `dotnet list package --vulnerable --include-transitive` | Any High or Critical advisory |
 | 6 | Unit tests | `dotnet test --no-build -c Release --filter "Category!=Integration&Category!=Ui"` | Any failure. **Must pass with Docker stopped** |
 | 7 | Architecture fitness tests | `dotnet test --no-build -c Release tests/Aurora.Architecture.Tests` | Any layer, module-dependency, tenancy, money, migration-safety or country-branch rule is violated |
@@ -167,6 +169,8 @@ One command, one gate. The integration branch must always pass it (`CLAUDE.md`).
 | 9 | UI component tests | `dotnet test --no-build -c Release --filter "Category=Ui"` | Any failure (bUnit) |
 | 10 | Coverage report | collect always; **enforce a floor of 80% line coverage on `*.Domain` assemblies from milestone M2 onward** | Domain coverage below the floor, once enabled |
 | 11 | Summary | per-stage wall-clock table, total, pass/fail | — |
+
+**Stage 4 writes nothing.** Regenerating the transitive allowlist is a separate, explicit developer action — `scripts/check-dependencies.sh --update-closure` — run as part of the change that moved a dependency, never by `verify.sh` and never in CI. The gate must not silently fix what it is measuring (§5.1). Format, licence classes, the offline read mechanism and the ownership carve-out for the generated file: `dependencies.md` §7.
 
 ### 5.3 Options
 
@@ -201,7 +205,7 @@ Each is a task a senior developer can pick up. Acceptance criteria are given bec
 | **B-08** | Migration runner | `catalog.migration_run*` tables; `FOR UPDATE SKIP LOCKED` claiming with leases; resumable; a failing tenant is quarantined and the run continues; failure budget halts the run; waves; direct (non-PgBouncer) connection for the advisory lock; schema-version skew checks of ADR-0007 §7.5 | B-06 |
 | **B-09** | Migration safety and release gate tests | Categories `Expand`/`Contract`/`DataOnly`; SQL scan for destructive statements; release gate failing when an Expand and its Contract ship together; `CREATE INDEX` without `CONCURRENTLY` rejected | B-04 |
 | **B-10** | `Aurora.TestKit`: `TwoTenantDatabaseFixture` and `TenantIsolationContract<T>` | One PostgreSQL container per xUnit collection; two tenants provisioned through the **real** saga; the six mandatory tests of ADR-0007 §12.2 including the deliberate mis-route; a fitness test asserting every module integration-test assembly has a subclass | B-07 |
-| **B-11** | `verify.sh` stages 4–10 and `scripts/check-dependencies.sh` | Licence gate fails on a package absent from `dependencies.md`; vulnerability gate fails on a seeded High advisory; unit stage passes with Docker stopped; full run inside the §5.4 budget | B-02, B-04, B-10 |
+| **B-11** | `verify.sh` stages 4–10 and `scripts/check-dependencies.sh` | Implements the two-tier gate of `dependencies.md` §1 rule 4 / §7 and ADR-0026. Generates the first `docs/architecture/dependency-closure.md` with `--update-closure` and commits it; its reviewer confirms every licence in it. Each of the six failure conditions has a test that proves the gate **fails** — including a fabricated new transitive package, a stale closure row, a licence flipped to a non-permissive value, and a package id from `dependencies.md` §5. Stage 4 runs offline, writes nothing, and reads project lock files (not `artifacts/` copies). Vulnerability gate fails on a seeded High advisory; unit stage passes with Docker stopped; full run inside the §5.4 budget | B-02, B-04, B-10 |
 | **B-12** | `Aurora.Countries.Contracts` + `Aurora.Countries.Hosting` | The ten extension-point interfaces; manifest read via `MetadataLoadContext`; ECDSA P-256 signature verification; collectible ALC with the contracts assembly resolved from the default context; approved-API snapshot test on the contracts assembly; install refused against an out-of-range `coreContractRange` with both versions named | B-03 |
 | **B-13** | Country Package installer | The nine install steps of ADR-0008 §5.1 including the core-DDL-hash check; install into a **live** tenant with existing data; deactivate and purge; three-way merge of §4.2 | B-07, B-12 |
 | **B-14** | `scripts/new-module.sh` and the module template | Generates the four projects, the `DbContext` with `HasDefaultSchema`, the DI extension, the unit and integration test projects and a `TenantIsolationContract` subclass; the generated module passes `verify.sh` unchanged | B-10 |

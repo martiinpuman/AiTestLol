@@ -1,7 +1,9 @@
 # Third-party dependencies
 
-Status: accepted v1 · Author: architect · Date: 2026-09-11
-Companion: `solution-layout.md` §5.2 stage 4 (`scripts/check-dependencies.sh`), `../decisions/ADR-0020-test-tooling.md`
+Status: accepted **v2** · Author: architect · Date: 2026-09-11
+Companion: `solution-layout.md` §5.2 stage 4 (`scripts/check-dependencies.sh`), `dependency-closure.md` (generated, §7), `../decisions/ADR-0026-dependency-supply-chain-gate.md`, `../decisions/ADR-0020-test-tooling.md`
+
+**Changes in v2** (2026-09-11, from the B-01 peer review): §1 rule 2 rewritten — the name check is now two-tier and the licence check covers the whole closure (finding **S-1**, decided in ADR-0026); §3 records the two version pins B-01 resolved (finding **m-1**); §7 added — the specification of `dependency-closure.md`.
 
 ---
 
@@ -45,7 +47,7 @@ All entries verified **2026-09-11** against nuget.org unless noted.
 
 | Package | Version | Licence | Used for | ADR |
 |---|---|---|---|---|
-| `Microsoft.EntityFrameworkCore` (+ `.Relational`, `.Design`) | 10.0.12 | MIT | ORM, migrations | ADR-0003 |
+| `Microsoft.EntityFrameworkCore`, `Microsoft.EntityFrameworkCore.Relational`, `Microsoft.EntityFrameworkCore.Design` | 10.0.12 | MIT | ORM, migrations | ADR-0003 |
 | `Npgsql` | 10.0.3 | **PostgreSQL** | PostgreSQL driver, data sources, pooling | ADR-0004 |
 | `Npgsql.EntityFrameworkCore.PostgreSQL` | 10.0.3 | **PostgreSQL** | EF Core provider | ADR-0003 |
 | `System.Reflection.MetadataLoadContext` | 10.0.12 | MIT | Reading a Country Package manifest **without executing its code** | ADR-0008 §3.2 |
@@ -106,19 +108,26 @@ All entries verified **2026-09-11** against nuget.org unless noted.
 | Package | Version | Licence | Used for | ADR |
 |---|---|---|---|---|
 | `xunit` | 2.9.3 | Apache-2.0 | Test framework (version verified in this environment). xUnit v3 (`xunit.v3` 4.0.0, Apache-2.0) is the forward path — backlog item | ADR-0020 |
-| `xunit.runner.visualstudio` | matching the framework major | Apache-2.0 | Test runner | ADR-0020 |
+| `xunit.runner.visualstudio` | **3.1.4** | Apache-2.0 | Test runner. 3.x runs both xUnit v2 and v3 test projects, so it does **not** track the framework major — see the note below | ADR-0020 |
 | `Microsoft.NET.Test.Sdk` | 18.10.0 | MIT | Test host | ADR-0020 |
 | `Shouldly` | 4.3.0 | BSD-3-Clause | Assertions | ADR-0020 |
 | `NSubstitute` | 6.2.0 | BSD-3-Clause | Test doubles | ADR-0020 |
 | `Testcontainers.PostgreSql` | 4.15.0 | MIT | Real PostgreSQL in integration tests (`postgres:17-alpine`) | ADR-0020 |
-| `TngTech.ArchUnitNET` + `.xUnit` | 0.13.4 | Apache-2.0 | Architecture fitness tests | ADR-0020 |
+| `TngTech.ArchUnitNET`, `TngTech.ArchUnitNET.xUnit` | 0.13.4 | Apache-2.0 | Architecture fitness tests | ADR-0020 |
 | `FsCheck` | 3.4.0 | BSD-3-Clause | Property-based tests for money, rounding, allocation, FIFO layers | ADR-0020, ADR-0021 |
 | `Verify.Xunit` | 31.12.5 | MIT | Snapshot tests: e-invoice XML, statutory reports, OpenAPI, migration SQL | ADR-0020 |
 | `bunit` | 2.10.3 | MIT | Blazor component tests | ADR-0020 |
 | `Microsoft.Extensions.TimeProvider.Testing` | 10.10.0 | MIT | `FakeTimeProvider` for effective-dated and period logic | ADR-0020 |
 | `coverlet.collector` | 10.0.1 | MIT | Coverage collection | ADR-0020 |
-| `Microsoft.CodeAnalysis.PublicApiAnalyzers` | latest stable | MIT | Approved-API snapshot for `Aurora.Countries.Contracts` and event contracts | ADR-0008 §3.1 |
-| `Bogus` | 35.6.5 | MIT — **confirm at adoption**: NuGet exposes a licence *file*, not an SPDX expression. Read `LICENSE` in the package and record the exact text here before first use | Volume test data for performance guard rails | ADR-0020 |
+| `Microsoft.CodeAnalysis.PublicApiAnalyzers` | **5.6.0** | MIT | Approved-API snapshot for `Aurora.Countries.Contracts` and event contracts | ADR-0008 §3.1 |
+| `Bogus` | 35.6.5 | MIT — **confirm at adoption**: NuGet exposes a licence *file*, not an SPDX expression. Read `LICENSE` in the package and record the exact text here before first use. This is a **class B** package in the sense of §7.2 | Volume test data for performance guard rails | ADR-0020 |
+
+**Two pins recorded 2026-09-11** (B-01 review finding m-1). Both were previously written here as a rule of thumb rather than a version, which §6 step 5 forbids. B-01 resolved them; the licences were verified the same day by reading the published `.nuspec` from `api.nuget.org/v3-flatcontainer`, which is the same artifact stage 4 reads (§7.2):
+
+- `xunit.runner.visualstudio` **3.1.4** — `<license type="expression">Apache-2.0</license>`, published 2025-08-16, repository `github.com/xunit/visualstudio.xunit`.
+- `Microsoft.CodeAnalysis.PublicApiAnalyzers` **5.6.0** — `<license type="expression">MIT</license>`, published 2026-07-02, repository `github.com/dotnet/roslyn`. 5.11.0 exists only as a prerelease; `AllowPrerelease` is false, so 5.6.0 is the current stable.
+
+**Correction to a note in ADR-0020.** ADR-0020's options table says *"the test-runner package major must match the framework major"*. That was true of `xunit.runner.visualstudio` 2.x and is **not** true from 3.0 onward: the 3.x runner runs xUnit v2 and v3 test projects alike (it advertises support back to 1.9.2). So `xunit.runner.visualstudio` **3.1.4** alongside `xunit` **2.9.3** is correct, not a mismatch, and must not be "fixed" by downgrading the runner. ADR-0020's decision — use xUnit with this runner — is unchanged, so it is not superseded; only the version-selection heuristic in its supporting text is wrong, and the correction is recorded here rather than by editing an accepted ADR.
 
 ---
 
@@ -150,6 +159,25 @@ The whole point of this section is that a future developer reaching for the fami
 | **NetArchTest.Rules** | MIT, but last published 2021 — unmaintained | `TngTech.ArchUnitNET` (Apache-2.0) — ADR-0020. Rejected on maintenance, not licence |
 | Commercial Blazor suites (Telerik, Syncfusion, DevExpress) | Commercial, per developer | Own component library over QuickGrid — ADR-0024 |
 
+**Machine-readable rejection list.** `check-dependencies.sh` fails if any of these ids appears anywhere in the graph, at any version, direct or transitive (§1 rule 4.6). A trailing `*` is a prefix match. Keep this block in sync with the table above; the script reads this block, because the table's prose cells are for humans.
+
+```
+AutoMapper*
+MediatR
+MediatR.Extensions.*
+MassTransit*
+FluentAssertions*
+Hangfire*
+Duende.IdentityServer*
+Moq
+NetArchTest.*
+Telerik.*
+Syncfusion.*
+DevExpress.*
+```
+
+Three deliberate precisions. `Duende.IdentityServer*` is matched rather than `Duende.*`, because `Duende.IdentityModel` — the renamed, Apache-2.0 `IdentityModel` library — is not commercial; it is simply not adopted, and would need a §2 row before use. **Redis** is rejected as a *server* (RSALv2/SSPL); its .NET clients (`StackExchange.Redis`, `Microsoft.Extensions.Caching.StackExchangeRedis`) are MIT and are **not** rejected — they also speak to Valkey, which is the replacement in ADR-0012. And `FluentValidation` is unrelated to `FluentAssertions` despite the name: it is Apache-2.0, approved, and listed in §2.4.
+
 ---
 
 ## 6. Adding a dependency — the checklist
@@ -157,6 +185,88 @@ The whole point of this section is that a future developer reaching for the fami
 1. Does something already in this list do the job? Prefer one library used well over two used partly.
 2. Verify the **SPDX licence on nuget.org** and, for anything ambiguous (a licence *file* rather than an expression), read the file. Record the date.
 3. Check it is **actively maintained**: a release within the last 12 months, and an issue tracker with responses.
-4. Check the transitive graph — `CentralPackageTransitivePinningEnabled` means a transitive package is a decision too, and stage 4 will fail on it.
-5. Add the version to `Directory.Packages.props`, commit the updated `packages.lock.json`, add a row here with version, SPDX licence, purpose, ADR and verification date.
+4. Check what it **drags in**. Run `scripts/check-dependencies.sh --update-closure` after restoring and read the added rows in `dependency-closure.md`: those are packages you are adopting too, even though you did not choose them. A direct package with a large or surprising fan-out is itself an argument against the package.
+5. Add the version to `Directory.Packages.props`, commit the updated `packages.lock.json`, add a row here with version, SPDX licence, purpose, ADR and verification date — and commit the regenerated `dependency-closure.md` in the same change. Reviewers look at the closure diff, not just at your new row.
 6. If it is architecturally significant (hard to reverse, constrains other teams, or introduces a runtime), it needs an ADR as well as a row.
+
+---
+
+## 7. `dependency-closure.md` — the transitive allowlist
+
+Specified here, implemented in **B-11**. Decision and alternatives: **ADR-0026**.
+
+### 7.1 What it is
+
+`docs/architecture/dependency-closure.md` is a **generated** file holding one row per `(package id, resolved version)` in the transitive tier. It is not a decision record — decisions live in §2 and §3 — it is *evidence*: these packages are in the product, this is the licence each carried at the last restore, and this is the direct package that brought it in. Its purpose is to make any change to the closure visible in the pull request that caused it.
+
+Row format, sorted by id then version, case-insensitive, one flat table (grouping invites merge conflicts):
+
+| Package | Version | SPDX | Source | Arrives via | Verified |
+|---|---|---|---|---|---|
+| `AngleSharp` | 1.8.0 | MIT | `nuspec-expression` | `bunit` | 2026-09-11 |
+| `xunit.abstractions` | 2.0.3 | Apache-2.0 | `human:licenseUrl` | `xunit` | 2026-09-11 |
+
+The key is `(id, version)`, not id. A solution may legitimately resolve one package at two versions; B-01's graph already does, twice — `Microsoft.Extensions.DependencyInjection.Abstractions` at **8.0.2 and 10.0.10**, and `Microsoft.Extensions.Logging.Abstractions` at **8.0.3 and 10.0.10**. A one-row-per-id format would have been wrong on its first day.
+
+*Arrives via* names the direct-tier package(s) whose graph contains the row, comma-separated and sorted. It is there so a reviewer can judge the fan-out: a direct package that drags in fifteen others is an argument against that package.
+
+### 7.2 Two licence classes
+
+| Class | Nuspec shape | Handling |
+|---|---|---|
+| **A** | `<license type="expression">SPDX</license>` | The script resolves it. No human involved. `Source` = `nuspec-expression` |
+| **B** | `<license type="file">…</license>`, only a legacy `<licenseUrl>`, or no licence element at all | The script **cannot** decide. A human reads the licence text and records the SPDX id, with `Source` = `human:file:<path>` or `human:licenseUrl`, and the date in `Verified`. **Stage 4 fails if a class B row's version is not the resolved version** — a new version can ship a different licence file, and the earlier human verification does not carry over |
+
+The two classes apply to **both tiers** — the licence of a direct package is read from its nuspec too. For a direct class B package the human-verified SPDX id and date go in its §2/§3 row instead of in the closure file; `Bogus` (§3) is the example waiting to happen.
+
+Class B is real but rare, and the manual surface is bounded. Measured on B-01's restored package cache (2026-09-11): **207 of 208** nuspecs carry an SPDX expression; the one exception is `xunit.abstractions` 2.0.3, which has only `<licenseUrl>https://raw.githubusercontent.com/xunit/xunit/master/license.txt</licenseUrl>` (the Apache-2.0 text).
+
+### 7.3 How `check-dependencies.sh` reads the graph — offline, no extra dependency
+
+Both inputs are already on disk after `verify.sh` stage 1, so stage 4 needs **no network and no third-party tool**:
+
+1. **Every project's committed `packages.lock.json`** gives id, resolved version and `"type"`:
+   - `"Direct"` → direct tier, checked against §2/§3.
+   - `"Transitive"` and `"CentralTransitive"` → transitive tier, checked against `dependency-closure.md`. `CentralTransitive` means *we pinned the version*, not that we chose the dependency, so it belongs in the closure like any other transitive package.
+   - `"Project"` → a project reference. Skip.
+   - Union across every project and every target framework.
+   - **Trap:** `UseArtifactsOutput` copies a project's lock file into `artifacts/bin/<project>/<config>/`, so a naive `**/packages.lock.json` glob reads stale duplicates. Enumerate the projects in `Aurora.sln`, or exclude `artifacts/` explicitly. This was observed on B-01.
+2. **`${NUGET_PACKAGES:-$HOME/.nuget/packages}/<id-lower>/<version-lower>/<id-lower>.nuspec`** gives the licence element. Restore has already extracted every package. If a nuspec is missing, fail with "restore first" — never reach for the network to answer a licence question inside the gate.
+
+`dotnet list package --include-transitive` is deliberately **not** the input: it requires an evaluation pass, carries no licence data, and classifies less precisely than the lock file.
+
+**Two modes, and only one of them writes:**
+
+| Mode | Behaviour |
+|---|---|
+| default — what stage 4 runs | Compare; report; fail per §1 rule 4. **Writes nothing.** |
+| `--update-closure` | Rewrite `dependency-closure.md` from the current graph, preserving class B rows whose version is unchanged. Run by a developer, deliberately, as part of the change that moved a dependency. Never run by `verify.sh`, never in CI |
+
+A stage 4 failure must name the package, the version, the tier and the exact next step — for a new transitive package that is *"run `scripts/check-dependencies.sh --update-closure`, then review the added rows and their licences"*.
+
+**Parsing rules for this file, so the tables stay machine-readable.** In §2 and §3:
+
+- the *Package* cell holds one or more **full** package ids, each in backticks, comma-separated; version and licence apply to all ids in the cell. No shorthand such as `(+ .Relational)` — it was removed for exactly this reason;
+- the *Licence* cell **begins** with the SPDX identifier (bold markers stripped); anything after an em dash is prose for humans;
+- the *Version* cell holds a single exact version.
+
+§4 (container images) is out of scope for the script — those are not NuGet packages. `Microsoft.AspNetCore.App` in §2.2 is a `FrameworkReference` and never appears in a lock file; it is listed for the reader, and the script must not expect it. The rejection check of §1 rule 4.6 reads the fenced id list at the end of §5, not the prose table.
+
+**The two lists are asymmetric, on purpose:**
+
+- §2/§3 is a **superset** — an approved-for-use list. It legitimately contains packages no project references yet (B-01 centrally pins about thirty for exactly this reason). An unused row is not a failure.
+- `dependency-closure.md` is **exact** — every row must be in the graph and every transitive package must have a row. A stale row silently pre-approves a package nobody is using, which is the hole this file exists to close.
+
+### 7.4 Ownership of a generated file in an architect-owned folder
+
+`CLAUDE.md` gives `docs/architecture/` to the architect, and it does not anticipate a machine-generated file in a docs folder. The carve-out, decided in ADR-0026 and pending a `HUMAN_INBOX` answer:
+
+- **Senior developers may regenerate `dependency-closure.md`** with `scripts/check-dependencies.sh --update-closure` as part of any task that changes a dependency, and must commit it with that change.
+- **Nobody hand-edits it** — except to fill in the SPDX id of a class B row, which is the one field a machine cannot produce.
+- The **architect owns the rule** (this file and ADR-0026) and re-reads the closure at every milestone health check.
+
+It lives in `docs/architecture/` rather than beside the code because its readers are reviewers and the architect, and because `CLAUDE.md`'s premise is that the repository is the team's only memory: the licence evidence has to sit next to the licence rule.
+
+### 7.5 First generation
+
+`dependency-closure.md` does not exist yet, so stage 4 is expected to fail the first time it runs — with the message above, which is the correct behaviour for a missing allowlist. B-11 generates it and its reviewer performs the one review that matters: reading roughly **59 rows** and confirming that every licence is on the accepted list and that nothing on the §5 rejection list appears. After that first review the file maintains itself, one small diff at a time.
