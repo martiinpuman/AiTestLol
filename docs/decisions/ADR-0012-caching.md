@@ -1,8 +1,8 @@
 # ADR-0012 — Caching
 
-- **Status:** Accepted (2026-09-11)
+- **Status:** Accepted (2026-09-11) — §3's table gains the Tenant Membership entry defined in ADR-0029 §4 (`c:member:{userId}`, 60 s, invalidated on membership change); the decisions here are unchanged
 - **Deciders:** architect
-- **Related:** ADR-0007 (tenancy), ADR-0011 (configuration)
+- **Related:** ADR-0007 (tenancy), ADR-0011 (configuration), ADR-0029 (identity and authorization caching)
 
 ## Context
 

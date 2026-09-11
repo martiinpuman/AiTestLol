@@ -1,8 +1,10 @@
 # ADR-0010 — Authorization: roles and permissions per tenant and company
 
-- **Status:** Accepted (2026-09-11)
+- **Status:** Accepted (2026-09-11) — mechanics of rules 1, 4, 5 and 7 (the evaluator's signature and outcomes, what a `null` company scope resolves to, fail-closed behaviour, where the permission set may and may not be carried) specified by ADR-0029; the decisions here are unchanged
 - **Deciders:** architect
-- **Related:** ADR-0007 (tenancy), ADR-0009 (authentication), ADR-0013 (API)
+- **Supersedes:** —
+- **Superseded by:** —
+- **Related:** ADR-0007 (tenancy), ADR-0009 (authentication), ADR-0013 (API), ADR-0029 (fail-closed permission evaluation)
 
 ## Context
 
