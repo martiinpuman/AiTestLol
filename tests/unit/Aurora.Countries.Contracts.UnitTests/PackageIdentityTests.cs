@@ -63,22 +63,21 @@ public sealed class PackageIdentityTests
     [InlineData("nz nz")]
     [InlineData("nz\"")]
     [InlineData("nz; drop schema sales cascade")]
-    [InlineData("public")]
     [InlineData("a_key_far_too_long_for_a_schema")]
-    public void A_key_that_could_reach_past_its_own_schema_is_refused(string? key)
-    {
-        if (key == "public")
-        {
-            // 'public' is a legitimate shape; it is refused at install by colliding with nothing,
-            // because the schema this key names is pkg_public and not public. The shape rule's job
-            // is narrower than that, and this case records the boundary rather than asserting a
-            // rule that is not here.
-            ContractTestValues.Ok(PackageKey.Create(key)).SchemaName.ShouldBe("pkg_public");
-            return;
-        }
-
+    public void A_key_that_could_reach_past_its_own_schema_is_refused(string? key) =>
         PackageKey.Create(key).IsFailure.ShouldBeTrue();
-    }
+
+    /// <summary>
+    /// What the shape rule does <i>not</i> do, recorded so the next reader does not assume it.
+    /// </summary>
+    /// <remarks>
+    /// <c>public</c> is a perfectly good key, because the schema it names is <c>pkg_public</c> and
+    /// not <c>public</c> — the prefix is what keeps every package out of a schema it does not own,
+    /// and the shape rule only has to keep the key from being something other than a word.
+    /// </remarks>
+    [Fact]
+    public void A_key_that_reads_like_a_reserved_schema_still_names_its_own_schema() =>
+        ContractTestValues.Ok(PackageKey.Create("public")).SchemaName.ShouldBe("pkg_public");
 
     [Fact]
     public void The_default_key_names_nothing_and_says_so()

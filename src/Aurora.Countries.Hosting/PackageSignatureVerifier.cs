@@ -37,10 +37,11 @@ public readonly record struct PackageTrust(PackageTrustLevel Level, string? KeyT
 /// <para>
 /// <b>What a failed verification does:</b> nothing loads. Verification runs before the assembly is
 /// opened in any executable context, so a package that fails it has never been given a thread, a
-/// type initialiser or a module initialiser. The install saga stops at step 2, the tenant's database
-/// is untouched, and the operator gets a Problem Details response naming the package, the directory
-/// and which check failed. There is no partial install to roll back, which is the whole reason
-/// verification comes before schema creation rather than after it.
+/// type initialiser or a module initialiser. It returns a failed <see cref="Result{TValue}"/> whose
+/// error names the package, its version and which check said no; discovery records that against the
+/// directory rather than skipping it, and install stops at step 2 with the tenant's database
+/// untouched. There is no partial install to roll back, which is the whole reason verification comes
+/// before schema creation rather than after it.
 /// </para>
 /// </remarks>
 public sealed class PackageSignatureVerifier
