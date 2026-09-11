@@ -86,6 +86,12 @@ while read -r path; do
     # it as one sent the orchestrator after a worktree that was simply starting up.
     # Recent modification is the signal that separates the two.
     say "${path} (${br}) — agent active in the last hour"
+  elif [ "$(git rev-parse "${br}" 2>/dev/null)" = "$(git rev-parse "${INTEGRATION}" 2>/dev/null)" ]; then
+    # Tip equal to the integration tip means no commits yet — a branch that has not
+    # started, not one whose work is merged. Ancestry alone cannot tell them apart,
+    # and calling a freshly dispatched agent's worktree prunable sends the
+    # orchestrator to delete work that is about to be written.
+    say "${path} (${br}) — branched, no commits yet"
   elif git merge-base --is-ancestor "${br}" "${INTEGRATION}" 2>/dev/null; then
     fail "${path} (${br}) — its work is merged, prune it"
     stale=$((stale + 1))

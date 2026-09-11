@@ -27,7 +27,11 @@ block() { printf 'AURORA-BASH-%s: %s\n' "$1" "$2" >&2; exit 2; }
 # Collapse line continuations so a rule cannot be evaded by wrapping.
 flat=$(printf '%s' "$cmd" | tr '\n' ' ')
 
-if [[ "$flat" =~ (^|[\;\&\|\(])[[:space:]]*git[[:space:]]+push ]]; then
+# A command position is the start, after an operator, or after a shell keyword —
+# `for … ; do git push …` put the push after `do`, where the operator-only pattern did
+# not see it at all, so the whole rule silently did nothing on a loop.
+CMD_POS='(^|[;&|(]|[[:space:]](do|then|else)[[:space:]])[[:space:]]*'
+if [[ "$flat" =~ ${CMD_POS}git[[:space:]]+push ]]; then
     # Isolate the push invocation itself: everything from `git push` up to the first
     # shell operator. Every rule below reads this segment and not the whole command
     # line. Two false positives came from not doing that: `git push … | tail -3` read
@@ -48,6 +52,12 @@ if [[ "$flat" =~ (^|[\;\&\|\(])[[:space:]]*git[[:space:]]+push ]]; then
     fi
     target="${target#*:}"        # src:dst -> dst
     target="${target#refs/heads/}"
+    if [[ "$target" == *'$'* || "$target" == *'`'* ]]; then
+        # A variable refspec cannot be evaluated from command text. This rule guards a
+        # hard limit, so it fails closed rather than guessing — but say that, instead
+        # of claiming the branch named '$b' is wrong.
+        block 02 "cannot evaluate '$target': the push target is a shell variable, and this guard reads command text, not shell state. Name the branch literally (one push per branch) so the target can be checked."
+    fi
     if [[ -n "$target" && "$target" != HEAD && "$target" != "$INTEGRATION_BRANCH" && "$target" != task/* ]]; then
         block 02 "push target '$target' is neither the integration branch ($INTEGRATION_BRANCH) nor a task/* branch. CLAUDE.md: 'Never push to any other branch.'"
     fi
@@ -63,7 +73,7 @@ fi
 
 # dotnet needs scripts/dev-env.sh sourced in the *same* Bash call: shell state does
 # not persist between tool calls, so a previous source does not carry over.
-if [[ "$flat" =~ (^|[\;\&\|\(])[[:space:]]*dotnet[[:space:]] ]] \
+if [[ "$flat" =~ ${CMD_POS}dotnet[[:space:]] ]] \
    && [[ ! "$flat" =~ dev-env\.sh ]] && [[ ! "$flat" =~ /usr/share/dotnet ]]; then
     block 05 "'dotnet' will not be on PATH: shell state does not persist between Bash calls. Prefix the command with 'source scripts/dev-env.sh && '."
 fi
