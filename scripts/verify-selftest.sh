@@ -9,8 +9,9 @@
 #
 # It also asserts the properties of the gate that no single stage owns: that it
 # runs from any working directory, that sourcing scripts/dev-env.sh is what puts
-# the SDK on PATH, and that a failing stage leaves every later stage unrun
-# (fail fast, docs/architecture/solution-layout.md 5.1).
+# the SDK on PATH, that stages 0-3 need no network at all, and that a failing
+# stage leaves every later stage unrun (fail fast,
+# docs/architecture/solution-layout.md 5.1).
 #
 # This is deliberately NOT a stage of verify.sh. It costs one full gate run per
 # case, and it mutates the working tree while it runs - which is precisely what
@@ -21,13 +22,17 @@
 # they belong here rather than in a second harness.
 #
 # SAFETY. The injections below are real, if brief:
-#   - the script refuses to start on a dirty working tree, because only on a
-#     clean one is "put it back" unambiguous;
-#   - every file it touches is copied aside first and restored by an
-#     EXIT/INT/TERM trap, so an interrupted run still restores;
-#   - after every case it asserts `git status --porcelain` is empty again and
-#     stops the whole run if it is not;
+#   - every file a case touches is copied aside before the case mutates it and
+#     restored by an EXIT/INT/TERM trap, so even an interrupted run restores;
+#   - after every case the working tree is compared against the state the run
+#     started from, and a case that cannot be undone stops the whole run rather
+#     than injecting the next defect on top of an unknown tree;
 #   - it never commits, never stashes and never touches the git index.
+#
+# Uncommitted work is therefore safe, and the script runs with it in place. It
+# says so when it starts, because the baseline case then measures that work too:
+# a gate failure in the first case is far more likely to be yours than the
+# harness's.
 
 set -Eeuo pipefail
 
@@ -131,16 +136,18 @@ case_begin() {
   printf ' %s%2d%s %s\n' "${C_BOLD}" "${CASES_RUN}" "${C_RESET}" "${CASE_NAME}"
 }
 
-# Restores the repository and insists it really is back to where it started.
-# A case that cannot restore stops the run: continuing would inject the next
-# defect on top of an unknown working tree.
+# Restores the repository and insists it really is back to where it started -
+# which is BASELINE_STATUS, not necessarily a clean tree. A case that cannot be
+# undone stops the run: continuing would inject the next defect on top of a
+# working tree nobody can describe.
 case_end() {
   restore_all
-  local dirty
-  dirty="$(tree_status)"
-  if [[ -n "${dirty}" ]]; then
-    printf '   %s%sABORT%s working tree not restored after "%s":\n%s\n' \
-      "${C_BOLD}" "${C_RED}" "${C_RESET}" "${CASE_NAME}" "${dirty}"
+  local now
+  now="$(tree_status)"
+  if [[ "${now}" != "${BASELINE_STATUS}" ]]; then
+    printf '   %s%sABORT%s working tree not restored after "%s":\n' \
+      "${C_BOLD}" "${C_RED}" "${C_RESET}" "${CASE_NAME}"
+    diff <(printf '%s\n' "${BASELINE_STATUS}") <(printf '%s\n' "${now}") || true
     exit 1
   fi
 }
@@ -234,6 +241,36 @@ case_dev_env_is_sourced() {
   assert_stage_log_contains 0 "SDK on PATH:" || return 0
 }
 
+# 5.1 allows exactly two network calls - the NuGet restore and one pull of
+# postgres:17-alpine - and no stage implemented today makes either: the packages
+# are already in the global cache and nothing here starts a container. Proven by
+# running the stages in a network namespace that has no interface at all, rather
+# than by reading the commands and believing them.
+#
+# Stage 6 is not in the loop, and the reason is worth writing down. `dotnet test`
+# reaches its test host over a TCP socket on loopback; `unshare -n` hands back a
+# namespace whose loopback is *down*, so stage 6 times out there after 90s per
+# assembly with "failed to connect to testhost". That is machine-local IPC
+# failing, not egress being denied - raising loopback needs iproute2, which this
+# image does not ship. Stage 6 runs `--no-build` over assemblies stage 3 already
+# produced, so it has nothing to fetch; the day this image gains `ip`, add it to
+# the loop behind `ip link set lo up`.
+case_offline() {
+  case_begin "5.1 stages 0-3 need no network at all"
+  if ! unshare -n true >/dev/null 2>&1; then
+    printf '    SKIP: this kernel or user cannot create a network namespace\n'
+    return 0
+  fi
+  local stage
+  for stage in 0 1 2 3; do
+    RUN_RC=0
+    unshare -n -- "${VERIFY}" --stage "${stage}" >"${CASE_LOG}" 2>&1 || RUN_RC=$?
+    (( RUN_RC == 0 )) \
+      || fail_case "stage ${stage} did not pass with no network interface" || return 1
+    printf '    stage %s PASS with no network interface\n' "${stage}"
+  done
+}
+
 case_preflight_no_sdk() {
   case_begin "stage 0: the SDK is not installed where DOTNET_ROOT points"
   VERIFY_ENV=(DOTNET_ROOT=/nonexistent/dotnet PATH=/usr/bin:/bin)
@@ -272,7 +309,7 @@ case_restore_stale_lock() {
     -- "${REPO_ROOT}/${proj}"
   run_verify
   assert_fail_stage 1 || return 0
-  assert_stage_log_contains 1 "packages.lock.json" || return 0
+  assert_stage_log_contains 1 "NU1004" || return 0
   assert_nothing_ran_after 1 || return 0
 }
 
@@ -365,20 +402,22 @@ case_unit_test_host_aborts() {
 printf '%sAurora ERP - verify self-test%s\n' "${C_BOLD}" "${C_RESET}"
 printf '%srepository: %s%s\n\n' "${C_DIM}" "${REPO_ROOT}" "${C_RESET}"
 
-if [[ -n "$(tree_status)" ]]; then
-  printf '%sverify-selftest: the working tree is dirty.%s\n' "${C_RED}" "${C_RESET}" >&2
-  cat >&2 <<'MSG'
-This script injects real defects and restores the files afterwards. On a dirty
-tree "restore" is ambiguous - it cannot tell your edits from its own - so it
-refuses to start. Commit or set aside your work and run it again.
-MSG
-  exit 2
+# Every later comparison is against this, so the script restores uncommitted
+# work rather than demanding its absence.
+BASELINE_STATUS="$(tree_status)"
+
+if [[ -n "${BASELINE_STATUS}" ]]; then
+  printf '%sstarting from a dirty working tree - it will be restored, not cleaned:%s\n' \
+    "${C_DIM}" "${C_RESET}"
+  printf '%s\n' "${BASELINE_STATUS}"
+  printf '%sthe baseline case measures those changes too.%s\n\n' "${C_DIM}" "${C_RESET}"
 fi
 
 CASES=(
   case_baseline
   case_any_cwd
   case_dev_env_is_sourced
+  case_offline
   case_preflight_no_sdk
   case_preflight_sdk_mismatch
   case_restore_stale_lock
@@ -400,8 +439,8 @@ printf '\n'
 if (( CASES_FAILED == 0 )); then
   printf '%s%s%d/%d cases behaved as specified.%s\n' \
     "${C_BOLD}" "${C_GREEN}" "${CASES_RUN}" "${CASES_RUN}" "${C_RESET}"
-  printf '%sworking tree after the run: %s%s\n' \
-    "${C_DIM}" "$(tree_status | wc -l) change(s)" "${C_RESET}"
+  printf '%sworking tree: back to the state the run started from.%s\n' \
+    "${C_DIM}" "${C_RESET}"
   exit 0
 fi
 
