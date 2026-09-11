@@ -60,7 +60,7 @@ Minimum coverage per module:
 
 ## 5. Architecture fitness tests
 
-One project, `tests/Aurora.Architecture.Tests`. Rules whose subject is **compiled code** read IL metadata with the in-box `System.Reflection.Metadata`; rules whose subject is the **project graph** parse `.csproj` and `packages.lock.json` directly, because an *unused* forbidden reference exists only there. **ADR-0029** records that mechanism and withdraws ArchUnitNET, which ADR-0020 had chosen and which has no consumer. Choosing a compiler API for a future source-level rule (§5.2 M4, or a `.razor` rule) is a decision for the ADR that introduces that rule.
+One project, `tests/Aurora.Architecture.Tests`. Rules whose subject is **compiled code** read IL metadata with the in-box `System.Reflection.Metadata`; rules whose subject is the **project graph** parse `.csproj` and `packages.lock.json` directly, because an *unused* forbidden reference exists only there. **ADR-0030** records that mechanism and withdraws ArchUnitNET, which ADR-0020 had chosen and which has no consumer. Choosing a compiler API for a future source-level rule (§5.2 M4, or a `.razor` rule) is a decision for the ADR that introduces that rule.
 
 Budget: under 30 seconds, and no database, so it is cheap enough to run on every save. Two conventions come with the mechanism and apply to every rule below:
 

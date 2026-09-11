@@ -121,7 +121,7 @@ All entries verified **2026-09-11** against nuget.org unless noted.
 | `Microsoft.CodeAnalysis.PublicApiAnalyzers` | **5.6.0** | MIT | Approved-API snapshot for `Aurora.Countries.Contracts` and event contracts | ADR-0008 §3.1 |
 | `Bogus` | 35.6.5 | MIT — **confirm at adoption**: NuGet exposes a licence *file*, not an SPDX expression. Read `LICENSE` in the package and record the exact text here before first use. This is a **class B** package in the sense of §7.2 | Volume test data for performance guard rails | ADR-0020 |
 
-**No package provides the architecture fitness tests.** `tests/Aurora.Architecture.Tests` reads IL metadata with `System.Reflection.Metadata`, which ships in the .NET 10 shared framework — the project declares no `PackageReference` for it and builds. `TngTech.ArchUnitNET` was ADR-0020's choice, was never referenced by any project, and is **withdrawn by ADR-0029**; see §5.1.
+**No package provides the architecture fitness tests.** `tests/Aurora.Architecture.Tests` reads IL metadata with `System.Reflection.Metadata`, which ships in the .NET 10 shared framework — the project declares no `PackageReference` for it and builds. `TngTech.ArchUnitNET` was ADR-0020's choice, was never referenced by any project, and is **withdrawn by ADR-0030**; see §5.1.
 
 **Two pins recorded 2026-09-11** (B-01 review finding m-1). Both were previously written here as a rule of thumb rather than a version, which §6 step 5 forbids. B-01 resolved them; the licences were verified the same day by reading the published `.nuspec` from `api.nuget.org/v3-flatcontainer`, which is the same artifact stage 4 reads (§7.2):
 
@@ -157,7 +157,7 @@ The whole point of this section is that a future developer reaching for the fami
 | **Duende IdentityServer** | Commercial; tiers reported at USD 5,750 / 12,500 / 24,900 per year (2026) | `OpenIddict` (Apache-2.0) — ADR-0009 |
 | **Redis** (server, 7.4+) | RSALv2 / SSPL — not permissive | **Valkey** (BSD-3-Clause) if and when an L2 cache is needed — ADR-0012 |
 | **Moq** | MIT, but the 4.20 SponsorLink episode showed data-collecting behaviour shipped in a patch release | `NSubstitute` (BSD-3-Clause) — ADR-0020. Rejected on maintainer predictability, not licence text |
-| **NetArchTest.Rules** | MIT, but last published 2021 — unmaintained | Nothing: architecture rules read IL metadata with the in-box `System.Reflection.Metadata` — **ADR-0029**. Rejected on maintenance, not licence |
+| **NetArchTest.Rules** | MIT, but last published 2021 — unmaintained | Nothing: architecture rules read IL metadata with the in-box `System.Reflection.Metadata` — **ADR-0030**. Rejected on maintenance, not licence |
 | Commercial Blazor suites (Telerik, Syncfusion, DevExpress) | Commercial, per developer | Own component library over QuickGrid — ADR-0024 |
 
 **Machine-readable rejection list.** `check-dependencies.sh` fails if any of these ids appears anywhere in the graph, at any version, direct or transitive (§1 rule 4.6). A trailing `*` is a prefix match. Keep this block in sync with **the table above and §5.1** — the list is "must not reach the dependency graph", which covers both the licence rejections and the withdrawals; the script reads this block, because the tables' prose cells are for humans.
@@ -186,9 +186,9 @@ Not a licence problem. These were approved in an ADR, never acquired a consumer,
 
 | Package | Approved by | Withdrawn by | Why | What does the job instead |
 |---|---|---|---|---|
-| `TngTech.ArchUnitNET`, `TngTech.ArchUnitNET.xUnit` (0.13.4, Apache-2.0) | ADR-0020 | **ADR-0029** (2026-09-11) | B-04 built the rule set on `System.Reflection.Metadata` and no project ever referenced these. The `PackageVersion` pins stayed in `Directory.Packages.props` with no `PackageReference`, which restores nothing — the cost was documentation drift, and the exposure would have started the moment somebody followed the stale ADR row | `tests/Aurora.Architecture.Tests`, reading IL metadata and project files (ADR-0029) |
+| `TngTech.ArchUnitNET`, `TngTech.ArchUnitNET.xUnit` (0.13.4, Apache-2.0) | ADR-0020 | **ADR-0030** (2026-09-11) | B-04 built the rule set on `System.Reflection.Metadata` and no project ever referenced these. The `PackageVersion` pins stayed in `Directory.Packages.props` with no `PackageReference`, which restores nothing — the cost was documentation drift, and the exposure would have started the moment somebody followed the stale ADR row | `tests/Aurora.Architecture.Tests`, reading IL metadata and project files (ADR-0030) |
 
-**What enforces this, and what does not yet.** The ids are in the machine-readable block above, which `scripts/check-dependencies.sh` reads at `verify.sh` stage 4 — a script and a stage that **do not exist yet** (owned by B-11). Until they do, nothing mechanically stops a reintroduction; what stops it today is that the ADR row and the `Directory.Packages.props` pins are gone. Removing the pins is a developer task named in `solution-layout.md` §6.2.
+**What enforces this, and what does not yet.** The ids are in the machine-readable block above, which `scripts/check-dependencies.sh` reads at `verify.sh` stage 4 — a script and a stage that **do not exist yet** (owned by B-11). Until they do, nothing mechanically stops a reintroduction; what stops it today is that the ADR row and the `Directory.Packages.props` pins are gone. Removing the pins is a developer task named in `solution-layout.md` §6.4.
 
 ---
 

@@ -1,12 +1,12 @@
 # ADR-0020 — Test tooling
 
-- **Status:** Accepted (2026-09-11) — **amended 2026-09-11 (Amendment 1): the *Architecture tests* row is superseded by [ADR-0029](ADR-0029-architecture-fitness-rule-mechanism.md). Every other row stands.**
+- **Status:** Accepted (2026-09-11) — **amended 2026-09-11 (Amendment 1): the *Architecture tests* row is superseded by [ADR-0030](ADR-0030-architecture-fitness-rule-mechanism.md). Every other row stands.**
 - **Deciders:** architect
-- **Related:** `../architecture/testing-strategy.md`, `../architecture/dependencies.md`, ADR-0029
+- **Related:** `../architecture/testing-strategy.md`, `../architecture/dependencies.md`, ADR-0030
 
 ## Amendment 1 (2026-09-11) — the architecture-test mechanism
 
-The **Architecture tests** row below chose `TngTech.ArchUnitNET` 0.13.4. B-04 built the rule set on `System.Reflection.Metadata` instead and nothing in the solution references ArchUnitNET. **ADR-0029 supersedes that row, the ArchUnitNET bullet in this ADR's Consequences, and the ArchUnitNET clause of its *Revisit when*.** ArchUnitNET is no longer an approved dependency. The row and both clauses are left below as written, because an accepted ADR's text is the record of what was decided and when; read them with this amendment. Everything else in this ADR — xUnit, Shouldly, NSubstitute, Testcontainers, FsCheck, Verify, bUnit, `FakeTimeProvider`, coverlet, Bogus, the template-clone decision, and both standing rules — is unchanged and still in force.
+The **Architecture tests** row below chose `TngTech.ArchUnitNET` 0.13.4. B-04 built the rule set on `System.Reflection.Metadata` instead and nothing in the solution references ArchUnitNET. **ADR-0030 supersedes that row, the ArchUnitNET bullet in this ADR's Consequences, and the ArchUnitNET clause of its *Revisit when*.** ArchUnitNET is no longer an approved dependency. The row and both clauses are left below as written, because an accepted ADR's text is the record of what was decided and when; read them with this amendment. Everything else in this ADR — xUnit, Shouldly, NSubstitute, Testcontainers, FsCheck, Verify, bUnit, `FakeTimeProvider`, coverlet, Bogus, the template-clone decision, and both standing rules — is unchanged and still in force.
 
 ## Context
 
@@ -20,7 +20,7 @@ The test stack is a decade-long commitment touching every project, and 2025–20
 | Assertions | **Shouldly 4.3.0** | **BSD-3-Clause** | **FluentAssertions ≥ 8 is commercial** (Xceed partnership, January 2025; ~USD 130 per seat) — **rejected on licensing**. FluentAssertions 7.x remains Apache-2.0 but is a dead end. `AwesomeAssertions`, the community fork of the pre-licence code, is a plausible drop-in but inherits a fork's maintenance risk. Shouldly is BSD-3, independent, long-lived and has no licence cloud over it |
 | Mocking | **NSubstitute 6.2.0** | **BSD-3-Clause** | Moq is MIT, but the 4.20 SponsorLink episode showed a maintainer willing to add data-collecting behaviour in a patch release. For a dependency we will carry for a decade, predictability of the maintainer matters as much as the licence. NSubstitute's syntax is also terser, which matters because most of our mocks are one-method module contracts |
 | Integration database | **Testcontainers.PostgreSql 4.15.0** | MIT | An externally managed test database makes `verify.sh` non-hermetic and unreproducible on a fresh machine. Note: `PostgreSqlBuilder`'s parameterless constructor is obsolete in 4.15.0, so the image is pinned explicitly |
-| Architecture tests | ~~**TngTech.ArchUnitNET 0.13.4**~~ **— superseded by ADR-0029; see Amendment 1** | **Apache-2.0**, last published 2026-08-20 | `NetArchTest.Rules` (1.3.2) was last published in **2021** — unmaintained, rejected. ArchUnitNET's fluent rule model expresses the module dependency matrix directly. Source-level rules (no interpolated SQL, no `DateTime.Now`, no literal strings in `.razor` parameters) are Roslyn analyzers/tests, because reflection cannot see them |
+| Architecture tests | ~~**TngTech.ArchUnitNET 0.13.4**~~ **— superseded by ADR-0030; see Amendment 1** | **Apache-2.0**, last published 2026-08-20 | `NetArchTest.Rules` (1.3.2) was last published in **2021** — unmaintained, rejected. ArchUnitNET's fluent rule model expresses the module dependency matrix directly. Source-level rules (no interpolated SQL, no `DateTime.Now`, no literal strings in `.razor` parameters) are Roslyn analyzers/tests, because reflection cannot see them |
 | Property-based tests | **FsCheck 3.4.0** | BSD-3-Clause | The money, rounding, allocation and FIFO-layer invariants are universally quantified statements; example-based tests systematically miss their boundaries. Used narrowly, not everywhere |
 | Snapshot tests | **Verify.Xunit 31.12.5** | MIT | For generated artefacts whose exact text matters: e-invoice XML, statutory report output, the OpenAPI document, generated migration SQL |
 | Blazor components | **bUnit 2.10.3** | MIT | The only credible option for testing Blazor components in-process |
@@ -42,8 +42,8 @@ Adopt the table above as the standard test stack. Two standing rules:
 - Positive: the choices are driven by the strategy (collection fixtures, template cloning, property tests for money) rather than by habit.
 - Negative: Shouldly instead of FluentAssertions means a different assertion vocabulary; anyone arriving from a FluentAssertions codebase pays a small tax. That is the cost of a licence we can rely on.
 - Negative: pinning xUnit 2.9.3 at bootstrap means a migration to v3 later. Contained: it is mostly package references plus the runner, and it happens once, deliberately.
-- Negative (superseded by ADR-0029): ArchUnitNET is at 0.13.x — a pre-1.0 version number for a load-bearing part of the gate. It is actively maintained and Apache-2.0; the mitigation is that our rules are expressed as a thin layer over it, so a replacement would be a rewrite of that layer only, not of the rules.
+- Negative (superseded by ADR-0030): ArchUnitNET is at 0.13.x — a pre-1.0 version number for a load-bearing part of the gate. It is actively maintained and Apache-2.0; the mitigation is that our rules are expressed as a thin layer over it, so a replacement would be a rewrite of that layer only, not of the rules.
 
 ## Revisit when
 
-Any package above changes licence or stops being maintained, or xUnit v3 is adopted. ~~or ArchUnitNET reaches 1.0 (upgrade deliberately and re-run the deliberately-violating fixtures)~~ — that clause is superseded by ADR-0029.
+Any package above changes licence or stops being maintained, or xUnit v3 is adopted. ~~or ArchUnitNET reaches 1.0 (upgrade deliberately and re-run the deliberately-violating fixtures)~~ — that clause is superseded by ADR-0030.

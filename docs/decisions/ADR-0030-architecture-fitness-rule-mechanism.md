@@ -1,4 +1,4 @@
-# ADR-0029 — Architecture fitness rules are read from IL metadata and project files; ArchUnitNET is withdrawn
+# ADR-0030 — Architecture fitness rules are read from IL metadata and project files; ArchUnitNET is withdrawn
 
 - **Status:** Accepted (2026-09-11)
 - **Deciders:** architect
@@ -30,7 +30,7 @@ Two facts made that the right build and the wrong repository state.
 
 1. **Rules whose subject is compiled code read IL metadata** with `System.Reflection.Metadata`, over the assemblies the build produced, in `tests/Aurora.Architecture.Tests`.
 2. **Rules whose subject is not compiled** read the artefact that holds it: `.csproj` and `packages.lock.json` for reference rules today; a rule over `.razor` markup or over generated migration SQL will read those files. Choosing Roslyn for a future source rule is a decision for the ADR that introduces that rule, not a standing commitment here.
-3. **`TngTech.ArchUnitNET` and `TngTech.ArchUnitNET.xUnit` are not approved dependencies.** They are removed from `dependencies.md` §3, recorded in §5.1 as withdrawn, added to the machine-readable rejection block, and their `PackageVersion` pins are removed from `Directory.Packages.props` by the task named in `solution-layout.md` §6.2.
+3. **`TngTech.ArchUnitNET` and `TngTech.ArchUnitNET.xUnit` are not approved dependencies.** They are removed from `dependencies.md` §3, recorded in §5.1 as withdrawn, added to the machine-readable rejection block, and their `PackageVersion` pins are removed from `Directory.Packages.props` by the task named in `solution-layout.md` §6.4.
 4. **Reintroducing a type-model rule library needs a new ADR**, and that ADR must name the rule it exists for. "It would be nicer to write" is not a reason to carry a dependency under the quality gate.
 
 ### What demonstrates each part of this, and where the demonstration lives

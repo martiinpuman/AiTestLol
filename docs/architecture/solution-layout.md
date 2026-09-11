@@ -3,7 +3,7 @@
 Status: accepted **v3** · Author: architect · Date: 2026-09-11
 Companion: `modules.md`, `testing-strategy.md`, `dependencies.md`, `../decisions/ADR-0007-...`, `../decisions/ADR-0008-...`
 
-**Changes in v5** (2026-09-11, answering three review escalations): §6.2 records the acceptance criteria that change because **ADR-0028 Amendment 1** replaced §2 of that ADR, and two new rows that follow from **ADR-0029** and **ADR-0030**. §6 and §6.1 are unchanged except where §6.2 says it overrides them.
+**Changes in v5** (2026-09-11, answering three review escalations): §6.4 records the acceptance criteria that change because **ADR-0028 Amendment 1** replaced §2 of that ADR, and two new rows that follow from **ADR-0030** and **ADR-0031**. §6 and §6.1 are unchanged except where §6.4 says it overrides them.
 
 **Changes in v4** (2026-09-11, answering the project-manager's four questions on the B-06/B-07/B-08/B-13 split): §6.1 below records the dependency corrections that follow from **ADR-0027** (the DDL path is separate from the application data path) and the two new bootstrap rows that follow from **ADR-0028** (the tenant audit store). The §6 table rows themselves are unchanged; §6.1 overrides their **Depends on** column where it says so.
 
@@ -59,7 +59,7 @@ src/
 
 tests/
   Aurora.TestKit/                               # fixtures, builders, the two-tenant fixture
-  Aurora.Countries.TestKit/                     # CountryPackageContractTests<TPackage> (ADR-0030 §5, §6.2 item 3)
+  Aurora.Countries.TestKit/                     # CountryPackageContractTests<TPackage> (ADR-0031 §5, §6.4 item 3)
   Aurora.Architecture.Tests/                    # fitness tests — no database, fast
   unit/         Aurora.Modules.<M>.UnitTests/
   integration/  Aurora.Modules.<M>.IntegrationTests/
@@ -261,14 +261,14 @@ These override the **Depends on** column above and in `../BACKLOG.md`. Reasons a
 
 B-15.1 gains **B-16.2** as a dependency: its "audit annotation" acceptance criterion has nothing to annotate against until the interceptor exists.
 
-> **The append-only half of the B-16.1 row above is overridden by §6.2 item 1** (ADR-0028 Amendment 1). The statement it quotes — `ALTER DEFAULT PRIVILEGES … REVOKE UPDATE, DELETE` — is a no-op on PostgreSQL 17.11, and the probe it asks for passes against that no-op. Do not implement the row as written here or as transcribed in `../BACKLOG.md`.
+> **The append-only half of the B-16.1 row above is overridden by §6.4 item 1** (ADR-0028 Amendment 1). The statement it quotes — `ALTER DEFAULT PRIVILEGES … REVOKE UPDATE, DELETE` — is a no-op on PostgreSQL 17.11, and the probe it asks for passes against that no-op. Do not implement the row as written here or as transcribed in `../BACKLOG.md`.
 
 
 ---
 
-### 6.2 Corrections and new rows (v5, 2026-09-11)
+### 6.4 Corrections and new rows (v5, 2026-09-11)
 
-These follow **ADR-0028 Amendment 1**, **ADR-0029** and **ADR-0030**, all written the same day in response to the B-04, B-05 security and B-12 reviews. Where an item overrides §6, §6.1 or a `../BACKLOG.md` row it says so. The architect does not edit the backlog; the project-manager transcribes these. **Row numbers here follow `../BACKLOG.md`'s split of the architect's single B-16 row — B-16.1 schema and append-only enforcement, B-16.2 the writer and hash chain, B-16.3 the `[Auditable]` interceptor — not §6.1's two-row form above.**
+These follow **ADR-0028 Amendment 1**, **ADR-0030** and **ADR-0031**, all written the same day in response to the B-04, B-05 security and B-12 reviews. Where an item overrides §6, §6.1 or a `../BACKLOG.md` row it says so. The architect does not edit the backlog; the project-manager transcribes these. **Row numbers here follow `../BACKLOG.md`'s split of the architect's single B-16 row — B-16.1 schema and append-only enforcement, B-16.2 the writer and hash chain, B-16.3 the `[Auditable]` interceptor — not §6.1's two-row form above.**
 
 #### 1. B-16.1 — the append-only acceptance criteria, re-specified
 
@@ -288,23 +288,23 @@ These follow **ADR-0028 Amendment 1**, **ADR-0029** and **ADR-0030**, all writte
 
 **One limitation that needs a row of its own, not a sentence:** the hash chain does not detect truncation of the **tail** — removing the most recent rows leaves an internally consistent chain. ADR-0018's daily job writing the chain head to `catalog.operator_audit_event` is the answer, and nothing schedules it. Carry it as a follow-up (the project-manager assigns the id), depending on the row that creates `catalog.operator_audit_event`.
 
-#### 2. Remove the ArchUnitNET package pins (ADR-0029) — **Light** tier
+#### 2. Remove the ArchUnitNET package pins (ADR-0030) — **Light** tier
 
 A developer task, small and mechanical:
 
 - delete the `TngTech.ArchUnitNET` and `TngTech.ArchUnitNET.xUnit` `PackageVersion` lines from `Directory.Packages.props`;
-- in `tests/Aurora.Architecture.Tests/Aurora.Architecture.Tests.csproj`, update the comment that cites ADR-0020's ArchUnitNET choice so it cites **ADR-0029** instead — the deviation is no longer a deviation;
+- in `tests/Aurora.Architecture.Tests/Aurora.Architecture.Tests.csproj`, update the comment that cites ADR-0020's ArchUnitNET choice so it cites **ADR-0030** instead — the deviation is no longer a deviation;
 - no other code change, and no rule changes.
 
 Acceptance: `scripts/verify.sh` green with its stage-6 count unchanged, and a search for `ArchUnit` across `src/`, `tests/` and `Directory.Packages.props` returns nothing. **Sequence it after B-04 merges** — the rework owns that `.csproj` right now.
 
-#### 3. New row — `Aurora.Countries.TestKit` and `CountryPackageContractTests<TPackage>` (ADR-0030 §5) — **Full** tier
+#### 3. New row — `Aurora.Countries.TestKit` and `CountryPackageContractTests<TPackage>` (ADR-0031 §5) — **Full** tier
 
 | Task | Acceptance criteria | Depends on |
 |---|---|---|
 | `tests/Aurora.Countries.TestKit`: the package contract test base | The ten cases of ADR-0008 §10 as a `CountryPackageContractTests<TPackage>` base class in its own assembly — **not** in `Aurora.TestKit`, which every module's integration tests reference and which must not acquire the package host. Built whole: the three install cases (`Install_does_not_alter_core_ddl`, `Install_uninstall_round_trip`, `Install_into_a_live_tenant_with_existing_data`) are what give the base class its value, so the metadata-only half is not shipped alone. The first subclass is the first reference package; until one exists, the base class is exercised by the B-12 fixture package. Plus a fitness rule asserting every package assembly under `src/packages/` has exactly one subclass — **inert** until a package project exists, so it is registered in the `Inert` table of `tests/Aurora.Architecture.Tests` with this row's id and an inertness guard that fails when a package assembly appears without a subclass | B-13.2, B-12 |
 
-#### 4. The B-12 rework carries the ADR-0030 contract edits — no new row
+#### 4. The B-12 rework carries the ADR-0031 contract edits — no new row
 
 Six items, all inside the branch already in rework. Listed here because two of them enlarge it and the orchestrator's size check should see them:
 
@@ -312,5 +312,5 @@ Six items, all inside the branch already in rework. Listed here because two of t
 2. A `coreContractRange` lacking either bound makes the manifest **invalid**, enforced where the manifest is constructed; `CoreContractGate` keeps the same check with the same message; `CoreContractGateTests`' `("1.0.0", "1.4.0")` row becomes a refusal case, joined by `"[1.0.0, )"` and `"(, )"`.
 3. `IStatutoryReportDefinition.VersionAsOf(CompanyId, TaxRegistrationId, DateOnly)`, with `PublicAPI.Shipped.txt` moved with it. **Enlarges the rework.**
 4. The registration-keyed slot registry, its written exception list (`ITaxCategoryMapping.DefaultCodeFor` goes in it, with the follow-up id), and a fixture interface written to break the rule. **Enlarges the rework.**
-5. A second fixture package that **uses a type from** an `Aurora.*` assembly not on the allowlist, and a test watching the loader refuse it before loading. It must *use* the type: an unused `ProjectReference` is not emitted into the assembly, so a fixture that merely declares one would pass and prove nothing (ADR-0030 §2).
+5. A second fixture package that **uses a type from** an `Aurora.*` assembly not on the allowlist, and a test watching the loader refuse it before loading. It must *use* the type: an unused `ProjectReference` is not emitted into the assembly, so a fixture that merely declares one would pass and prove nothing (ADR-0031 §2).
 6. A second fixture whose `ICountryPackage.Manifest` disagrees with its embedded resource in one field, so the ADR-0008 §3.2 agreement check can fail (`../reviews/B-12.md` m2).

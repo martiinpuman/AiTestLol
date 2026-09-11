@@ -1,10 +1,10 @@
-# ADR-0030 — Country Package contract: manifest location, the reference allowlist, bounded core-contract ranges, registration-keyed report resolution, and who owns the package contract tests
+# ADR-0031 — Country Package contract: manifest location, the reference allowlist, bounded core-contract ranges, registration-keyed report resolution, and who owns the package contract tests
 
 - **Status:** Accepted (2026-09-11)
 - **Deciders:** architect
 - **Supersedes:** five clauses of ADR-0008 — §3.1's "only core assembly" sentence, §9.3's first bullet where it disagrees with §3.2 about where the manifest lives, §7 row 10 (which now carries a validity rule), §8.3's second bullet as it applies to `IStatutoryReportDefinition`, and §10's silence about who builds `CountryPackageContractTests<TPackage>`. **Everything else in ADR-0008 stands**, including its option C, the four ownership rules of §4, the three-way merge, §5's install/upgrade/uninstall design and §9.4's statement that an `AssemblyLoadContext` is not a security boundary.
 - **Superseded by:** —
-- **Related:** ADR-0008, ADR-0023 §1, ADR-0021 §3, `../architecture/modules.md` §3, `../architecture/solution-layout.md` §6.2, `../reviews/B-12.md` ("To route — to the architect", items 1–5)
+- **Related:** ADR-0008, ADR-0023 §1, ADR-0021 §3, `../architecture/modules.md` §3, `../architecture/solution-layout.md` §6.4, `../reviews/B-12.md` ("To route — to the architect", items 1–5)
 
 ## Context
 
@@ -78,11 +78,11 @@ Result<StatutoryReportVersion> VersionAsOf(CompanyId company, TaxRegistrationId 
 
 **Where it lives:** `tests/Aurora.Countries.TestKit`, a new assembly. It mirrors what `Aurora.TestKit` does for `TenantIsolationContract<T>` (ADR-0007 §12, built by B-10) but stays separate from it, because `Aurora.TestKit` is referenced by every module's integration-test project and must not drag the package host and the contract assembly into all of them.
 
-**Who builds it:** a new bootstrap row, specified in `../architecture/solution-layout.md` §6.2 for the project-manager to transcribe, depending on **B-13.2** (install) and B-12. It is not part of B-12: three of §10's ten cases — `Install_does_not_alter_core_ddl`, `Install_uninstall_round_trip`, `Install_into_a_live_tenant_with_existing_data` — need a real installer and a real database.
+**Who builds it:** a new bootstrap row, specified in `../architecture/solution-layout.md` §6.4 for the project-manager to transcribe, depending on **B-13.2** (install) and B-12. It is not part of B-12: three of §10's ten cases — `Install_does_not_alter_core_ddl`, `Install_uninstall_round_trip`, `Install_into_a_live_tenant_with_existing_data` — need a real installer and a real database.
 
 **Built whole, not in halves.** The metadata-only cases could be written today, and that is the trap: the first package would subclass a base that proves the easy half, and nobody would come back for the three cases that carry the risk.
 
-**What keeps it from being optional:** a fitness rule asserting every package assembly under `src/packages/` has exactly one subclass of `CountryPackageContractTests<>` — the same shape as rule T7 for `TenantIsolationContract<>`. It is inert until the first package project exists, so it is registered in B-04's `Inert` table with this row's id as the task that brings its subject (ADR-0029's inventory convention), with an inertness guard that fails when a package assembly appears without a subclass.
+**What keeps it from being optional:** a fitness rule asserting every package assembly under `src/packages/` has exactly one subclass of `CountryPackageContractTests<>` — the same shape as rule T7 for `TenantIsolationContract<>`. It is inert until the first package project exists, so it is registered in B-04's `Inert` table with this row's id as the task that brings its subject (ADR-0030's inventory convention), with an inertness guard that fails when a package assembly appears without a subclass.
 
 **Until that row lands, ADR-0008 §10's table is a specification and nothing enforces it.** Written down here so that nobody reads §10 as a description of tests that exist.
 
