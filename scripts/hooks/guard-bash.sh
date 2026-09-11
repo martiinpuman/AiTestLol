@@ -13,11 +13,12 @@ set -uo pipefail
 INTEGRATION_BRANCH='claude/multi-tenant-saas-erp-pv2nap'
 
 payload=$(cat)
-cmd=$(printf '%s' "$payload" | python3 -c 'import json,sys
-try:
-    print(json.load(sys.stdin).get("tool_input", {}).get("command", ""))
-except Exception:
-    print("")' 2>/dev/null)
+
+# Read the command with heredoc *bodies* removed. The guard reads raw command text,
+# so without this a commit message that quotes a blocked command is analysed as if it
+# were one — it was, and it refused this file's own commit twice. The heredoc's
+# opening line survives, so a redirect target such as `cat > .env <<EOF` is still seen.
+cmd=$(printf '%s' "$payload" | python3 "${CLAUDE_PROJECT_DIR:-.}/scripts/hooks/read-command.py" 2>/dev/null)
 
 [[ -z "$cmd" ]] && exit 0
 
@@ -30,12 +31,21 @@ if [[ "$flat" =~ (^|[\;\&\|\(])[[:space:]]*git[[:space:]]+push ]]; then
     if [[ "$flat" =~ --force([^-]|$) || "$flat" =~ --force-with-lease || "$flat" =~ git[[:space:]]+push[[:space:]]+(-[a-zA-Z]*f) ]]; then
         block 01 "force-push is a hard limit in CLAUDE.md ('never force-push, never rewrite history'). If the remote rejected a push, merge or rebase locally and push a new commit."
     fi
-    # Extract the refspec: the last bare word that is not a flag or a remote name.
-    target=$(printf '%s' "$flat" | sed -E 's/.*git[[:space:]]+push[[:space:]]+//' | tr ' ' '\n' \
-             | grep -v -E '^(-|origin$|HEAD$)' | grep -v '^$' | tail -1)
+    # Isolate the push invocation itself: everything from `git push` up to the first
+    # shell operator. Without the cut, `git push -u origin br | tail -3` reads the
+    # refspec as `tail` and blocks a legitimate push — it did, on the first real use.
+    seg=$(printf '%s' "$flat" | sed -E 's/.*git[[:space:]]+push[[:space:]]*//' | sed -E 's/[|;&><].*//')
+    # Drop flags; what remains is [remote] [refspec...].
+    mapfile -t words < <(printf '%s' "$seg" | tr ' ' '\n' | grep -vE '^-' | grep -v '^$')
+    if (( ${#words[@]} >= 2 )); then
+        target="${words[1]}"
+    else
+        # `git push` with no refspec pushes the current branch.
+        target=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    fi
     target="${target#*:}"        # src:dst -> dst
     target="${target#refs/heads/}"
-    if [[ -n "$target" && "$target" != "$INTEGRATION_BRANCH" && "$target" != task/* ]]; then
+    if [[ -n "$target" && "$target" != HEAD && "$target" != "$INTEGRATION_BRANCH" && "$target" != task/* ]]; then
         block 02 "push target '$target' is neither the integration branch ($INTEGRATION_BRANCH) nor a task/* branch. CLAUDE.md: 'Never push to any other branch.'"
     fi
 fi

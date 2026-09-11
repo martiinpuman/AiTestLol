@@ -61,7 +61,7 @@ next to it is allowed. It prints its own case count, so it cannot report success
 having measured nothing:
 
 ```
-hook selftest: 27 passed, 0 failed (15 block cases, 12 allow cases, 27 total)
+hook selftest: 35 passed, 0 failed (17 block cases, 18 allow cases, 35 total)
 ```
 
 The allow cases matter as much as the block cases: `AURORA-EDIT-01` must not fire on a
@@ -70,6 +70,27 @@ Country Package's own `country == "SE"`, `AURORA-EDIT-03` must not fire on the s
 `Password=postgres` fixture. A guard that blocks correct work is worse than none.
 
 Run it after any change to a hook. It writes only to a temp directory.
+
+### What using them caught that the selftest did not
+
+Both false positives below were found by the guard refusing the orchestrator's own
+legitimate work, not by the selftest — each is now a case in it.
+
+1. `git push -u origin <branch> | tail -3` was refused: the refspec extraction read
+   the last bare word of the whole command line and found `tail`. It now cuts at the
+   first shell operator, skips flags, and falls back to the current branch when no
+   refspec is given — so a bare `git push` on the wrong branch is caught too, which it
+   was not before.
+2. A commit message *describing* a blocked command was analysed as if it were one.
+   `scripts/hooks/read-command.py` now strips heredoc **bodies** before the guard sees
+   the command, and closes each heredoc with a `;` so a real command on the next line
+   is still seen at a command position. The heredoc's opening line survives, so a
+   redirect target such as `cat > .env <<EOF` is still visible to rule 04.
+
+**Known limitation:** the guard reads command text, not a parsed shell AST. Content
+inside a single-quoted string on one line is still analysed. The failure direction is a
+false positive — a refusal with a named reason — not a missed violation, which is the
+right way round for a guard.
 
 **Both hooks were observed firing live** on 2026-09-11, not merely selftested:
 `dotnet --version` was refused with `AURORA-BASH-05`, and a `Write` of B-03's

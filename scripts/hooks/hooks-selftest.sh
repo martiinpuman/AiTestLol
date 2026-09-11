@@ -53,6 +53,10 @@ must_block $BASH_HOOK "$(json_cmd 'rm -rf docs/decisions/ADR-0007-tenancy.md')" 
 must_block $BASH_HOOK "$(json_cmd 'git rm docs/decisions/ADR-0001-stack.md')"             AURORA-BASH-03 'git rm an ADR'
 must_block $BASH_HOOK "$(json_cmd 'git add .env && git commit -m "config"')"              AURORA-BASH-04 'stage a .env'
 must_block $BASH_HOOK "$(json_cmd 'dotnet test Aurora.sln')"                              AURORA-BASH-05 'dotnet without dev-env'
+real_push_after_heredoc=$'git commit -F - <<MSG\na message\nMSG\ngit push -u origin main'
+must_block $BASH_HOOK "$(json_cmd "$real_push_after_heredoc")" AURORA-BASH-02 'a real push following a heredoc'
+env_after_heredoc=$'cat > x.md <<EOF\ntext\nEOF\ngit add .env'
+must_block $BASH_HOOK "$(json_cmd "$env_after_heredoc")"       AURORA-BASH-04 'a real .env stage following a heredoc'
 must_block $BASH_HOOK "$(json_cmd 'cd src && dotnet build')"                              AURORA-BASH-05 'dotnet after a cd'
 
 echo "PreToolUse(Bash) — must allow"
@@ -61,6 +65,18 @@ must_allow $BASH_HOOK "$(json_cmd 'git push -u origin claude/multi-tenant-saas-e
 must_allow $BASH_HOOK "$(json_cmd 'source scripts/dev-env.sh && dotnet test Aurora.sln')" 'dotnet with dev-env sourced'
 must_allow $BASH_HOOK "$(json_cmd 'grep -rn "dotnet" scripts/')"                          'the word dotnet inside another command'
 must_allow $BASH_HOOK "$(json_cmd 'git log --oneline -20')"                               'an ordinary git read'
+must_allow $BASH_HOOK "$(json_cmd 'git push -u origin claude/multi-tenant-saas-erp-pv2nap 2>&1 | tail -3')" 'a push whose output is piped'
+must_allow $BASH_HOOK "$(json_cmd 'git push origin task/B-09 && echo done')"              'a push followed by another command'
+must_allow $BASH_HOOK "$(json_cmd 'git push -u origin task/B-09 > /tmp/push.log 2>&1')"   'a push redirected to a file'
+
+# A commit message or file body that *describes* a blocked command is not one. Both
+# of these refused a legitimate commit before heredoc bodies were stripped.
+msg_quoting_push=$'git commit -F - <<MSG\nfix: the guard refused git push -u origin main\nMSG'
+must_allow $BASH_HOOK "$(json_cmd "$msg_quoting_push")"                                   'a commit message quoting a push'
+msg_quoting_rm=$'git commit -F - <<MSG\nthe rule matches rm -rf docs/decisions/ADR-0001.md\nMSG'
+must_allow $BASH_HOOK "$(json_cmd "$msg_quoting_rm")"                                     'a commit message quoting an ADR deletion'
+body_quoting_force=$'cat > notes.md <<EOF\ngit push --force origin main\nEOF'
+must_allow $BASH_HOOK "$(json_cmd "$body_quoting_force")"                                 'a heredoc body quoting a force push'
 must_allow $BASH_HOOK "$(json_cmd 'ls docs/decisions/')"                                  'listing the ADR folder'
 
 echo "PostToolUse(Write|Edit) — must block"
