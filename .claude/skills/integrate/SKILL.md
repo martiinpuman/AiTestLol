@@ -59,6 +59,22 @@ Never rebase a pushed branch, never force-push, never push to `main`. A local
 merge-and-push closes the PR only by ancestry and leaves no merge event on it; the
 review trail is what makes the merge auditable.
 
+## 4b. Transcribe the reviewer's routing list **before** you merge
+
+A reviewer ends with items routed to other roles. **Every one of them becomes a
+backlog row or a message to that role now**, while the review is in front of you.
+
+This is not bookkeeping. B-05's third security reviewer reported three of its
+routings as being made for the *third* time: the first and second reviews had
+routed the same findings, nobody transcribed them, and each reviewer rediscovered
+and re-reported them at full cost. One was a cluster on which a reviewer had made
+the application role `SUPERUSER` and watched the migration apply without complaint.
+
+A routing that lives only in a review expires when the review scrolls out of the
+transcript. If the item needs design, message the architect; if it needs a task,
+add a `FOLLOWUP-###` row naming the review and PR it came from; if it belongs to an
+existing row, edit that row. Then merge.
+
 ## 5. Leave it consistent — all five, every time
 
 1. `docs/reviews/<ID>.md` exists and records the verdict.
