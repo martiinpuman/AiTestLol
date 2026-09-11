@@ -30,6 +30,14 @@ namespace Aurora.SharedKernel;
 /// </remarks>
 public readonly record struct Money : IComparable<Money>
 {
+    /// <summary>
+    /// How many minor units make one major unit, indexed by a currency's minor-unit count:
+    /// 100 for NZD, 1 for JPY. A lookup rather than a computation, so each value is an exact
+    /// <see cref="decimal"/> literal and no rounding can creep into the scaling that rounding and
+    /// allocation depend on.
+    /// </summary>
+    private static readonly decimal[] MinorUnitScales = [1m, 10m, 100m, 1_000m, 10_000m];
+
     /// <summary>Creates an amount in a currency.</summary>
     /// <exception cref="ArgumentException"><paramref name="currency"/> is unspecified.</exception>
     public Money(decimal amount, Currency currency)
@@ -173,6 +181,43 @@ public readonly record struct Money : IComparable<Money>
         return total;
     }
 
+    /// <summary>
+    /// Rounds the amount under an explicitly named policy (ADR-0021 §3, §4).
+    /// </summary>
+    /// <remarks>
+    /// There is no overload without a policy, and no default parameter value. Rounding is one of
+    /// the four things ADR-0021 §4 says happen at defined points and nowhere else, and a
+    /// convenience overload that picked a rule for the caller would put a jurisdiction's decision
+    /// inside core code.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// The amount names no currency, or <paramref name="policy"/> is unspecified.
+    /// </exception>
+    public Money Round(RoundingPolicy policy)
+    {
+        AssertSpecified();
+        return new Money(policy.Round(Amount), Currency);
+    }
+
+    /// <summary>
+    /// Whether the amount is already expressed in whole minor units of its currency — 2.34 NZD is,
+    /// 2.345 NZD is not.
+    /// </summary>
+    /// <remarks>
+    /// Trailing zeros do not change the answer: 2.3400 NZD is two cents' worth of information
+    /// written four digits wide. This is the precondition for splitting an amount into parts that
+    /// can each be paid.
+    /// </remarks>
+    public bool IsInWholeMinorUnits
+    {
+        get
+        {
+            AssertSpecified();
+            decimal inMinorUnits = Amount * MinorUnitScale(Currency);
+            return inMinorUnits == decimal.Truncate(inMinorUnits);
+        }
+    }
+
     /// <summary>The amount without its sign, in the same currency.</summary>
     public Money Abs()
     {
@@ -208,6 +253,8 @@ public readonly record struct Money : IComparable<Money>
             throw new CurrencyMismatchException(left.Currency, right.Currency);
         }
     }
+
+    private static decimal MinorUnitScale(Currency currency) => MinorUnitScales[currency.MinorUnits];
 
     private void AssertSpecified()
     {
