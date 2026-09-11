@@ -65,8 +65,10 @@ public sealed class CountryPackageManifest : IEquatable<CountryPackageManifest>
     public PackageVersion Version { get; }
 
     /// <summary>
-    /// The range of core contract versions this package works against, in NuGet range syntax such
-    /// as <c>[2.0.0, 3.0.0)</c>.
+    /// The range of core contract versions this package works against, in NuGet range syntax and
+    /// bounded at both ends, such as <c>[2.0.0, 3.0.0)</c>. The host refuses an open-ended range: a
+    /// package cannot know it works against a MAJOR core contract that did not exist when it was
+    /// built.
     /// </summary>
     /// <remarks>
     /// This is extension point 10 of ADR-0008 §7, and the one that makes the other nine survivable:

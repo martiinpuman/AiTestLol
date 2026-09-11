@@ -71,7 +71,20 @@ public static class CoreContractGate
             return HostingErrors.IncompatibleCoreContract(
                 $"Package '{manifest.Id}' {manifest.Version} declares coreContractRange " +
                 $"'{manifest.CoreContractRange}', which is not a NuGet version range. Use a bounded " +
-                $"range such as '[{core.Major}.0.0, {core.Major + 1}.0.0)'.");
+                $"range such as '{BoundedExample(core)}'.");
+        }
+
+        if (!IsBounded(range))
+        {
+            // NuGet reads a bare "1.0.0" as "1.0.0 or anything later", which here would mean
+            // "compatible with every MAJOR core contract that has not been written yet" — including
+            // the one that removes a member this package calls. No package can know that, so the
+            // claim is refused rather than believed, whatever the running version is today.
+            return HostingErrors.IncompatibleCoreContract(
+                $"Package '{manifest.Id}' {manifest.Version} declares coreContractRange " +
+                $"'{manifest.CoreContractRange}', which is open at {OpenEnds(range)}. A package " +
+                $"cannot be compatible with a MAJOR core contract that did not exist when it was " +
+                $"built, so the range must be bounded at both ends, such as '{BoundedExample(core)}'.");
         }
 
         if (range.Satisfies(core))
@@ -97,6 +110,7 @@ public static class CoreContractGate
             .. availableVersions.Where(candidate =>
                 candidate.Id == manifest.Id
                 && VersionRange.TryParse(candidate.CoreContractRange, out VersionRange? candidateRange)
+                && IsBounded(candidateRange)
                 && candidateRange.Satisfies(core)),
         ];
 
@@ -116,4 +130,17 @@ public static class CoreContractGate
 
         return $"Install version(s) [{string.Join(", ", versions)}] of '{manifest.Id}' instead.";
     }
+
+    private static bool IsBounded(VersionRange range) => range.HasLowerBound && range.HasUpperBound;
+
+    private static string OpenEnds(VersionRange range) =>
+        (range.HasLowerBound, range.HasUpperBound) switch
+        {
+            (false, false) => "both ends",
+            (false, true) => "the lower end",
+            _ => "the upper end",
+        };
+
+    private static string BoundedExample(NuGetVersion core) =>
+        $"[{core.Major}.0.0, {core.Major + 1}.0.0)";
 }

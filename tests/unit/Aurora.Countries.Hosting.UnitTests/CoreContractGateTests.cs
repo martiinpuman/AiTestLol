@@ -24,9 +24,50 @@ public sealed class CoreContractGateTests
     [InlineData("[1.0.0, 2.0.0)", "1.0.0")]
     [InlineData("[1.0.0, 2.0.0)", "1.9.3")]
     [InlineData("[1.2.0, 3.0.0)", "2.5.1")]
-    [InlineData("1.0.0", "1.4.0")]
     public void A_package_whose_range_admits_the_running_core_contract_passes(string range, string core) =>
         CoreContractGate.Check(Manifest(range), core).IsSuccess.ShouldBeTrue();
+
+    /// <summary>
+    /// A range with no upper bound admits every future MAJOR core contract — including the one that
+    /// removes a member this package was built against, which is exactly the failure the gate
+    /// exists to stop. A range with no lower bound admits versions that never had the members it
+    /// needs. Both are refused even when they admit the version running today, and the refusal says
+    /// which end is open and what a bounded range looks like.
+    /// </summary>
+    [Theory]
+    [InlineData("1.0.0", "the upper end")]
+    [InlineData("[1.0.0, )", "the upper end")]
+    [InlineData("(, 2.0.0)", "the lower end")]
+    [InlineData("(, )", "both ends")]
+    public void A_range_open_at_either_end_is_refused_even_when_it_admits_the_running_core_contract(
+        string range,
+        string openEnd)
+    {
+        Result check = CoreContractGate.Check(Manifest(range), "1.4.0");
+
+        check.IsFailure.ShouldBeTrue();
+        check.Error.Code.ShouldBe(HostingErrors.IncompatibleCoreContractCode);
+        check.Error.Description.ShouldContain(range);
+        check.Error.Description.ShouldContain(openEnd);
+        check.Error.Description.ShouldContain("[1.0.0, 2.0.0)");
+    }
+
+    /// <summary>
+    /// The fleet compatibility report of ADR-0008 §5.2 goes through the remedy path, so a catalogue
+    /// version with an open range must not be named as the one that would work: installing it would
+    /// be refused by the same rule.
+    /// </summary>
+    [Fact]
+    public void A_catalogue_version_with_an_open_range_is_not_offered_as_the_one_that_would_work()
+    {
+        Result check = CoreContractGate.Check(
+            Manifest("[2.0.0, 3.0.0)", version: "2.0.0"),
+            "1.0.0",
+            [Manifest("1.0.0", version: "1.4.0")]);
+
+        check.IsFailure.ShouldBeTrue();
+        check.Error.Description.ShouldContain("needs a release that does");
+    }
 
     [Theory]
     [InlineData("[2.0.0, 3.0.0)", "1.0.0")]

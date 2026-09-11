@@ -24,7 +24,7 @@ than after it.
 | `PackageMetadataReader` | Reads the manifest and the referenced assemblies without executing anything |
 | `PackageAssemblyReferenceRule` | The allowlist of `Aurora.*` assemblies a package may reference |
 | `PackageSignature`, `PackageSignatureVerifier`, `TrustedPackageKey` | ECDSA P-256 over SHA-256(assembly) ‖ manifest bytes, against thumbprint-pinned keys |
-| `CoreContractGate` | Refuses an out-of-range `coreContractRange`, naming both versions |
+| `CoreContractGate` | Refuses an out-of-range or open-ended `coreContractRange`, naming both versions |
 | `CountryPackageLoadContext` | One collectible ALC per (package, version) |
 | `CountryPackageLoader`, `LoadedCountryPackage` | Inspect, gate, load, unload |
 | `CountryPackageCatalogue` | What this deployment has available, with what it rejected and why |
@@ -82,6 +82,11 @@ semi-independently with no automated compatibility check, and the result is a na
 support issue thrown at runtime that names neither version. Ours refuses at install and again at
 every core upgrade, and names the package, its declared range, the running core contract version,
 and — when the catalogue is offered — which version of the package would work instead.
+
+The range must be bounded at both ends. NuGet reads a bare `1.0.0` as "1.0.0 or anything later",
+which would declare a package compatible with every MAJOR core contract not yet written — including
+the one that removes a member it calls — so the gate refuses `1.0.0`, `[1.0.0, )` and `(, )` even
+when they admit the version running today, and names `[1.0.0, 2.0.0)` as the shape to use.
 
 `CountryPackageLoader` takes the core contract version as a constructor parameter so the
 release-build fleet compatibility report of ADR-0008 §5.2 can ask the same question about a *target*
