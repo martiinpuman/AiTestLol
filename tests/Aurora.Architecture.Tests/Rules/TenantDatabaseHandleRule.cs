@@ -1,4 +1,3 @@
-using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
@@ -20,9 +19,10 @@ namespace Aurora.Architecture.Tests.Rules;
 /// violating fixture", and this is it.
 /// </para>
 /// <para>
-/// <b>What the mechanism inspects:</b> every type mention in every production assembly not on the
-/// allow-list, at every site <see cref="TypeReferences"/> reaches - so naming it in a signature, a
-/// local or an instruction all count, which is what "in any signature or body" in ADR-0027 §1 means.
+/// <b>What the mechanism inspects:</b> every type mention in every production assembly that is
+/// neither an allow-listed assembly nor a dotted segment below one, at every site
+/// <see cref="TypeReferences"/> reaches - so naming it in a signature, a local or an instruction
+/// all count, which is what "in any signature or body" in ADR-0027 §1 means.
 /// The handle is matched by simple name, like the rest of the tenancy family, because B-06 has not
 /// chosen the namespace yet.
 /// </para>
@@ -44,24 +44,27 @@ internal static class TenantDatabaseHandleRule
     /// </summary>
     /// <remarks>
     /// <para>
-    /// Prefixes, not exact names, because B-07's saga and B-08's runner are scheduled into the
-    /// Platform/Tenancy tree (<c>docs/BACKLOG.md</c>) but have no project yet, and because the
-    /// contracts assembly ADR-0027 §1 declares the handle in necessarily names it. <b>If either
-    /// runner lands under a different assembly name, add it here rather than widening the rule</b> -
-    /// the point of an allow-list is that extending it is a reviewable diff. Test assemblies need no
-    /// entry: the population is the projects under <c>src/</c>.
+    /// Prefixes matched segment-bounded (<see cref="TenancyNames.IsWithin"/>): the named assembly
+    /// or a dotted segment below it, so <c>Aurora.Platform.Tenancy.Contracts</c> - where ADR-0027 §1
+    /// declares the handle, which therefore names it - is inside, and
+    /// <c>Aurora.Platform.TenancyBypass</c>, the re-review's executed m-2 bypass, is not. B-07's saga
+    /// and B-08's runner are scheduled into the Platform/Tenancy tree (<c>docs/BACKLOG.md</c>) but
+    /// have no project yet; <b>if either lands under a different assembly name, add it here rather
+    /// than widening the rule</b>. Test assemblies need no entry: the population is the projects
+    /// under <c>src/</c>.
     /// </para>
     /// <para>
-    /// <b>Known and open (re-review m-2):</b> a prefix lets an assembly named
-    /// <c>Aurora.Platform.TenancyBypass</c> authorise itself. ADR-0032 §4.4 replaces prefixes with
-    /// exact names, but its first draft omitted the contracts assembly and the ADR is being revised;
-    /// this list is left as it was until it settles, and README §6 records the gap.
+    /// <b>Interim, pending ADR-0032 §4.4, and not the decision it will settle.</b> The ADR replaces
+    /// prefixes with exact assembly names; its first exact list omitted the contracts assembly and
+    /// is being revised. The segment-bounded form is strictly better than a plain prefix under
+    /// either outcome, but any <c>Aurora.Platform.Tenancy.Anything</c> still authorises itself, and
+    /// only the exact set closes that. README §6 records it.
     /// </para>
     /// </remarks>
     public static readonly ImmutableArray<string> AllowedAssemblyPrefixes = [TenancyNames.TenancyAssemblyPrefix];
 
     public static bool IsAllowed(string assemblyName) =>
-        AllowedAssemblyPrefixes.Any(prefix => assemblyName.StartsWith(prefix, StringComparison.Ordinal));
+        AllowedAssemblyPrefixes.Any(prefix => TenancyNames.IsWithin(assemblyName, prefix));
 
     public static RuleOutcome Check(IEnumerable<ScannedType> types) => Check(types, AllowedAssemblyPrefixes);
 
@@ -69,8 +72,7 @@ internal static class TenantDatabaseHandleRule
     {
         ScannedType[] subjects =
         [
-            .. types.Where(type => !allowedPrefixes.Any(prefix =>
-                type.AssemblyName.StartsWith(prefix, StringComparison.Ordinal))),
+            .. types.Where(type => !allowedPrefixes.Any(prefix => TenancyNames.IsWithin(type.AssemblyName, prefix))),
         ];
 
         return RuleOutcome.From(

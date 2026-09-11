@@ -18,18 +18,25 @@ namespace Aurora.Architecture.Tests.Rules;
 /// </para>
 /// <para>
 /// <b>What the mechanism inspects:</b> the implemented-interface list of every production type
-/// whose assembly name does not start with <c>Aurora.Platform.Tenancy</c>, matched on the simple
-/// names <c>ITenantDbContextFactory`1</c> and ADR-0027's DDL-path sibling
+/// whose assembly is not <c>Aurora.Platform.Tenancy</c> or a dotted segment below it
+/// (<see cref="TenancyNames.IsWithin"/>), matched on the simple names
+/// <c>ITenantDbContextFactory`1</c> and ADR-0027's DDL-path sibling
 /// <c>ITenantMigrationContextFactory`1</c> - the ADR says "the same fitness rule ... applies to it" -
 /// so the rule is live the moment B-06 declares either, in whichever namespace it chooses.
+/// </para>
+/// <para>
+/// <b>The allow-list is an interim form, pending ADR-0032 §4.4.</b> A plain prefix let
+/// <c>Aurora.Platform.TenancyBypass</c> authorise itself (re-review m-2, executed); the
+/// segment-bounded form refuses that and admits <c>Aurora.Platform.Tenancy.Contracts</c>, which is
+/// where the factory interfaces are declared and which the ADR's first exact list wrongly omitted.
+/// It is a floor, not the decision: any <c>Aurora.Platform.Tenancy.Anything</c> still authorises
+/// itself, and only the exact set the ADR will settle closes that.
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> an implementation in a <b>test</b> assembly, because the population
 /// is the projects under <c>src/</c>. That is deliberate - ADR-0007 §3.4 grants the tenancy test
 /// assembly <c>InternalsVisibleTo</c>, so a test double there is expected - and it is a stated
-/// scope, not an accident. <b>Known and open:</b> the allow-list is a prefix, so an assembly named
-/// <c>Aurora.Platform.TenancyBypass</c> authorises itself (re-review m-2); see
-/// <see cref="TenancyNames.TenancyAssemblyPrefix"/> for why it is still one.
+/// scope, not an accident.
 /// </para>
 /// </remarks>
 internal static class TenantDbContextFactoryRule
@@ -49,7 +56,7 @@ internal static class TenantDbContextFactoryRule
             "types",
             subjects.Length,
             from type in subjects
-            where !type.AssemblyName.StartsWith(TenancyNames.TenancyAssemblyPrefix, StringComparison.Ordinal)
+            where !TenancyNames.IsWithin(type.AssemblyName, TenancyNames.TenancyAssemblyPrefix)
             from implemented in type.InterfaceNames
             where TenancyNames.TenantContextFactorySimpleNames.Contains(TypeIndex.SimpleNameOf(implemented))
             select new RuleViolation(

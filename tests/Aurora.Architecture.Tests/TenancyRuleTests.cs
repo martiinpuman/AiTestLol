@@ -215,13 +215,50 @@ public sealed class TenancyRuleTests
     public void T3_stays_silent_inside_the_tenancy_assembly()
     {
         // The exemption path: the same implementation relabelled into the permitted assembly.
-        // Without this the allow-list would ship untested. Its prefix matching is a known, open gap
-        // (re-review m-2; TenancyNames.TenancyAssemblyPrefix says why it is still a prefix).
+        // Without this the allow-list would ship untested.
         RuleOutcome outcome = TenantDbContextFactoryRule.Check(
             FixtureAssembly.ViolationInAssembly(nameof(FactoryImplementedInTheWrongAssembly), TenancyNames.TenancyAssemblyPrefix));
 
         outcome.Violations.ShouldBeEmpty(outcome.Describe());
         outcome.SubjectsExamined.ShouldBe(1);
+    }
+
+    [Fact]
+    public void T3_stays_silent_inside_the_tenancy_contracts_assembly()
+    {
+        // The case the exact list { Aurora.Platform.Tenancy } got wrong (ADR-0032 review M-1):
+        // Aurora.Platform.Tenancy.Contracts is where ADR-0007 §3.4 declares the factory
+        // interfaces, and a dotted segment below the prefix is inside it.
+        RuleOutcome outcome = TenantDbContextFactoryRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(FactoryImplementedInTheWrongAssembly), "Aurora.Platform.Tenancy.Contracts"));
+
+        outcome.Violations.ShouldBeEmpty(outcome.Describe());
+        outcome.SubjectsExamined.ShouldBe(1);
+    }
+
+    [Fact]
+    public void T3_fires_inside_an_assembly_whose_name_merely_starts_with_the_tenancy_prefix()
+    {
+        // Re-review m-2, executed: Aurora.Platform.TenancyBypass authorised itself under a plain
+        // prefix. The segment-bounded interim form (TenancyNames.IsWithin) refuses it.
+        RuleOutcome outcome = TenantDbContextFactoryRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(FactoryImplementedInTheWrongAssembly), "Aurora.Platform.TenancyBypass"));
+
+        RuleAssert.Reports(outcome, nameof(FactoryImplementedInTheWrongAssembly), ViolationSite.TypeShape);
+    }
+
+    [Theory]
+    [InlineData("Aurora.Platform.Tenancy", true)]
+    [InlineData("Aurora.Platform.Tenancy.Contracts", true)]
+    [InlineData("Aurora.Platform.TenancyBypass", false)]
+    [InlineData("Aurora.Platform.TenancyTools", false)]
+    [InlineData("Aurora.Platform.Tenanc", false)]
+    [InlineData("Aurora.Modules.Sales.Infrastructure", false)]
+    public void The_tenancy_allow_list_prefix_is_segment_bounded(string assemblyName, bool within)
+    {
+        // Interim form pending ADR-0032 §4.4's exact list; TenancyNames.TenancyAssemblyPrefix says
+        // what it still admits (any segment below the prefix) and why that is a floor.
+        TenancyNames.IsWithin(assemblyName, TenancyNames.TenancyAssemblyPrefix).ShouldBe(within);
     }
 
     // ---- T6: TenantDatabaseHandle confined to a named allow-list (ADR-0027 §1) ---------------
@@ -259,12 +296,39 @@ public sealed class TenancyRuleTests
     }
 
     [Fact]
-    public void T6_allows_only_the_tenancy_assembly_prefix_today()
+    public void T6_stays_silent_inside_the_tenancy_contracts_assembly()
     {
-        // A prefix, and a known, open gap: Aurora.Platform.TenancyBypass would pass it (re-review
-        // m-2). TenancyNames.TenancyAssemblyPrefix says why it is still a prefix.
+        // The case the exact list { Aurora.Platform.Tenancy } got wrong (ADR-0032 review M-1):
+        // ADR-0027 §1 declares the handle in Aurora.Platform.Tenancy.Contracts, which therefore
+        // names it, and a dotted segment below the prefix is inside the allow-list.
+        RuleOutcome outcome = TenantDatabaseHandleRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(ModuleReachingForTheDdlPath), "Aurora.Platform.Tenancy.Contracts"));
+
+        outcome.Violations.ShouldBeEmpty(outcome.Describe());
+        outcome.SubjectsExamined.ShouldBe(0, "the relabelled type is inside the allow-list");
+    }
+
+    [Fact]
+    public void T6_fires_inside_an_assembly_whose_name_merely_starts_with_the_tenancy_prefix()
+    {
+        // Re-review m-2, executed: Aurora.Platform.TenancyBypass named the handle freely under a
+        // plain prefix. The segment-bounded interim form (TenancyNames.IsWithin) refuses it.
+        RuleOutcome outcome = TenantDatabaseHandleRule.Check(
+            FixtureAssembly.ViolationInAssembly(nameof(ModuleReachingForTheDdlPath), "Aurora.Platform.TenancyBypass"));
+
+        RuleAssert.Reports(outcome, nameof(ModuleReachingForTheDdlPath), ViolationSite.Local, ViolationSite.MemberReference);
+    }
+
+    [Fact]
+    public void T6_allows_the_tenancy_assembly_and_the_segments_below_it_and_nothing_that_merely_starts_with_it()
+    {
+        // Interim form pending ADR-0032 §4.4's exact list (TenancyNames.TenancyAssemblyPrefix).
         TenantDatabaseHandleRule.AllowedAssemblyPrefixes.ShouldBe(["Aurora.Platform.Tenancy"]);
         TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.Tenancy").ShouldBeTrue();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.Tenancy.Contracts").ShouldBeTrue(
+            "ADR-0027 §1 declares the handle there");
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.TenancyBypass").ShouldBeFalse();
+        TenantDatabaseHandleRule.IsAllowed("Aurora.Platform.TenancyTools").ShouldBeFalse();
         TenantDatabaseHandleRule.IsAllowed("Aurora.Modules.Sales.Application").ShouldBeFalse();
         TenantDatabaseHandleRule.IsAllowed("Aurora.Web").ShouldBeFalse();
     }

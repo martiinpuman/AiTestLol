@@ -48,11 +48,13 @@ internal sealed record NonTenantContext(string FullName, string AssemblyName)
 /// nothing.
 /// </para>
 /// <para>
-/// <b>Allow-lists are still prefixes, and that is a known, open gap.</b> A prefix lets a new
-/// assembly authorise itself by choosing a name - <c>Aurora.Platform.TenancyBypass</c> passes both
-/// allow-lists (re-review m-2). ADR-0032 §4.4 replaces them with exact names, but its first draft
-/// named a set that omitted the contracts assembly ADR-0027 §1 declares the proof types in, and
-/// the ADR is being revised; T3 and T6 keep the prefix until it settles, and README §6 records it.
+/// <b>Allow-lists are segment-bounded prefixes, as an interim form.</b> A plain prefix let a new
+/// assembly authorise itself by choosing a name - <c>Aurora.Platform.TenancyBypass</c> passed both
+/// allow-lists (re-review m-2, executed). <see cref="IsWithin"/> refuses that while admitting the
+/// dotted segments below the prefix, which is where ADR-0007 §3.4 and ADR-0027 §1 declare the
+/// proof types and the factory interfaces (<c>Aurora.Platform.Tenancy.Contracts</c>). ADR-0032 §4.4
+/// replaces prefixes with exact names and is being revised over which names it must list; this
+/// form is a floor under that decision, not the decision, and README §6 records it.
 /// </para>
 /// </remarks>
 internal static class TenancyNames
@@ -115,12 +117,30 @@ internal static class TenancyNames
     public const string TenancyAssemblyName = "Aurora.Platform.Tenancy";
 
     /// <summary>
-    /// The assembly-name <b>prefix</b> T3 and T6 allow-list. Known to be mintable:
-    /// <c>Aurora.Platform.TenancyBypass</c> passes it (re-review m-2). Kept as it was before this
-    /// rework until ADR-0032 §4.4's exact-name replacement settles which assemblies it must name;
-    /// see the remarks on this class.
+    /// The assembly-name prefix T3 and T6 allow-list, matched by <see cref="IsWithin"/> - the
+    /// assembly itself or a dotted segment below it (<c>Aurora.Platform.Tenancy.Contracts</c>),
+    /// never a name that merely starts with it (<c>Aurora.Platform.TenancyBypass</c>).
     /// </summary>
+    /// <remarks>
+    /// <b>Interim, pending ADR-0032 §4.4.</b> This is a floor, not the decision: the ADR replaces
+    /// prefixes with exact assembly names, and its first draft is being revised over which names
+    /// it must list. The segment-bounded form refuses the executed bypass (re-review m-2) and
+    /// admits the contracts assembly that draft wrongly omitted, so it is strictly better than a
+    /// plain prefix under either outcome - but it still lets any
+    /// <c>Aurora.Platform.Tenancy.Anything</c> authorise itself, one segment further down, which
+    /// only an exact list closes. Whoever implements the ADR replaces this, and the tests that pin
+    /// it, with the exact set.
+    /// </remarks>
     public const string TenancyAssemblyPrefix = "Aurora.Platform.Tenancy";
+
+    /// <summary>
+    /// Is <paramref name="assemblyName"/> the assembly <paramref name="prefix"/> names, or one in a
+    /// dotted segment below it? <c>Aurora.Platform.Tenancy.Contracts</c> is; <c>Aurora.Platform.TenancyBypass</c>
+    /// is not.
+    /// </summary>
+    public static bool IsWithin(string assemblyName, string prefix) =>
+        string.Equals(assemblyName, prefix, StringComparison.Ordinal)
+        || assemblyName.StartsWith(prefix + ".", StringComparison.Ordinal);
 
     /// <summary>
     /// The catalog context's full name, where B-05 declares it
