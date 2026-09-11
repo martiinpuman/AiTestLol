@@ -57,6 +57,10 @@ both trusted. The difference is written down in `RuleInventoryTests` and **check
 `RuleInventoryTests` asserts the absence of each awaited type **by name**. The day B-05 or B-06 adds
 one, those tests fail with an instruction saying what to change. Inertness expires loudly.
 
+Each inert row also carries a deliberately-violating fixture. `RuleInventoryTests` runs the rule over
+it and requires a violation back, so a rule recorded as asleep is shown to be asleep rather than
+broken.
+
 It also reflects over every rule class and fails if one has no inventory row, so a rule cannot be
 added without someone stating what it measures.
 

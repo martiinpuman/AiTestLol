@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
+using Aurora.Architecture.Tests.Fixtures;
 using Aurora.Architecture.Tests.Rules;
 using Aurora.Architecture.Tests.Solution;
 using Shouldly;
@@ -23,10 +24,11 @@ namespace Aurora.Architecture.Tests;
 /// </para>
 /// <para>
 /// So each rule below is recorded as <b>live</b> - a violation is expressible in today's code, and
-/// the rule examined a real population - or <b>inert</b>, with the type it governs named. The inert
-/// rows assert the <i>absence</i> of that type. The day B-05 or B-06 introduces it, the assertion
-/// fails and whoever added it must move the rule to the live list with a floor. Inertness expires
-/// loudly rather than quietly persisting.
+/// the rule examined a real population - or <b>inert</b>, with the type it governs named and a
+/// fixture the rule is run over to show it still fires. The inert rows also assert the
+/// <i>absence</i> of that type. The day B-05 or B-06 introduces it, the assertion fails and whoever
+/// added it must move the rule to the live list with a floor. Inertness expires loudly rather than
+/// quietly persisting.
 /// </para>
 /// </remarks>
 [Trait("Category", "Architecture")]
@@ -54,22 +56,40 @@ public sealed class RuleInventoryTests
     ];
 
     /// <summary>
-    /// A rule whose subject does not exist in production yet, with the task that brings it.
+    /// A rule whose subject does not exist in production yet, with the task that brings it and a
+    /// fixture that violates it.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// T3 and T5 appear in <see cref="Live"/> rather than here: they scan every production type
     /// today and would report a violation the moment one appeared, so the rule itself is biting.
     /// What does not exist yet is the type that could violate them, and the assertions below cover
     /// that separately.
+    /// </para>
+    /// <para>
+    /// <c>FireAgainstFixture</c> runs the rule over a deliberately-violating fixture - the same
+    /// fixtures <c>TenancyRuleTests</c> and <c>LayeringRuleTests</c> use - and
+    /// <see cref="Each_inert_rule_still_fires_against_its_fixture"/> requires a violation back.
+    /// </para>
     /// </remarks>
-    private static readonly ImmutableArray<(string Id, string Rule, string Subject, string Arrives)> Inert =
+    private static readonly ImmutableArray<(
+        string Id, string Rule, string Subject, string Arrives, Func<RuleOutcome> FireAgainstFixture)> Inert =
     [
         (TenantDbContextConstructorRule.Id, TenantDbContextConstructorRule.Name,
-            "a tenant DbContext", "B-06 (B-05 brings CatalogDbContext, which is exempt)"),
+            "a tenant DbContext", "B-06 (B-05 brings CatalogDbContext, which is exempt)",
+            static () => TenantDbContextConstructorRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
         (TenantDbContextRegistrationRule.Id, TenantDbContextRegistrationRule.Name,
-            "an AddDbContext* call naming a tenant context", "B-06"),
+            "an AddDbContext* call naming a tenant context", "B-06",
+            static () => TenantDbContextRegistrationRule.Check(TypeIndex.Of(FixtureAssembly.AllViolations))),
         (ModuleDependencyRule.Id, ModuleDependencyRule.Name,
-            "two business modules to reference each other", "the first module after B-15"),
+            "two business modules to reference each other", "the first module after B-15",
+            static () =>
+            {
+                // modules.md §6 marks Tax -> Ledger 'E': events only, so this one edge violates M1.
+                using var tree = new FixtureProjectTree();
+                tree.Add("Aurora.Modules.Tax.Application", projectReferences: ["Aurora.Modules.Ledger.Contracts"]);
+                return ModuleDependencyRule.Check(tree.All);
+            }),
     ];
 
     [Fact]
@@ -178,16 +198,26 @@ public sealed class RuleInventoryTests
     [Fact]
     public void Each_inert_rule_still_fires_against_its_fixture()
     {
-        // The point of recording a rule as inert is that it is asleep, not broken. Every inert rule
-        // has a fixture test in TenancyRuleTests or LayeringRuleTests proving it fires; this test
-        // asserts the accounting - that each inert row names a subject and the task that brings it,
-        // so the row cannot silently become a place where rules go to be forgotten.
-        foreach ((string id, string rule, string subject, string arrives) in Inert)
+        // The point of recording a rule as inert is that it is asleep, not broken, and the only way
+        // to tell those apart is to wake it. Each row carries a fixture that violates its rule; this
+        // test runs the rule over that fixture and requires a violation back. A rule that stays
+        // silent here is not inert, it is vacuous, and its row is what would have hidden that.
+        foreach ((string id, string rule, string subject, string arrives, Func<RuleOutcome> fire) in Inert)
         {
             id.ShouldNotBeNullOrWhiteSpace();
             rule.ShouldNotBeNullOrWhiteSpace();
             subject.ShouldNotBeNullOrWhiteSpace($"rule {id} must say what it is waiting for");
             arrives.ShouldNotBeNullOrWhiteSpace($"rule {id} must say which task brings its subject");
+
+            RuleOutcome outcome = fire();
+
+            outcome.RuleId.ShouldBe(id, "the row's fixture must be run through the row's own rule");
+            outcome.SubjectsExamined.ShouldBeGreaterThan(
+                0,
+                $"rule {id} examined nothing in its fixture, so it could not have fired: {outcome.Describe()}");
+            outcome.Violations.ShouldNotBeEmpty(
+                $"rule {id} is recorded as inert but did not fire on its own deliberately-violating "
+                + $"fixture. It is not asleep, it is broken: {outcome.Describe()}");
         }
 
         Inert.Length.ShouldBe(3, "three rules are inert today: T1, T2 and M1");
