@@ -3,6 +3,8 @@
 Status: accepted **v3** · Author: architect · Date: 2026-09-11
 Companion: `modules.md`, `testing-strategy.md`, `dependencies.md`, `../decisions/ADR-0007-...`, `../decisions/ADR-0008-...`
 
+**Changes in v4** (2026-09-11, answering the project-manager's four questions on the B-06/B-07/B-08/B-13 split): §6.1 below records the dependency corrections that follow from **ADR-0027** (the DDL path is separate from the application data path) and the two new bootstrap rows that follow from **ADR-0028** (the tenant audit store). The §6 table rows themselves are unchanged; §6.1 overrides their **Depends on** column where it says so.
+
 **Changes in v3** (2026-09-11, B-02 and B-03 peer review findings **S-1**/**S-2**): stage 6 now belongs to **B-02** (stages 0–3, 6, 11) and B-11 owns stages 4, 5, 7–10; §5.2 stage 6 and §5.3 record the executed-test floor and `AURORA_MIN_UNIT_TESTS`; §6 gains a standing note that an acceptance-criteria row is a floor and its ADR is the contract, and the **B-03, B-04, B-05, B-06, B-07, B-08** rows are widened to the ADR sections they implement.
 
 **Changes in v2** (2026-09-11, B-01 peer review finding **S-1**): §5.2 stage 4 and the §6 **B-11** acceptance criteria now describe the two-tier dependency gate decided in `../decisions/ADR-0026-dependency-supply-chain-gate.md`.
@@ -223,3 +225,35 @@ Each is a task a senior developer can pick up. Acceptance criteria are given bec
 | **B-15** | Walking skeleton | One trivial vertical slice (create a company, read it back) through Blazor Server and `/api/v1`, in two tenants, proving: tenant resolution pinned to the circuit, authorization, audit entry, outbox event, background job, and a Country Package installed — all covered by tests | B-06, B-10, B-13 |
 
 **Do not start business modules before B-15 is green.** The walking skeleton is the go/no-go checkpoint the researcher asked for in `../research/01-feature-priority.md`.
+
+---
+
+### 6.1 Corrections to the bootstrap graph (v4, 2026-09-11)
+
+These override the **Depends on** column above and in `../BACKLOG.md`. Reasons are in ADR-0027 and ADR-0028; the short version is that provisioning and migration never use the application data path, and nothing in B-01 … B-15 built an audit writer.
+
+**Dependency corrections (ADR-0027).**
+
+| Row | Was | Is | Why |
+|---|---|---|---|
+| B-07.1 | B-06.3 | **B-06.1** | Steps 1–3 are a catalog insert plus two `aurora_admin` connections. No `TenantScope`, no `ITenantDbContextFactory`, no data-source cache (ADR-0027 §1–§2) |
+| B-08.1 | B-06.3 | **B-07.2** | Not the tenancy guarantee — the *single-tenant migration executor*, which is saga step 5. One component, not two (ADR-0027 §3). It also needs a provisioned, stamped tenant database to migrate |
+| B-08.3 | B-08.1, B-06.3 | **B-06.3** | The §7.5 skew check is `ITenantScopeFactory` behaviour and belongs to Tenancy, not to the runner (ADR-0027 §4). Retitle: *Tenancy: schema-version skew gate at scope open*; module **Platform/Tenancy** |
+| B-07.4 | B-07.3, B-13.2 | **B-07.3, B-13.2, B-16.1, B-06.3** | SPEC-001 BR-7/AC-6 needs the tenant-side audit writer (B-16.1); AC-5's minimal two-tenant read needs the application path (B-06.3), which was previously implied through B-07.1 |
+| B-10 | B-07.4 | **B-07.4, B-06.3** | `TenantIsolationContract` is built on `TenantScope` and the §4.3 mis-route. B-06.3 used to arrive transitively; after the B-07.1 change it must be named |
+
+**Scope corrections that go with them.**
+
+- **B-06.1** additionally owns the tenancy kernel types (`TenantAccess`, `TenantScope`, `TenantAccessReason`, `SchemaVersion`, `CoreSchemaVersion`) and `TenantIdentityStamp` (the ADR-0007 §4.3 table definition plus `AssertAsync`). One implementation of that assertion, consumed by B-06.2's connection initializer, B-07.1's compensation guard, B-07.2's step 4 and B-08.1. The *guarantee* — factories, accessor, lease and disposal semantics, no DI registration — stays in B-06.3.
+- **B-07.1** builds `ITenantAdminConnectionFactory` (ADR-0027 §2) including the `StampAssertion` opt-out and its mis-route test.
+- **B-07.2** builds `ITenantSchemaMigrator` (advisory lock, stamp assertion, `platform` → `audit` → module schemas → `pkg_*` order) and `ITenantMigrationContextFactory<T>`. B-08.1 calls it and owns claiming, leases, heartbeats and resumability only.
+- **B-13.1** additionally owns `IPackageUpgradePlanner` — a pure function, no database (ADR-0027 §5). The runner-side consumption (fleet compatibility report, per-tenant `Skipped | PackageIncompatible`) is not Milestone 1 work: no core upgrade happens before there is a version to upgrade from. Carry it as a follow-up depending on B-08.2 and B-13.1.
+
+**Two new rows (ADR-0028).** `src/platform/` has no Audit projects and no task creates them; SPEC-001 BR-7/AC-6, SPEC-002 BR-5 and `CLAUDE.md`'s financial-audit rule all assume they exist.
+
+| Row | Task | Acceptance criteria | Depends on |
+|---|---|---|---|
+| **B-16.1** | Tenant audit store and `IAuditWriter` | Schema `audit` with `audit.audit_event` per ADR-0018 §1, RANGE-partitioned monthly on `occurred_at` with a `DEFAULT` partition and every key including the partition key; append-only proven **three ways and probed as the runtime role** — `has_table_privilege` plus an executed `UPDATE`/`DELETE` as `aurora_app` **and** as `aurora_migrator` (the trigger must stop the owner); `ALTER DEFAULT PRIVILEGES … IN SCHEMA audit REVOKE UPDATE, DELETE` proven by creating a new table in the schema and re-probing; the same retrofit applied to `catalog.operator_audit_event` and `catalog.erasure_replay_log` (B-05 finding M-1); `IAuditWriter.WriteAsync(TenantAccess, DbContext, AuditEvent, ct)` with a test that a rolled-back business transaction leaves zero audit rows and that a forced audit failure rolls back the business change; hash chain with the pinned canonical form and `VerifyAsync`, proven by tampering with a row **as the owner** and watching verification fail. Tier **Full** | B-07.2 |
+| **B-16.2** | `[Auditable]` interceptor and the raw-write ban | The `SaveChangesInterceptor` writing before/after for `[Auditable]` entities in the caller's transaction; fitness rule failing `ExecuteUpdate`/`ExecuteDelete` on an `[Auditable]` entity, with a deliberately-violating fixture; a counted assertion of how many entity types the interceptor actually covered, so "zero auditable entities" cannot report success. Tier **Full** | B-16.1, B-06.3 |
+
+B-15.1 gains **B-16.2** as a dependency: its "audit annotation" acceptance criterion has nothing to annotate against until the interceptor exists.

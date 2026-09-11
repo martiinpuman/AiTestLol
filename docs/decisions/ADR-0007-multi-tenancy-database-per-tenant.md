@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-09-11) — the isolation model is **locked by the product owner**; everything else in this ADR is the architect's design
 - **Deciders:** product owner (isolation model), architect (all mechanisms)
 - **Supersedes:** —
-- **Superseded by:** —
+- **Superseded by:** **in part** by ADR-0027 — §4.1 (the tenant `DbContext` constructor signature) and §7.5 (which access paths the skew check gates). Every other section of this ADR stands.
 - **Related:** ADR-0003 (EF Core), ADR-0004 (PostgreSQL), ADR-0005 (Blazor Server), ADR-0008 (Country Packages), ADR-0018 (audit, retention, erasure)
 
 > This is the load-bearing ADR of the project. Tenancy is the one decision that cannot be retrofitted: every module's data access, every background job, every test and every operational procedure is shaped by it. Read §3, §4 and §10 before writing any data access code.
@@ -116,6 +116,8 @@ This is the **only** place that knows how a tenant maps to physical storage. It 
 `CLAUDE.md` demands a compile-time or container-level guarantee. This is it, in four layers. Layers 1–2 are the guarantee; layers 3–4 are defence in depth, because a guarantee nobody can observe failing is a guarantee nobody trusts.
 
 ### 4.1 Layer 1 — the type system (compile time)
+
+> **Superseded in part by ADR-0027 §1.** The constructor's second parameter is `TenantAccess`, the abstract base of `TenantScope` (application path) and `TenantDatabaseHandle` (DDL path). The guarantee below is unchanged: neither proof type is constructible outside `Aurora.Platform.Tenancy`.
 
 Every tenant `DbContext` has exactly one constructor, and it is **internal**:
 
@@ -253,6 +255,8 @@ Order within one tenant: `platform` schema first, then module schemas in depende
 
 ### 7.3 The runner
 
+> **Refined by ADR-0027 §2–§3.** The direct `aurora_migrator` connection comes from `ITenantAdminConnectionFactory` and asserts `platform.tenant_identity` before any DDL; per-tenant execution (`ITenantSchemaMigrator`) and fleet orchestration are separate components.
+
 State lives in the catalog:
 
 ```
@@ -276,6 +280,8 @@ Within a tenant database, the runner takes a **session-level advisory lock** (`p
 - **Rollback is not a database operation.** A failed migration is fixed forward with a new migration. The only true rollback is a per-tenant restore (§11), and that loses committed business data, so it is an incident procedure, not a release procedure.
 
 ### 7.5 Version skew between code and schema
+
+> **Superseded in part by ADR-0027 §4.** The check gates `TenantScope` opens only; the DDL path holds a `TenantDatabaseHandle` and has no scope factory to bypass. Without this the runner could never repair a `SchemaBlocked` tenant. The two constants live in `Aurora.Platform.Tenancy.Contracts`.
 
 Because expand migrations deploy ahead of the code that uses them, **code version N must run correctly against schema versions N−1 and N**. Two constants ship with the code: `CurrentSchemaVersion` and `MinimumSupportedSchemaVersion` (= N−1).
 

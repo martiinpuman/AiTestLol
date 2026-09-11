@@ -1,6 +1,6 @@
 # ADR-0018 — Audit logging, retention and GDPR erasure
 
-- **Status:** Accepted (2026-09-11)
+- **Status:** Accepted (2026-09-11) — mechanics of §1 (schema, append-only enforcement, partitioning, writer signature, hash-chain canonical form) specified by ADR-0028; the decisions here are unchanged
 - **Deciders:** architect
 - **Related:** ADR-0004 rule 5, ADR-0007 §11, ADR-0008 §7 point 9, ADR-0016 (logs are not audit)
 

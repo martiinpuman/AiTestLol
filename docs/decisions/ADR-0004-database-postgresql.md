@@ -1,6 +1,6 @@
 # ADR-0004 — Database: PostgreSQL
 
-- **Status:** Accepted (2026-09-10) — **locked by the product owner**
+- **Status:** Accepted (2026-09-10) — **locked by the product owner**; rule 5's table name superseded by ADR-0028
 - **Deciders:** product owner (choice), architect (consequences)
 
 ## Context
@@ -28,7 +28,7 @@ The database is the isolation boundary for tenancy (ADR-0007), the store of reco
    The application's connection string uses `aurora_app`. This is what makes "a bug cannot drop a tenant's table" a property of the deployment rather than of our care.
 3. Amounts are `numeric(19,4)`, unit prices `numeric(19,6)`, exchange rates `numeric(19,10)`. Never `float`/`double precision`.
 4. Accounting *dates* are `date`; event *instants* are `timestamptz` stored in UTC. A posting date is a calendar date in the company's time zone, not an instant, and conflating the two produces period-boundary bugs that are painful to unwind.
-5. Append-only tables (`platform.audit_event`, `ledger.journal_entry_line`) have `UPDATE` and `DELETE` revoked from `aurora_app` and a trigger that raises on either — belt and braces, because immutability is a ranked quality attribute.
+5. Append-only tables (`audit.audit_event` — renamed from `platform.audit_event` by ADR-0028 — and `ledger.journal_entry_line`) have `UPDATE` and `DELETE` revoked from `aurora_app` and a trigger that raises on either — belt and braces, because immutability is a ranked quality attribute.
 
 ## Consequences
 
