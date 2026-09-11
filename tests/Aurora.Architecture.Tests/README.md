@@ -15,15 +15,22 @@ the fixture tests red instead of passing quietly.
 | Id | Rule | What the mechanism actually inspects | Reads |
 |---|---|---|---|
 | **F1** | No floating-point type in a signature, local, instruction or called member | Field and property types; method return and parameter types; **method-body locals**; floating-point IL opcodes (`ldc.r8`, `conv.r8`, `conv.r4`, `conv.r.un`, the `r4`/`r8` element and indirect forms); and every member an instruction names whose signature mentions `double`, `float` or `Half` | IL + metadata |
-| **S3** | No ambient clock read in domain or application code | Every `call` to `DateTime.Now/UtcNow/Today` and `DateTimeOffset.Now/UtcNow`, in any method body in the kernel or a `*.Domain` / `*.Application` assembly | IL |
+| **S3** | No ambient clock read in domain or application code | Every instruction naming `DateTime.Now/UtcNow/Today` or `DateTimeOffset.Now/UtcNow`, in any method body in the kernel or a `*.Domain` / `*.Application` assembly. A property read is a call to its getter, so it is visible in an expression, a field initialiser, a lambda or a local function alike | IL |
 | **T1** | No public or protected constructor on a tenant `DbContext` | The accessibility flag on every `.ctor` of every type whose base chain reaches `Microsoft.EntityFrameworkCore.DbContext`, `CatalogDbContext` excepted | Metadata |
 | **T2** | No `AddDbContext` registration of a tenant `DbContext` | Every `call` whose member name starts `AddDbContext` or `AddPooledDbContextFactory` and whose **generic arguments** name a tenant context | IL |
 | **T3** | `ITenantDbContextFactory<>` implemented only in `Aurora.Platform.Tenancy` | The implemented-interface list of every production type, matched on the simple name `ITenantDbContextFactory\`1` | Metadata |
 | **T4** | `IHttpContextAccessor` only in the tenant-resolution middleware | Every type mention in production code — base types, interfaces, fields, properties, parameters, returns, **locals**, and the declaring type, signature and generic arguments of every member an instruction names | IL + metadata |
 | **T5** | No static or singleton-registered type has a `TenantScope` field or property | (a) any `static` field or property whose type names a `TenantScope`; (b) the generic arguments of every call whose member name contains `Singleton`, each then checked through its base chain for such a field or property | IL + metadata |
-| **L1** | The kernel and every `.Domain` depend on the BCL and the kernel only | Declared `PackageReference` and `FrameworkReference`; the `Direct` entries of the committed `packages.lock.json`; the emitted `AssemblyRef` table; and every type named from a banned namespace (EF, ASP.NET, `Microsoft.Extensions`, Npgsql, `System.Data`, `System.Text.Json`, Newtonsoft, Serilog) | Project files + metadata |
+| **L1** | `Aurora.SharedKernel` and every `.Domain` depend on the BCL and the kernel only | Declared `PackageReference` and `FrameworkReference`; the `Direct` entries of the committed `packages.lock.json`; the emitted `AssemblyRef` table; and every type named from a banned namespace (EF, ASP.NET, `Microsoft.Extensions`, Npgsql, `System.Data`, `System.Text.Json`, Newtonsoft, Serilog) | Project files + metadata |
 | **L1-L5** | Every project reference is one `solution-layout.md` §2 permits | The `ProjectReference` elements each `.csproj` under `src/` declares, classified by the naming convention of `solution-layout.md` §1. Direct references only — a host reaching Infrastructure *through* `Aurora.Composition` is the design | Project files |
 | **M1** | Every cross-module reference is in the `modules.md` §6 matrix | Every declared `ProjectReference` between two different `Aurora.Modules.*` modules, against the matrix held as data in `ModuleMatrix`. A module with no row may reference no other module | Project files |
+
+**L1's scope is `Aurora.SharedKernel` plus every `*.Domain`, and not the other two tier-0
+assemblies.** That is exactly the scope `testing-strategy.md` §5.1 names. `Aurora.Documents.Canonical`
+and `Aurora.Countries.Contracts` are tier 0 but are not named there, and ADR-0008 §3.1 requires the
+latter to carry an approved-API snapshot test — which needs an analyzer package reference. Sweeping
+them into L1 would ban a dependency the architecture asks for. Their constraint is the one
+`modules.md` §3 states — tier 0 references tier 0 and nothing else — and the L1-L5 rule enforces it.
 
 `testing-strategy.md` §5 lists more rules than these. The rest — L6, M2-M5, F2-F4, C1-C5, S1/S2/S4/S5,
 Q1/Q2, MIG1-MIG5, A1/A2 — need a `DbContext` model, an endpoint, a migration or a Country Package to
@@ -122,7 +129,7 @@ than the source also means a violation introduced by a source generator is caugh
 scan would miss.
 
 **This is a deviation from ADR-0020 and is recorded as one.** It is narrow: the rules here are a thin
-layer over one scanner (`Metadata/AssemblyScanner.cs`, ~330 lines), which is the same mitigation
+layer over one scanner (`Metadata/`, ~720 lines including its doc comments), which is the same mitigation
 ADR-0020 states for ArchUnitNET's pre-1.0 version number. ArchUnitNET remains an approved dependency
 and nothing here prevents adopting it for rules where its fluent model reads better. The architect
 should decide whether to amend ADR-0020 or to keep both mechanisms.

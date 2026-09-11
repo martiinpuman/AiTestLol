@@ -37,7 +37,23 @@ public sealed class LayeringRuleTests
     {
         RuleAssert.Holds(
             DomainPurityRule.Check(SolutionLayout.ProductionProjects, SolutionLayout.ProductionAssemblies),
-            minimumSubjects: 3);
+            minimumSubjects: 1);
+    }
+
+    [Theory]
+    [InlineData("Aurora.SharedKernel", true)]
+    [InlineData("Aurora.Sales.Domain", true)]
+    [InlineData("Aurora.Documents.Canonical", false)]
+    [InlineData("Aurora.Countries.Contracts", false)]
+    [InlineData("Aurora.Sales.Application", false)]
+    [InlineData("Aurora.Web", false)]
+    public void L1_governs_the_kernel_and_every_domain_assembly_and_no_other(string assembly, bool inScope)
+    {
+        // The two other tier-0 assemblies are deliberately outside L1: testing-strategy.md §5.1 does
+        // not name them, and ADR-0008 §3.1 requires Aurora.Countries.Contracts to carry an
+        // approved-API snapshot test, which needs an analyzer package reference. Their constraint is
+        // the one modules.md §3 states - tier 0 references tier 0 - enforced by ProjectLayeringRule.
+        DomainPurityRule.IsInScope(assembly).ShouldBe(inScope);
     }
 
     // ---- L5: a host may not reference a .Domain or an .Infrastructure -----------------------

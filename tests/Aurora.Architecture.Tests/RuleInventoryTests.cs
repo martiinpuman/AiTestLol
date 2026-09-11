@@ -45,7 +45,7 @@ public sealed class RuleInventoryTests
             static () => TenantDbContextFactoryRule.Check(SolutionLayout.ProductionTypes)),
         (TenantScopeSingletonRule.Id, TenantScopeSingletonRule.Name, 10,
             static () => TenantScopeSingletonRule.Check(TypeIndex.Of(SolutionLayout.ProductionTypes))),
-        (DomainPurityRule.Id, DomainPurityRule.Name, 3,
+        (DomainPurityRule.Id, DomainPurityRule.Name, 1,
             static () => DomainPurityRule.Check(SolutionLayout.ProductionProjects, SolutionLayout.ProductionAssemblies)),
         (ProjectLayeringRule.Id, ProjectLayeringRule.Name, 3,
             static () => ProjectLayeringRule.Check(SolutionLayout.ProductionProjects)),
@@ -118,14 +118,16 @@ public sealed class RuleInventoryTests
     [Fact]
     public void No_tenant_DbContext_exists_yet_which_is_why_T1_and_T2_are_inert()
     {
+        // Tenant contexts, not every DbContext: B-05's CatalogDbContext is exempt by design
+        // (ADR-0003 rule 3), so its arrival must not fail this test. B-06.3's first tenant context
+        // must.
         TypeIndex production = TypeIndex.Of(SolutionLayout.ProductionTypes);
 
-        production.All
-            .Where(type => production.DerivesFrom(type, TenancyNames.DbContext))
+        TenancyNames.TenantContextsIn(production)
             .Select(static type => type.FullName)
             .ShouldBeEmpty(
-                "a DbContext now exists in production, so T1 and T2 are no longer inert. Move their "
-                + "rows from Inert to Live in this file with a floor, and raise the floors in "
+                "a tenant DbContext now exists in production, so T1 and T2 are no longer inert. Move "
+                + "their rows from Inert to Live in this file with a floor, and raise the floors in "
                 + "TenancyRuleTests from 0.");
     }
 
