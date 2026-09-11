@@ -12,7 +12,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 
 /// <summary>
 /// Least privilege on the catalog (ADR-0004 rule 2, ADR-0007 §4.4): what the runtime role can
-/// and cannot do, asserted by trying, not by reading the grant statements.
+/// and cannot do, asserted by trying, as the role, wherever trying is possible.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -24,18 +24,23 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// </para>
 /// <list type="number">
 /// <item><description>
-/// <b>Sideways:</b> <c>aurora_app</c> has <c>CONNECT</c> on exactly one database (ADR-0007 §4.4),
-/// so a compromised or mis-routed request cannot reach another database on the cluster — which is
-/// the property that will carry the weight once every tenant has a database of its own.
+/// <b>Downwards:</b> <c>aurora_app</c> has no DDL, holds on each catalog table exactly what
+/// <c>CatalogSchemaAllowlist.AppRolePrivileges</c> records and nothing on any other table, so it
+/// cannot alter the schema that decides where every tenant's data lives, and cannot touch the
+/// migrations history that records it.
 /// </description></item>
 /// <item><description>
-/// <b>Downwards:</b> <c>aurora_app</c> has no DDL, so it cannot alter the schema that decides
-/// where every tenant's data lives, and cannot touch the migrations history that records it.
+/// <b>Sideways:</b> on this fixture's cluster <c>aurora_app</c> can open the catalog and no other
+/// database that accepts connections. That is a property of the <em>databases</em>, not of the
+/// role. ADR-0007 §4.4's "<c>CONNECT</c> on exactly one database" holds <em>under §3.5 stage 2</em>,
+/// which is not what ships: stage 1 is one <c>aurora_app</c> login role per cluster, granted
+/// <c>CONNECT</c> on every tenant database, and PostgreSQL grants <c>CONNECT</c> on every new
+/// database to <c>PUBLIC</c>. What keeps the role out of a database today is §8 step 3 run on that
+/// database (<c>REVOKE ALL … FROM PUBLIC</c>, then an explicit <c>GRANT CONNECT</c>); what catches
+/// a request that reaches the wrong tenant database — which the role, by design, can — is §4.3's
+/// connected-database identity check, which B-07 must test as <em>the</em> cross-tenant control.
 /// </description></item>
 /// </list>
-/// <para>
-/// Both are asserted by trying, as the role, not by reading the grant statements back.
-/// </para>
 /// </remarks>
 [Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
@@ -190,20 +195,66 @@ public sealed class CatalogPrivilegeTests
     [Fact]
     public async Task The_app_role_cannot_connect_to_any_other_database_on_the_cluster()
     {
-        // ADR-0007 §4.4, and the closest thing the shared catalog has to a tenant-isolation test:
-        // the runtime role reaches one database and no other. The maintenance database is the one
-        // every cluster has and the one the provisioner connects to as aurora_admin (§8 step 2), so
-        // it is the honest thing to try to reach.
-        var elsewhere = new NpgsqlConnectionStringBuilder(_catalog.AppConnectionString)
+        // Every database on the cluster that accepts connections, tried one by one. Under ADR-0007
+        // §3.5 stage 1 nothing about the role keeps it out of a database - PostgreSQL grants
+        // CONNECT to PUBLIC on every new one - so what this proves is that §8 step 3's REVOKE has
+        // been run on each of them, template1 and the maintenance database included: what a
+        // hardened cluster looks like, and therefore what the fixture has to do.
+        await using NpgsqlConnection catalog = await _catalog.OpenAppConnectionAsync();
+        List<string> others = await CatalogDatabaseFixture.DatabasesAcceptingConnectionsAsync(catalog);
+        others.Remove(CatalogDatabaseFixture.CatalogDatabaseName);
+
+        // The list has to hold the databases every cluster has, or the loop below proved nothing.
+        others.ShouldContain("template1");
+        others.ShouldContain(CatalogDatabaseFixture.MaintenanceDatabaseName);
+        _output.WriteLine($"Tried to open {others.Count} databases as {CatalogDatabaseFixture.AppRole}: {string.Join(", ", others)}.");
+
+        foreach (string database in others)
         {
-            Database = CatalogDatabaseFixture.MaintenanceDatabaseName,
-        }.ConnectionString;
+            var elsewhere = new NpgsqlConnectionStringBuilder(_catalog.AppConnectionString) { Database = database }.ConnectionString;
+            await using var connection = new NpgsqlConnection(elsewhere);
 
-        await using var connection = new NpgsqlConnection(elsewhere);
+            PostgresException refused = await Should.ThrowAsync<PostgresException>(() => connection.OpenAsync(), database);
 
-        PostgresException refused = await Should.ThrowAsync<PostgresException>(() => connection.OpenAsync());
+            refused.SqlState.ShouldBe(InsufficientPrivilege, database);
+        }
+    }
 
-        refused.SqlState.ShouldBe(InsufficientPrivilege);
+    [Fact]
+    public async Task Only_section_8_step_3_hardening_keeps_the_app_role_out_of_a_newly_created_database()
+    {
+        // What the test above rests on, shown on a database created the way the provisioner will
+        // create a tenant's (ADR-0007 §8 step 2): until §8 step 3 runs on it, aurora_app - one
+        // login role per cluster under §3.5 stage 1 - opens it, because PUBLIC holds CONNECT on
+        // every new database. B-07 then grants CONNECT back to aurora_app, on purpose, on every
+        // tenant database; the control that keeps a request inside its own tenant from then on is
+        // §4.3's identity check, not this role. Pooling is off so the probe can be dropped.
+        string database = Unique.Identifier("aurora_t_probe");
+        await using NpgsqlConnection admin = await _catalog.OpenAdminMaintenanceConnectionAsync();
+        await CatalogDatabaseFixture.ExecuteAsync(
+            admin, $"CREATE DATABASE {database} OWNER {CatalogDatabaseFixture.MigratorRole} TEMPLATE template0 ENCODING 'UTF8'");
+
+        try
+        {
+            var asApp = new NpgsqlConnectionStringBuilder(_catalog.AppConnectionString) { Database = database, Pooling = false }.ConnectionString;
+
+            await using (var open = new NpgsqlConnection(asApp))
+            {
+                await open.OpenAsync();
+                await using var reached = new NpgsqlCommand("SELECT current_database()", open);
+                ((string?)await reached.ExecuteScalarAsync()).ShouldBe(database, "before hardening");
+            }
+
+            await CatalogDatabaseFixture.ExecuteAsync(admin, $"REVOKE ALL ON DATABASE {database} FROM PUBLIC");
+
+            await using var closed = new NpgsqlConnection(asApp);
+            PostgresException refused = await Should.ThrowAsync<PostgresException>(() => closed.OpenAsync(), "after hardening");
+            refused.SqlState.ShouldBe(InsufficientPrivilege, "after hardening");
+        }
+        finally
+        {
+            await CatalogDatabaseFixture.ExecuteAsync(admin, $"DROP DATABASE {database} WITH (FORCE)");
+        }
     }
 
     [Fact]

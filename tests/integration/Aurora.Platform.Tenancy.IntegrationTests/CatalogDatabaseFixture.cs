@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
 using Microsoft.EntityFrameworkCore;
@@ -74,15 +75,22 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
             await ExecuteAsync(connection, $"CREATE ROLE {AppRole} LOGIN PASSWORD '{_appPassword}'");
             await ExecuteAsync(connection, $"GRANT {MigratorRole} TO {AdminRole}");
 
-            // PostgreSQL grants CONNECT on every database to PUBLIC by default, so a hardened
-            // cluster revokes it on the maintenance database too - otherwise aurora_app, which is
-            // meant to reach exactly one database, can also reach the one the provisioner issues
-            // CREATE DATABASE from (ADR-0004 rule 2, ADR-0007 4.4). Only an owner or a superuser
-            // can revoke it, and a REVOKE issued by anyone else is a *warning*, not an error: the
-            // statement appears to work and changes nothing. So this runs on the superuser
-            // connection, and CatalogPrivilegeTests asserts the effect by connecting rather than
-            // by trusting that the statement ran.
-            await ExecuteAsync(connection, $"REVOKE ALL ON DATABASE {MaintenanceDatabaseName} FROM PUBLIC");
+            // PostgreSQL grants CONNECT on every database to PUBLIC by default, and under ADR-0007
+            // 3.5 stage 1 nothing about aurora_app keeps it out of a database: it is one login role
+            // per cluster, and 8 step 3's per-database REVOKE is the only thing that closes one. A
+            // hardened cluster therefore runs that REVOKE on every database it ships with - the
+            // maintenance database the provisioner issues CREATE DATABASE from, template1, and
+            // whatever else the image created - and so does this fixture, over the list rather
+            // than by name, so nothing is missed. Only an owner or a superuser can revoke it, and a
+            // REVOKE issued by anyone else is a *warning*, not an error: the statement appears to
+            // work and changes nothing. So this runs on the superuser connection, and
+            // CatalogPrivilegeTests asserts the effect by enumerating pg_database and connecting,
+            // rather than by trusting that the loop ran.
+            foreach (string database in await DatabasesAcceptingConnectionsAsync(connection))
+            {
+                await ExecuteAsync(connection, $"REVOKE ALL ON DATABASE \"{database}\" FROM PUBLIC");
+            }
+
             await ExecuteAsync(connection, $"GRANT CONNECT ON DATABASE {MaintenanceDatabaseName} TO {AdminRole}");
         }
 
@@ -120,6 +128,9 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
 
     public Task<NpgsqlConnection> OpenMigratorConnectionAsync() => OpenAsync(MigratorConnectionString);
 
+    /// <summary>What the provisioner holds when it creates, hardens and drops a database (ADR-0007 §8 steps 2-3).</summary>
+    public Task<NpgsqlConnection> OpenAdminMaintenanceConnectionAsync() => OpenAsync(AdminMaintenanceConnectionString);
+
     internal static CatalogDbContext CreateContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<CatalogDbContext>();
@@ -131,6 +142,21 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     {
         await using var command = new NpgsqlCommand(sql, connection);
         await command.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>Every database on the cluster a login may attempt; <c>template0</c> excludes itself by its own flag.</summary>
+    public static async Task<List<string>> DatabasesAcceptingConnectionsAsync(NpgsqlConnection connection)
+    {
+        await using var command = new NpgsqlCommand("SELECT datname FROM pg_database WHERE datallowconn ORDER BY datname", connection);
+        await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+
+        List<string> databases = [];
+        while (await reader.ReadAsync())
+        {
+            databases.Add(reader.GetString(0));
+        }
+
+        return databases;
     }
 
     private static async Task<NpgsqlConnection> OpenAsync(string connectionString)
