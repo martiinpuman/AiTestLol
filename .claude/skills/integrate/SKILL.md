@@ -45,15 +45,47 @@ source scripts/dev-env.sh && ./scripts/verify.sh
 Record the **verbatim summary and the executed-test count**. A PASS with a test count
 equal to the previous task's is a PASS that measured nothing new.
 
-## 4. Merge
+## 4. Merge — through the pull request
 
 ```
-git checkout claude/multi-tenant-saas-erp-pv2nap
-git merge --no-ff task/<ID> -m "merge(<ID>): <what it delivered>"
-git push -u origin claude/multi-tenant-saas-erp-pv2nap
+git -C <worktree> merge claude/multi-tenant-saas-erp-pv2nap   # develop into the branch
+# run the gate here, then:
+git -C <worktree> push -u origin task/<ID>
 ```
 
-Never force-push. Never push to any other branch.
+Then merge the PR itself with `mcp__github__merge_pull_request`, merge-commit method.
+
+Never rebase a pushed branch, never force-push, never push to `main`. A local
+merge-and-push closes the PR only by ancestry and leaves no merge event on it; the
+review trail is what makes the merge auditable.
+
+## 4b. Transcribe the reviewer's routing list **before** you merge
+
+A reviewer ends with items routed to other roles. **Every one of them becomes a
+backlog row or a message to that role now**, while the review is in front of you.
+
+This is not bookkeeping. B-05's third security reviewer reported three of its
+routings as being made for the *third* time: the first and second reviews had
+routed the same findings, nobody transcribed them, and each reviewer rediscovered
+and re-reported them at full cost. One was a cluster on which a reviewer had made
+the application role `SUPERUSER` and watched the migration apply without complaint.
+
+A routing that lives only in a review expires when the review scrolls out of the
+transcript. If the item needs design, message the architect; if it needs a task,
+add a `FOLLOWUP-###` row naming the review and PR it came from; if it belongs to an
+existing row, edit that row. Then merge.
+
+## 4c. Do not remove a worktree you may still want the agent for
+
+`git worktree remove` on an agent's worktree makes that agent **unresumable** —
+"its worktree no longer exists" — and its context is gone with it. It cost a resume
+today: the branch was locked by a finished agent's worktree, the worktree was force-
+removed to free it, and the follow-up then had to be dispatched cold to an agent with
+no history of the task.
+
+Free a branch the cheap way instead: create your merge worktree from the branch you
+need and leave the agent's alone, or do the work on a detached checkout. Remove an
+agent's worktree only once its task is merged and closed.
 
 ## 5. Leave it consistent — all five, every time
 

@@ -82,7 +82,7 @@ ADR-0007 §11 gives two backup mechanisms: continuous cluster-level point-in-tim
 
 **Q. How long should a signed-in session last in a product holding ledgers and payment data?**
 
-ADR-0029 §3 and ADR-0009 rule 3 currently set **8-hour sliding, 12-hour absolute, revalidated
+ADR-0009 rule 3, and the identity ADR now under review on `task/ARCH-IDENTITY`, currently set **8-hour sliding, 12-hour absolute, revalidated
 every 30 minutes** — meaning an idle user stays signed in for 8 hours, nobody stays signed in past
 12 regardless of activity, and a revoked role or suspended tenant takes effect within 30 minutes
 even inside a live Blazor circuit.

@@ -60,7 +60,12 @@ Minimum coverage per module:
 
 ## 5. Architecture fitness tests
 
-One project, `tests/Aurora.Architecture.Tests`, reflecting over compiled assemblies (ArchUnitNET) plus a few Roslyn-based source rules. It runs in under 30 seconds and needs no database, so it is cheap enough to run on every save.
+One project, `tests/Aurora.Architecture.Tests`. Rules whose subject is **compiled code** read IL metadata with the in-box `System.Reflection.Metadata`; rules whose subject is the **project graph** parse `.csproj` and `packages.lock.json` directly, because an *unused* forbidden reference exists only there. **ADR-0030** records that mechanism and withdraws ArchUnitNET, which ADR-0020 had chosen and which has no consumer. Choosing a compiler API for a future source-level rule (§5.2 M4, or a `.razor` rule) is a decision for the ADR that introduces that rule.
+
+Budget: under 30 seconds, and no database, so it is cheap enough to run on every save. Two conventions come with the mechanism and apply to every rule below:
+
+- **Every rule reports what it examined** (`SubjectsExamined` and `SubjectKind`) and is asserted against a floor, so a rule cannot pass having inspected nothing — the difference between "all good" and "nothing ran".
+- **A rule that is inert because its subject does not exist yet is listed in the inventory** with the task that brings its subject, and carries a guard that fails when the subject appears. An inert rule that nobody wakes up is a rule that was never written.
 
 ### 5.1 Layer rules
 
@@ -123,7 +128,7 @@ wake-up cannot fire.
 
 | Id | Rule |
 |---|---|
-| F1 | No `double` or `float` field, property, parameter or return type in any `*.Domain`, `*.Application` or `*.Contracts` assembly |
+| F1 | No `double` or `float` **anywhere in the assemblies built from `src/`** — not as a field, property, parameter or return type, and not as a local, a cast or a floating-point instruction inside a method body. The body half is not decoration: `../reviews/B-03.md` m-1 was a `decimal`-in/`decimal`-out method that computed through a `double` local, which a signature-level rule cannot see. The rule's exact population is stated in the project's README |
 | F2 | Every `Money`-typed property maps to `numeric(19,4)` + `char(3)`; unit prices to `numeric(19,6)`; exchange rates to `numeric(19,10)` (asserted over the built EF model) |
 | F3 | `JournalEntry` and `JournalEntryLine` expose no public setter and no delete path; the EF model marks them append-only |
 | F4 | Every monetary arithmetic result in domain code is produced by `Money` operators, never by raw `decimal` arithmetic on an amount extracted from a `Money` |
