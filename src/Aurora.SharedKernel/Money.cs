@@ -64,13 +64,42 @@ public readonly record struct Money : IComparable<Money>
     public static Money Zero(Currency currency) => new(0m, currency);
 
     /// <summary>Whether the amount is exactly nothing.</summary>
-    public bool IsZero => Amount == 0m;
+    /// <remarks>
+    /// Like every other member here, this refuses an amount that names no currency rather than
+    /// answering for it. A <see langword="default"/> <see cref="Money"/> is not a valid zero, and
+    /// reading it as one would let <c>if (discount.IsZero)</c> quietly skip an unassigned field.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The amount names no currency.</exception>
+    public bool IsZero
+    {
+        get
+        {
+            AssertSpecified();
+            return Amount == 0m;
+        }
+    }
 
     /// <summary>Whether the amount is above zero.</summary>
-    public bool IsPositive => Amount > 0m;
+    /// <exception cref="InvalidOperationException">The amount names no currency.</exception>
+    public bool IsPositive
+    {
+        get
+        {
+            AssertSpecified();
+            return Amount > 0m;
+        }
+    }
 
     /// <summary>Whether the amount is below zero, as a credit note or a reversal is.</summary>
-    public bool IsNegative => Amount < 0m;
+    /// <exception cref="InvalidOperationException">The amount names no currency.</exception>
+    public bool IsNegative
+    {
+        get
+        {
+            AssertSpecified();
+            return Amount < 0m;
+        }
+    }
 
     /// <summary>Adds two amounts in the same currency.</summary>
     /// <exception cref="CurrencyMismatchException">The currencies differ.</exception>

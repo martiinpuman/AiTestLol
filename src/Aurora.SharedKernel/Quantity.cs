@@ -53,13 +53,43 @@ public readonly record struct Quantity : IComparable<Quantity>
     public static Quantity Zero(UnitOfMeasure unit) => new(0m, unit);
 
     /// <summary>Whether the quantity is exactly nothing.</summary>
-    public bool IsZero => Amount == 0m;
+    /// <remarks>
+    /// Like every other member here, this refuses a quantity that names no unit rather than
+    /// answering for it. A <see langword="default"/> <see cref="Quantity"/> is not a valid zero,
+    /// and reading it as one would let <c>if (received.IsZero)</c> quietly skip an unassigned
+    /// field.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The quantity names no unit.</exception>
+    public bool IsZero
+    {
+        get
+        {
+            AssertSpecified();
+            return Amount == 0m;
+        }
+    }
 
     /// <summary>Whether the quantity is above zero.</summary>
-    public bool IsPositive => Amount > 0m;
+    /// <exception cref="InvalidOperationException">The quantity names no unit.</exception>
+    public bool IsPositive
+    {
+        get
+        {
+            AssertSpecified();
+            return Amount > 0m;
+        }
+    }
 
     /// <summary>Whether the quantity is below zero, as a return or a stock issue is.</summary>
-    public bool IsNegative => Amount < 0m;
+    /// <exception cref="InvalidOperationException">The quantity names no unit.</exception>
+    public bool IsNegative
+    {
+        get
+        {
+            AssertSpecified();
+            return Amount < 0m;
+        }
+    }
 
     /// <summary>Adds two quantities in the same unit.</summary>
     /// <exception cref="UnitOfMeasureMismatchException">The units differ.</exception>

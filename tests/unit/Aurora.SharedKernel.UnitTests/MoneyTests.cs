@@ -121,6 +121,26 @@ public sealed class MoneyTests
         Should.Throw<InvalidOperationException>(() => -uninitialized);
     }
 
+    /// <summary>
+    /// The three questions an unassigned amount was still willing to answer.
+    /// </summary>
+    /// <remarks>
+    /// <c>default(Money).IsZero</c> used to be <see langword="true"/>, so
+    /// <c>if (discount.IsZero) return total;</c> silently skipped an unassigned field instead of
+    /// throwing — the type's own thesis inverted, in the shape that leaves no stack trace. An
+    /// amount naming no currency is not a valid zero; it is not an amount at all (review B-03,
+    /// finding m-2).
+    /// </remarks>
+    [Fact]
+    public void Asking_a_default_Money_about_its_sign_throws_rather_than_calling_it_zero()
+    {
+        Money uninitialized = default;
+
+        Should.Throw<InvalidOperationException>(() => uninitialized.IsZero);
+        Should.Throw<InvalidOperationException>(() => uninitialized.IsPositive);
+        Should.Throw<InvalidOperationException>(() => uninitialized.IsNegative);
+    }
+
     [Fact]
     public void ToString_names_the_currency_and_does_not_depend_on_the_current_culture()
     {

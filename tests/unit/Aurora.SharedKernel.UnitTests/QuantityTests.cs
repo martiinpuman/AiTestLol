@@ -185,6 +185,9 @@ public sealed class QuantityTests
         Should.Throw<InvalidOperationException>(() => default(Quantity) * 2m);
         Should.Throw<InvalidOperationException>(() => default(Quantity) * new Money(1m, Nzd));
         Should.Throw<InvalidOperationException>(() => default(Quantity).Abs());
+        Should.Throw<InvalidOperationException>(() => default(Quantity).IsZero);
+        Should.Throw<InvalidOperationException>(() => default(Quantity).IsPositive);
+        Should.Throw<InvalidOperationException>(() => default(Quantity).IsNegative);
     }
 
     [Fact]
