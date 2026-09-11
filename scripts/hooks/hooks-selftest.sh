@@ -68,6 +68,8 @@ must_allow $BASH_HOOK "$(json_cmd 'git log --oneline -20')"                     
 must_allow $BASH_HOOK "$(json_cmd 'git push -u origin claude/multi-tenant-saas-erp-pv2nap 2>&1 | tail -3')" 'a push whose output is piped'
 must_allow $BASH_HOOK "$(json_cmd 'git push origin task/B-09 && echo done')"              'a push followed by another command'
 must_allow $BASH_HOOK "$(json_cmd 'git push -u origin task/B-09 > /tmp/push.log 2>&1')"   'a push redirected to a file'
+must_allow $BASH_HOOK "$(json_cmd 'git worktree remove /tmp/review-B-04 --force && git push -u origin task/B-09')" 'a --force elsewhere in the same command'
+must_allow $BASH_HOOK "$(json_cmd 'git push -u origin task/B-09 && rm -f /tmp/x.force')" 'the word force after the push'
 
 # A commit message or file body that *describes* a blocked command is not one. Both
 # of these refused a legitimate commit before heredoc bodies were stripped.

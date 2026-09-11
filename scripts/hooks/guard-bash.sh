@@ -28,13 +28,16 @@ block() { printf 'AURORA-BASH-%s: %s\n' "$1" "$2" >&2; exit 2; }
 flat=$(printf '%s' "$cmd" | tr '\n' ' ')
 
 if [[ "$flat" =~ (^|[\;\&\|\(])[[:space:]]*git[[:space:]]+push ]]; then
-    if [[ "$flat" =~ --force([^-]|$) || "$flat" =~ --force-with-lease || "$flat" =~ git[[:space:]]+push[[:space:]]+(-[a-zA-Z]*f) ]]; then
+    # Isolate the push invocation itself: everything from `git push` up to the first
+    # shell operator. Every rule below reads this segment and not the whole command
+    # line. Two false positives came from not doing that: `git push … | tail -3` read
+    # the refspec as `tail`, and a `git worktree remove --force` elsewhere in the same
+    # compound command was reported as a force-push.
+    seg=$(printf '%s' "$flat" | sed -E 's/.*git[[:space:]]+push[[:space:]]*//' | sed -E 's/[|;&><].*//')
+
+    if [[ "$seg" =~ --force([^-]|$) || "$seg" =~ --force-with-lease || "$seg" =~ (^|[[:space:]])-[a-zA-Z]*f([[:space:]]|$) ]]; then
         block 01 "force-push is a hard limit in CLAUDE.md ('never force-push, never rewrite history'). If the remote rejected a push, merge or rebase locally and push a new commit."
     fi
-    # Isolate the push invocation itself: everything from `git push` up to the first
-    # shell operator. Without the cut, `git push -u origin br | tail -3` reads the
-    # refspec as `tail` and blocks a legitimate push — it did, on the first real use.
-    seg=$(printf '%s' "$flat" | sed -E 's/.*git[[:space:]]+push[[:space:]]*//' | sed -E 's/[|;&><].*//')
     # Drop flags; what remains is [remote] [refspec...].
     mapfile -t words < <(printf '%s' "$seg" | tr ' ' '\n' | grep -vE '^-' | grep -v '^$')
     if (( ${#words[@]} >= 2 )); then
