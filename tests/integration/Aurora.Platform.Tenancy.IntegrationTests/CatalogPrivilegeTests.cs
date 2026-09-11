@@ -14,7 +14,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// path can read and write registry rows and can change nothing about the schema that decides
 /// where every tenant's data lives.
 /// </remarks>
-[Collection(CatalogDatabaseCollection.Name)]
+[Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
 public sealed class CatalogPrivilegeTests
 {

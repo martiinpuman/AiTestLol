@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
 using Microsoft.EntityFrameworkCore;
@@ -14,7 +13,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// Acceptance criteria 1 and 2 of B-05: the migrated schema is <c>catalog</c> per ADR-0007 §9.2,
 /// and the EF migrations that produce it apply, re-apply and are the ones the code knows about.
 /// </summary>
-[Collection(CatalogDatabaseCollection.Name)]
+[Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
 public sealed class CatalogSchemaTests
 {

@@ -11,12 +11,24 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>This is the one conventionally registered context</b> (ADR-0003 rule 3, ADR-0007 §4.2). It
-/// has a public constructor and is added with <c>AddDbContext</c> by
+/// <b>This is the one conventionally registered context</b> (ADR-0003 rule 3, ADR-0007 §4.2): it is
+/// added with <c>AddDbContext</c> by
 /// <see cref="CatalogServiceCollectionExtensions.AddCatalogDatabase"/>, because it needs no tenant
-/// to be resolved: it is where tenants are resolved <em>from</em>. Every tenant context is the
-/// opposite — internal constructor, never registered, obtained only through
-/// <c>ITenantDbContextFactory&lt;T&gt;</c> with a <c>TenantScope</c> in hand (B-06).
+/// to be resolved — it is where tenants are resolved <em>from</em>, so demanding a
+/// <c>TenantScope</c> to reach it would be circular. Every tenant context is the opposite:
+/// obtained only through <c>ITenantDbContextFactory&lt;T&gt;</c> with a <c>TenantScope</c> in hand
+/// (B-06).
+/// </para>
+/// <para>
+/// <b>The type is nonetheless <c>internal</c>, and deliberately so.</b> "Registered conventionally"
+/// is about how it is <em>built</em>, not about who may name it: <c>AddCatalogDatabase</c> lives in
+/// this assembly, so the generic argument is in scope there and internal costs the registration
+/// nothing. Keeping it internal is what makes ADR-0007 §9.4's "no request-path query fans out
+/// across tenants" a property of the type system rather than a rule to remember — a module cannot
+/// write a query over the tenant registry at all. Routing rows are read by the resolver (B-06),
+/// which <c>modules.md</c> §4 makes the only code allowed to build a connection string. The two
+/// test assemblies see it through <c>InternalsVisibleTo</c>, and
+/// <c>CatalogContextAccessibilityTests</c> in the unit suite fails if it ever becomes public.
 /// </para>
 /// <para>
 /// <b>It holds no tenant business data</b> (ADR-0007 §9.3): a test over the model, and one over

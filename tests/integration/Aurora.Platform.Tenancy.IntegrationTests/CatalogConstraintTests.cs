@@ -15,7 +15,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// already refuse the bad value, the row is written with SQL as <c>aurora_app</c> — the point is
 /// that the database refuses it even when code did not.
 /// </summary>
-[Collection(CatalogDatabaseCollection.Name)]
+[Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
 public sealed class CatalogConstraintTests
 {

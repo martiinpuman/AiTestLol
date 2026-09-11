@@ -16,7 +16,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// watches the guard fail — the deliberately-violating fixture testing-strategy.md §1 rule 4 asks
 /// every fitness test to ship with.
 /// </summary>
-[Collection(CatalogDatabaseCollection.Name)]
+[Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
 public sealed class CatalogHoldsNoTenantBusinessDataTests
 {

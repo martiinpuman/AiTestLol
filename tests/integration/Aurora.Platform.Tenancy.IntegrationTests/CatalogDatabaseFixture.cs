@@ -33,13 +33,15 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// </remarks>
 public sealed class CatalogDatabaseFixture : IAsyncLifetime
 {
+    /// <summary>The image CLAUDE.md pins for every integration test.</summary>
+    public const string PostgresImage = "postgres:17-alpine";
+
     public const string CatalogDatabaseName = "aurora_catalog";
     public const string AdminRole = "aurora_admin";
     public const string MigratorRole = "aurora_migrator";
     public const string AppRole = "aurora_app";
 
-    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
+    private readonly PostgreSqlContainer _container = new PostgreSqlBuilder(PostgresImage)
         .WithTmpfsMount("/var/lib/postgresql/data")
         .WithCommand("-c", "fsync=off", "-c", "full_page_writes=off", "-c", "synchronous_commit=off", "-c", "max_connections=200")
         .Build();
@@ -90,16 +92,21 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     public async Task DisposeAsync() => await _container.DisposeAsync();
 
     /// <summary>A context over <see cref="AppConnectionString"/>: what a request would get.</summary>
-    public CatalogDbContext OpenAsApp() => CreateContext(AppConnectionString);
+    /// <remarks>
+    /// Internal, because <c>CatalogDbContext</c> is internal to <c>Aurora.Platform.Tenancy</c> and
+    /// this assembly only sees it through <c>InternalsVisibleTo</c>. Widening the context to public
+    /// so that a test helper could be public would invert the decision: see the type's remarks.
+    /// </remarks>
+    internal CatalogDbContext OpenAsApp() => CreateContext(AppConnectionString);
 
     /// <summary>A context over <see cref="MigratorConnectionString"/>: what the migration runner gets.</summary>
-    public CatalogDbContext OpenAsMigrator() => CreateContext(MigratorConnectionString);
+    internal CatalogDbContext OpenAsMigrator() => CreateContext(MigratorConnectionString);
 
     public Task<NpgsqlConnection> OpenAppConnectionAsync() => OpenAsync(AppConnectionString);
 
     public Task<NpgsqlConnection> OpenMigratorConnectionAsync() => OpenAsync(MigratorConnectionString);
 
-    public static CatalogDbContext CreateContext(string connectionString)
+    internal static CatalogDbContext CreateContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<CatalogDbContext>();
         CatalogDbContextOptions.Configure(options, connectionString);

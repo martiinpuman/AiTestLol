@@ -15,7 +15,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// objects included — which is also where EF Core is shown to accept the generic
 /// <c>EntityIdConverter</c> in materialisation and in a <c>WHERE</c>.
 /// </summary>
-[Collection(CatalogDatabaseCollection.Name)]
+[Collection(CatalogDatabaseSuite.Name)]
 [Trait("Category", "Integration")]
 public sealed class CatalogRoundTripTests
 {
