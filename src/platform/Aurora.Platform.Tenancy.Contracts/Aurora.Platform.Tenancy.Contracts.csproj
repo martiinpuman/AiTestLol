@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tier 1 - the public contract of the Tenancy platform module (docs/architecture/modules.md 4).
+
+    Everything another module may know about tenancy lives here: the identifiers and states of the
+    tenant registry (B-05), and from B-06 onward TenantScope, ITenantConnectionResolver and
+    ITenantDbContextFactory<T>. The implementation, including the catalog DbContext, is internal to
+    Aurora.Platform.Tenancy.
+
+    A *.Contracts project references Aurora.SharedKernel and Aurora.Documents.Canonical and nothing
+    else (solution-layout.md 2, fitness rule L2). No EF, no Npgsql, no DI, no logging.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Platform.Tenancy.Contracts</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\Aurora.SharedKernel\Aurora.SharedKernel.csproj" />
+  </ItemGroup>
+
+</Project>
