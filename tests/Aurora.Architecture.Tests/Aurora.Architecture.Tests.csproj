@@ -43,15 +43,4 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!--
-      Fixtures/ViolatingProjects holds .csproj files that deliberately declare forbidden project
-      references. They are input data for the project-graph rules, parsed as XML. They are not in
-      Aurora.sln and nothing references them, so they are never built; this Remove/None pair keeps
-      them out of this project's own compilation and makes them visible in an IDE.
-    -->
-    <Compile Remove="Fixtures\ViolatingProjects\**" />
-    <None Include="Fixtures\ViolatingProjects\**" />
-  </ItemGroup>
-
 </Project>
