@@ -57,7 +57,7 @@ public readonly partial record struct PackageId
     /// <inheritdoc/>
     public override string ToString() => _value ?? "<unspecified package id>";
 
-    [GeneratedRegex(@"^[a-z0-9]+(?:\.[a-z0-9]+)+$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[a-z0-9]+(?:\.[a-z0-9]+)+\z", RegexOptions.CultureInvariant)]
     private static partial Regex Shape();
 
     private static InvalidOperationException Unassigned() =>

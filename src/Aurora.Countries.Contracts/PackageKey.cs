@@ -79,7 +79,7 @@ public readonly partial record struct PackageKey
     /// <inheritdoc/>
     public override string ToString() => _value ?? "<unspecified package key>";
 
-    [GeneratedRegex("^[a-z][a-z0-9_]*$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[a-z][a-z0-9_]*\z", RegexOptions.CultureInvariant)]
     private static partial Regex Shape();
 
     private static InvalidOperationException Unassigned() =>

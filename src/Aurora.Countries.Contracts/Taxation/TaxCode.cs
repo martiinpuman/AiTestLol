@@ -53,7 +53,7 @@ public readonly partial record struct TaxCode
     /// <inheritdoc/>
     public override string ToString() => _value ?? "<unspecified tax code>";
 
-    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._\-]*$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[A-Za-z0-9][A-Za-z0-9._\-]*\z", RegexOptions.CultureInvariant)]
     private static partial Regex Shape();
 
     private static InvalidOperationException Unassigned() =>

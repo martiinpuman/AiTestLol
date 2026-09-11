@@ -137,9 +137,9 @@ public sealed partial class Jurisdiction : IEquatable<Jurisdiction>
     public override string ToString() =>
         $"{CountryCode}/{DefaultCurrencyCode} [{string.Join(", ", Locales.Select(l => l.Name))}]";
 
-    [GeneratedRegex("^[A-Za-z]{2}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[A-Za-z]{2}\z", RegexOptions.CultureInvariant)]
     private static partial Regex CountryCodeShape();
 
-    [GeneratedRegex("^[A-Za-z]{3}$", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"^[A-Za-z]{3}\z", RegexOptions.CultureInvariant)]
     private static partial Regex CurrencyCodeShape();
 }

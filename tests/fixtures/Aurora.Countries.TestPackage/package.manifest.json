@@ -1,0 +1,22 @@
+{
+  "id": "aurora.country.testland",
+  "key": "tl",
+  "displayName": "Testland",
+  "version": "1.4.0",
+  "coreContractRange": "[1.0.0, 2.0.0)",
+  "jurisdiction": {
+    "countryCode": "NZ",
+    "defaultCurrency": "NZD",
+    "locales": ["en-NZ"]
+  },
+  "capabilities": [
+    "TaxRuleSet",
+    "IdentifierValidator"
+  ],
+  "schema": "pkg_tl",
+  "dependsOn": [],
+  "conflictsWith": [],
+  "localeOnly": false,
+  "publisher": "Aurora",
+  "trust": "Unsigned"
+}
