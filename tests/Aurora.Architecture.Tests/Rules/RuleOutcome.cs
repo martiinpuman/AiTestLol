@@ -31,6 +31,12 @@ internal enum ViolationSite
 
     /// <summary>A reference declared in a project file or its lock file.</summary>
     Declaration,
+
+    /// <summary>An attribute on a type, read by reflection - or its absence.</summary>
+    Annotation,
+
+    /// <summary>A statement in the SQL a migration generates.</summary>
+    Statement,
 }
 
 /// <summary>One violation: what broke the rule, where the mechanism saw it, and the detail.</summary>

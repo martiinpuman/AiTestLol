@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
 using Aurora.Architecture.Tests.Fixtures;
+using Aurora.Architecture.Tests.MigrationSafety;
 using Aurora.Architecture.Tests.Rules;
 using Aurora.Architecture.Tests.Solution;
 using Shouldly;
@@ -55,6 +56,12 @@ public sealed class RuleInventoryTests
             static () => DomainPurityRule.Check(SolutionLayout.ProductionProjects, SolutionLayout.ProductionAssemblies)),
         (ProjectLayeringRule.Id, ProjectLayeringRule.Name, 3,
             static () => ProjectLayeringRule.Check(SolutionLayout.ProductionProjects)),
+        // Floor 1: the one production migration on the branch that added these rules (B-09,
+        // InitialCatalog). MigrationRuleTests holds the statement count to its own floor.
+        (MigrationAnnotationRule.Id, MigrationAnnotationRule.Name, 1,
+            static () => MigrationAnnotationRule.Check(MigrationPopulation.Production)),
+        (MigrationSafetyRule.Id, MigrationSafetyRule.Name, 1,
+            static () => MigrationSafetyRule.Check(MigrationPopulation.Production)),
     ];
 
     /// <summary>

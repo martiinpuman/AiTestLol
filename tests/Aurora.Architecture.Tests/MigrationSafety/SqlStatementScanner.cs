@@ -57,7 +57,8 @@ internal sealed record SqlScanReport(ImmutableArray<SqlStatement> Statements)
 /// </para>
 /// <para>
 /// <b>What it refuses to read, and reports as unscannable rather than clean:</b> dynamic SQL
-/// (<c>EXECUTE</c> of anything but a trigger's <c>FUNCTION</c>/<c>PROCEDURE</c> binding); a call
+/// (<c>EXECUTE</c> of anything but a trigger's <c>FUNCTION</c>/<c>PROCEDURE</c> binding or the
+/// <c>EXECUTE</c> privilege of a <c>GRANT</c>/<c>REVOKE</c>); a call
 /// to a schema-qualified function or procedure outside <c>pg_catalog</c>, whose body was written
 /// elsewhere; and any text the tokenizer cannot finish. A function <i>defined</i>, <i>dropped</i>,
 /// bound to a trigger or named as a column default is a reference, not a call, and is not one of
@@ -128,7 +129,7 @@ internal static class SqlStatementScanner
             into.Add(new SqlStatement(
                 location,
                 Head: statement[0].Kind == SqlTokenKind.Word ? statement[0].Text.ToUpperInvariant() : string.Empty,
-                Excerpt: string.Join(' ', statement.Take(8).Select(static token => token.Display)),
+                Excerpt: Excerpt(statement),
                 isTopLevel,
                 hasBody,
                 findings));
@@ -220,7 +221,7 @@ internal static class SqlStatementScanner
                 yield return Destructive("ADD COLUMN … NOT NULL without a DEFAULT");
             }
 
-            if (token.Is("EXECUTE") && !(next is not null && (next.Is("FUNCTION") || next.Is("PROCEDURE"))))
+            if (token.Is("EXECUTE") && !IsStaticExecute(next))
             {
                 yield return Unscannable("EXECUTE runs SQL built at run time, which the scanner does not read");
             }
@@ -317,6 +318,14 @@ internal static class SqlStatementScanner
         return notNull && !hasDefault;
     }
 
+    /// <summary>
+    /// <c>EXECUTE FUNCTION</c>/<c>EXECUTE PROCEDURE</c> binds a trigger, and <c>EXECUTE ON</c> or
+    /// <c>EXECUTE,</c> is the privilege in a <c>GRANT</c>/<c>REVOKE</c>; every other <c>EXECUTE</c>
+    /// runs text the scanner does not have.
+    /// </summary>
+    private static bool IsStaticExecute(SqlToken? next) =>
+        next is not null && (next.Is("FUNCTION") || next.Is("PROCEDURE") || next.Is("ON") || next.IsPunctuation(","));
+
     /// <summary><c>schema.name(</c> where the schema is not <c>pg_catalog</c> and the word before is not a reference context.</summary>
     private static bool IsCallOfAQualifiedFunction(ImmutableArray<SqlToken> t, int i)
     {
@@ -345,6 +354,21 @@ internal static class SqlStatementScanner
     private static SqlFinding Destructive(string what) => new(SqlFindingKind.Destructive, what);
 
     private static SqlFinding Unscannable(string what) => new(SqlFindingKind.Unscannable, what);
+
+    /// <summary>The first few tokens, with punctuation attached the way it was written.</summary>
+    private static string Excerpt(ImmutableArray<SqlToken> statement)
+    {
+        var text = new System.Text.StringBuilder();
+
+        foreach (SqlToken token in statement.Take(8))
+        {
+            bool attach = token.IsPunctuation(".") || token.IsPunctuation(",") || token.IsPunctuation(")")
+                || text.Length == 0 || text[^1] == '.' || text[^1] == '(';
+            text.Append(attach ? string.Empty : " ").Append(token.Display);
+        }
+
+        return text.ToString();
+    }
 
     private static string Excerpt(string sql)
     {
