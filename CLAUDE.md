@@ -110,7 +110,7 @@ a test that cannot fail · a **demonstration** that cannot fail · a floor set b
 detects · a correction that re-introduces what it fixed · a test that passes **for the wrong reason** ·
 a check that verifies **presence** where only **effect** matters · a parser that reads a subset of its
 input and reports as though it read all of it · **a fix that silently invalidates the evidence for the
-claim it was fixing.**
+claim it was fixing** · **a negative existence claim that rots when somebody does the right thing.**
 
 That last one is the newest and the least obvious, so here is the case. A comparison was widened to
 count a pinned-but-absent key as a finding — the correct fix. One row of the fourteen-row evidence
@@ -124,6 +124,22 @@ quietly rotted.
 handback which ones you re-ran and what each printed.** A table of executed results is evidence only
 for the version of the code that produced it. Stale evidence is worse than no evidence, because its
 shape invites trust.
+
+The ninth was earned the same week, and the orchestrator caused it. An ADR observed that a requirement
+had been deferred to a backlog row that did not mention it, and wrote: *"`docs/BACKLOG.md` contains zero
+occurrences of 'collation' … until it holds such a row, nothing carries this."* That was true, useful,
+and the right thing to write. A row was then added — **because of that finding** — and the sentence
+became false without anything in the document changing.
+
+**Name the artefact that carries a requirement, not the absence of one.** A negative existence claim
+about the repository is the one kind of claim that rots when somebody does the **right** thing, and it
+rots inside documents whose whole purpose is to be trusted about what is and is not carried. Where
+something genuinely is uncarried, pin the claim to a commit — *"referenced nowhere in `tests/` at
+`2f36550`"* — so a reader can check its staleness instead of assuming it.
+
+And when you find one, sweep for its siblings. The architect that fixed this one searched its four ADRs
+for the same phrasing, found none, then found **two present-tense claims about code** that were fragile
+the same way and pinned both. One instance is a typo; the shape is the finding.
 
 Two more, learned the same way:
 - **`decimal` is exact until it is not, and it does not tell you.** Multiplication and division round
