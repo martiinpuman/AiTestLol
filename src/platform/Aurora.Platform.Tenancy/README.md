@@ -434,7 +434,13 @@ the fixture's, with the lower-case check alone. `pg.ÜBER.internal` is **not** t
 `E` and `R` are ASCII upper case and fold under both (an earlier version of this paragraph cited
 it; it does not reproduce). The shape check refuses both spellings under both collations, and the
 entity's grammar and the constraint's regular expression are held equal over 25 cases by executing
-both. An internationalised name is stored as punycode, which is what DNS carries. An IPv6 literal
+both — on the fixture's `en_US.utf8` catalog and on a `C`-collated one (`cases: 25; agree under
+en_US.utf8: 25; agree under C: 25`), because a POSIX class such as `[[:alpha:]]` follows the
+database's `lc_ctype` while an explicit range is matched by code point, so the expression uses
+ranges only and the migration's remarks say why. The catalog's `lc_ctype` is pinned nowhere
+(`FOLLOWUP-061`). `TenantHost` keeps a private declaration of essentially the same grammar for
+`tenant_host.host`: two declarations, and nothing compares them — the fitness rule ADR-0043 chose
+for the analogous pair is a separate row. An internationalised name is stored as punycode, which is what DNS carries. An IPv6 literal
 (`::1`, `[::1]`) is outside the grammar pending the architect: ADR-0036 §3 reasons about folding
 one, the row has never accepted one, and admitting it is a decision about what a cluster endpoint
 may be, not a spelling rule.
@@ -471,9 +477,26 @@ ADR-0036 §2.4 splits the demonstration in three, and this module carries all th
   that has both, so the assertion stays a property of the resolver's output and a `Provisioning`
   row, the one B-07.1's adoption rule acts on, is compared rather than skipped. It compares every
   pair with the same comparator, prints tenants, pairs compared and collisions, and fails on zero
-  of either. `ResolvedEndpoint.Parse` refuses a multi-host value outright (ADR-0036 §6: a list is
-  not one endpoint), so a row carrying one makes D2 error rather than pass. It is a regression
-  guard, not a proof: once the index and the checks are in place no seed can construct a collision
+  of either. **What the comparison backstops, stated exactly** (PR #18, third review): `Parse`
+  refuses the two shapes ADR-0036 §6 names — a multi-host list and a Unix-socket directory — and
+  a row it cannot project is reported as unprojectable and fails the scan on its own; equality
+  folds case and one trailing dot, the two spellings of one name a resolver treats as one;
+  everything else non-canonical (a leading or doubled dot, a hyphen at a label's edge, a non-ASCII
+  letter) is compared as given and is the shape check's to refuse. Executed with the shape check
+  removed from `Up` only, so all three are admitted:
+
+  ```
+  variant 3 as a multi-host list …: ADMITTED
+  variant 3 with a trailing dot …: ADMITTED
+  variant 3 as a socket directory …: ADMITTED
+  tenants: 5 non-deleted; 3 resolved …; unprojectable: 2; pairs compared: 3; collisions: 1
+    t-f8473afdfc4e (Active): 'pg-05eb98736c77.internal,pg-decoy.internal' is a multi-host list, which is not one endpoint …
+    t-cbe953ddec85 (Active): '/var/run/postgresql' is a Unix-socket directory, which is not one endpoint …
+    t-326db14263e1 (Active) and t-bd58b4dbadf0 (Active) -> pg-05eb98736c77.internal:5432/aurora_t_t_326db14263e1
+  ```
+
+  — the list and the socket directory error, the trailing dot collides. D2 is a regression guard,
+  not a proof: once the index and the checks are in place no seed can construct a collision
   through the normal write path.
 - **D3, the one-shot demonstration, recorded rather than standing** — the fix removed the
   evidence. D2 run before `ux_database_cluster_host_port` existed, against a catalog seeded with
