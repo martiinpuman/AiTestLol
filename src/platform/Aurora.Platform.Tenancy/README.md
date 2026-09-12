@@ -210,6 +210,60 @@ with B-10's `Aurora.TestKit`, then owes:
 
 ---
 
+## What B-06.1a adds: the tenancy kernel types and the identity stamp
+
+[`Aurora.Platform.Tenancy.Contracts`](../Aurora.Platform.Tenancy.Contracts) gains the types every
+consumer of tenancy shares (ADR-0027 §1; ADR-0007 §3.4, §7.1, §7.5):
+
+| Type | What it is |
+|---|---|
+| `TenantAccess` | The abstract proof of tenant identity: internal constructor, `TenantId`, `TenantKey`. Base of `TenantScope` (application path) and, when its row lands, `TenantDatabaseHandle` (DDL path) |
+| `TenantScope : TenantAccess` | Sealed; `ResidencyRegion`, `SchemaVersion`, `Packages`, `Reason`, `IsActive`, `IAsyncDisposable`. **The type surface only** — see below |
+| `TenantAccessReason` | Exactly the six reasons ADR-0007 §3.4 names: `Request`, `Job`, `Outbox`, `Provisioning`, `Migration`, `OperatorSupport` |
+| `SchemaVersion` | A comparable ordinal. Its struct default is *unspecified*, not version 0, and comparing one throws — the §7.5 gate must never compare a version nobody read |
+| `CoreSchemaVersion` | `.Current` and `.MinimumSupported`, both `0` until the first core migration lands (B-07.2 raises `Current` in the same commit); `MinimumSupported <= Current` is asserted here, the two honesty tests are B-08.3's |
+| `InstalledPackages`, `InstalledPackageEntry` | The immutable, one-per-package set the `Packages` property carries. The minimal shape: nothing had defined the type ADR-0007 names |
+| `TenantRoutingViolationException` | What the §4.3 check throws; carries the tenant expected, the tenant found (or none) and the database reached |
+
+**What "only `Aurora.Platform.Tenancy` may construct one" rests on** — named and tested link by link
+in `TenantAccessConstructionTests`: internal-only constructors on both types; `[InternalsVisibleTo]`
+granted to this assembly and `Aurora.Platform.Tenancy.UnitTests` only, asserted as an exact set; no
+public member anywhere in Contracts that returns a `TenantAccess` (B-06.3's
+`ITenantScopeFactory.OpenAsync` joins an empty sanctioned list by name); no parameterless constructor
+at any accessibility, tried through `Activator`, System.Text.Json and `DataContractSerializer`; and,
+for the one route no accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a
+scope that reads inactive and nameless on every property. Reflection invoking the internal
+constructor is not blocked and not claimed to be: the guarantee is a compile-time one (ADR-0007 §12.3).
+
+**Not built here, on purpose, because the backlog row says so:** the scope factory, and the lease
+that clears `IsActive` and makes a reused scope throw `TenantScopeExpiredException` (ADR-0007 §10.4).
+Both are B-06.3's. Every scope this row can construct is active, and `DisposeAsync` releases nothing,
+because nothing has been leased; the type says so where a reader would otherwise assume the lease
+exists.
+
+### `TenantIdentityStamp` — ADR-0007 §4.3, once
+
+In this assembly, internal: `CreateSql` (schema `platform`; the `only_row` singleton table with its
+check; `SELECT` granted to `aurora_app` and nothing else, so the request-path role can read the stamp
+on every physical connection and can never re-stamp a database as another tenant) and
+`AssertAsync(NpgsqlConnection, TenantId, ct)`. The assertion throws `TenantRoutingViolationException`
+for a stamp naming another tenant **and** for anything it cannot prove — no `platform` schema or
+table (the catalog, the maintenance database, a foreign database), a table with no row, an all-zero
+id — because "cannot prove it is the right tenant" and "is the wrong tenant" call for the same
+reaction. B-06.2's connection initializer, B-07.1's compensation guard, B-07.2's step 4 and B-08.1
+call this one method; none re-writes the query (ADR-0027 §2: "three hand-written copies is how they
+drift").
+
+`TenantIdentityStampTests` proves it on real PostgreSQL, the mismatch first: a database *named* for
+tenant B exactly as the provisioner would name it, stamped for A, asserted as B — refused, naming
+both tenants and the database. A check that compared `current_database()` passes that case, which
+is why the identity travels inside the data. Then the matching case for both roles that run the
+check, the unstamped table, the not-a-tenant-database case, a second row refused both ways with the
+count read back, `aurora_app` able to read and refused four write shapes with `42501`, and
+cancellation before any query.
+
+---
+
 ## Running the tests
 
 ```
