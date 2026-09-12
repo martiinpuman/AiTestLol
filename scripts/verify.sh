@@ -66,7 +66,7 @@ readonly FAIL_TAIL_LINES=40
 # Countries.Hosting 91, Platform.Tenancy 242, Architecture 135); 764 before it.
 # Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
 # B-12 440, B-03.1 761, B-19 764, B-06.1 840.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-830}"
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-850}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
