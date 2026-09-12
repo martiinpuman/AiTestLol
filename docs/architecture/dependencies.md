@@ -73,6 +73,8 @@ All entries verified **2026-09-11** against nuget.org unless noted.
 | `OpenIddict.Validation.AspNetCore` | 7.7.0 | Apache-2.0 | Token validation | ADR-0009 |
 | `OpenIddict.EntityFrameworkCore` | 7.7.0 | Apache-2.0 | OpenIddict stores in the catalog database | ADR-0009 |
 
+**Nothing in this table is needed for the bootstrap identity and authorization path.** Interactive sign-in, cookie authentication, password hashing, lockout, the Identity store interfaces, `RevalidatingServerAuthenticationStateProvider` and `CircuitHandler` all ship in the `Microsoft.AspNetCore.App` 10.0.12 shared framework — verified in this environment on 2026-09-11 (`Microsoft.Extensions.Identity.Core.dll`, `Microsoft.Extensions.Identity.Stores.dll`, `Microsoft.AspNetCore.Identity.dll`, `Microsoft.AspNetCore.Authentication.Cookies.dll`, `Microsoft.AspNetCore.Components.Server.dll`). `Microsoft.AspNetCore.Identity.EntityFrameworkCore` is listed here for the OpenIddict/public-API work and is **deliberately not referenced by `Aurora.Platform.Identity`**: it exists to provide `IdentityDbContext` over ASP.NET Core Identity's own schema, which `catalog.identity_user` + `catalog.identity_credential` deliberately is not (ADR-0029 §2). The three OpenIddict rows are for the public-API token path, which is not bootstrap scope.
+
 ### 2.4 Platform services
 
 | Package | Version | Licence | Used for | ADR |

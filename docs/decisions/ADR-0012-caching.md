@@ -1,8 +1,8 @@
 # ADR-0012 — Caching
 
-- **Status:** Accepted (2026-09-11)
+- **Status:** Accepted (2026-09-11) — §3's table gains the `IdentitySnapshot` entry defined in ADR-0029 Amendment 1 (`CatalogCacheKey.IdentitySnapshot(userId)`, 60 s, invalidated on membership change, stamp rotation and status change) and the `CatalogCacheKey.For` helper that rule 1's fitness test accepts for `c:` keys. **The key `c:member:{userId}` named in an earlier draft is withdrawn: it omitted the tenant and was a cross-tenant defect**; the decisions here are unchanged
 - **Deciders:** architect
-- **Related:** ADR-0007 (tenancy), ADR-0011 (configuration)
+- **Related:** ADR-0007 (tenancy), ADR-0011 (configuration), ADR-0029 (identity and authorization caching)
 
 ## Context
 
