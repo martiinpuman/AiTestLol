@@ -93,7 +93,7 @@ public sealed class CountryPackageCatalogueTests
         try
         {
             CountryPackageCatalogue catalogue = Ok(CountryPackageCatalogue.Scan(Ok(
-                CountryPackageHostOptions.Create(root, "Production", false, [trusted]))));
+                CountryPackageHostOptions.Create(root, "Production", false, [trusted], routesTenants: true))));
 
             catalogue.DirectoriesInspected.ShouldBe(0);
             catalogue.Available.ShouldBeEmpty();
@@ -121,7 +121,8 @@ public sealed class CountryPackageCatalogueTests
                 Path.Combine(Path.GetTempPath(), "no-such-packages-root-" + Guid.NewGuid().ToString("N")),
                 "Production",
                 false,
-                [trusted])));
+                [trusted],
+                routesTenants: true)));
 
         catalogue.IsFailure.ShouldBeTrue();
         catalogue.Error.Code.ShouldBe(HostingErrors.HostConfigurationCode);
@@ -149,7 +150,7 @@ public sealed class CountryPackageCatalogueTests
     }
 
     private static CountryPackageHostOptions Options(PackageOnDisk package, TrustedPackageKey trusted) =>
-        Ok(CountryPackageHostOptions.Create(package.Root, "Production", false, [trusted]));
+        Ok(CountryPackageHostOptions.Create(package.Root, "Production", false, [trusted], routesTenants: true));
 
     private static T Ok<T>(Result<T> result) =>
         result.IsSuccess
