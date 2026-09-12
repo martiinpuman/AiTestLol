@@ -7,6 +7,7 @@
   - **ADR-0007 §4 and §12.3** — the four layers and the fitness tests that check them are unchanged in design. What this ADR adds is the threat model they were built against, and the statement that they are **not** the control against code executing inside the process. §4 calls layers 3–4 "defence in depth"; §5 of this ADR corrects that word for the routing-identity case.
   - **ADR-0008 §9.4** — "an `AssemblyLoadContext` is not a security boundary" is correct and stands. This ADR carries it the rest of the way: what that means for tenancy specifically, which control is load-bearing instead, what residual is left, and what must demonstrate all three.
 - **Superseded by:** —
+- **Amended by:** **[ADR-0039](ADR-0039-the-admission-floor-holds-in-every-environment.md) (2026-09-12)** — §5.2's floor is **unconditional and holds in Development too**, and the sentence that conflated it with ADR-0008 §9.3's separate `AllowUnsigned` rule is corrected; the escape hatch moves to a `DevelopmentOnly` trusted key that Production refuses in the same shape. §5.6 D3 gains an explicit Development case. §5.4's sibling-assembly residual is **closed rather than accepted**: the manifest gains a hash per shipped file and the load context resolves only from that list (`FOLLOWUP-055`).
 - **Related:** ADR-0007 (tenancy), ADR-0008 (the Country Package contract), ADR-0025 (hosting and packaging), ADR-0027 (the DDL path), ADR-0031 §2 (the package reference allowlist), ADR-0034 (routing uniqueness and the stamp), `../architecture/modules.md` §4
 - **Raised by:** the security review of PR #13 (`task/B-06.1a`)
 
@@ -116,7 +117,9 @@ ADR-0007 §12.3's fitness tests, and `task/B-06.1a`'s five-link chain, are evide
 
 Since confinement is unavailable (§4), the only control is deciding what is allowed to execute at all.
 
-**A process that can route tenants loads only packages whose signature establishes `FirstParty`.** `Partner` and `Unsigned` are refused there. `AllowUnsigned` already cannot be set outside Development, and the host refuses to start rather than honour it (`CountryPackageHostOptions.Create` — built, and asserted by a configuration test).
+**A process that can route tenants loads only packages whose signature establishes `FirstParty`.** `Partner` and `Unsigned` are refused there.
+
+> **Amended by [ADR-0039](ADR-0039-the-admission-floor-holds-in-every-environment.md) §2.2 (2026-09-12).** The sentence that stood here — *"`AllowUnsigned` already cannot be set outside Development, and the host refuses to start rather than honour it"* — described a **different rule** beside this one and made this section readable as though the floor had a Development hole. It does not. **`Packages:AllowUnsigned` is refused in two independent ways:** ADR-0008 §9.3 refuses it **outside Development on any host**; this section refuses it **on any tenant-routing host in every environment, Development included**, because the floor is a property of what the process can reach and not of what it is called. A host that routes tenants and sets `AllowUnsigned` refuses to start in Development exactly as in Production. The environment-scoped escape hatch moves to the *credential*: a trusted key marked `DevelopmentOnly`, which Production refuses in the same shape (ADR-0039 §3). Both refusals live in `CountryPackageHostOptions.Create` and are asserted by configuration tests.
 
 This **narrows where** ADR-0008 §9.3's trust levels take effect; it does not remove them. A `Partner` key may still be configured, a partner package may still be signed, inspected and listed. What this ADR decides is that such a package is not *loaded* by a tenant-routing process until §5.5's boundary exists.
 
@@ -177,6 +180,8 @@ Part (b) asserts a success deliberately. It is an executable statement of R1, an
 **Where D2 may not live.** Not in `Aurora.Platform.Tenancy.UnitTests`, which is on the contracts assembly's `[InternalsVisibleTo]` list. A test proving an outsider can reach an internal constructor proves nothing if the test *is* an insider. D2's assembly must not appear in that grant list, and **the test must assert that fact about its own assembly** — B-06.1a already reads the grant list as an exact set, so the mechanism exists.
 
 **D3 — the admission floor cannot be configured away.** A host configured to route tenants and to admit non-`FirstParty` packages **refuses to start**, in the same shape and for the same reason as `AllowUnsigned` outside Development (ADR-0008 §9.3). Asserted by a configuration test, because a flag that only a comment prevents from reaching production will reach production.
+
+> **Sharpened by [ADR-0039](ADR-0039-the-admission-floor-holds-in-every-environment.md) §2.4.** "In the same shape as `AllowUnsigned` outside Development" names the **shape of the refusal**, not the floor's scope. D3 asserts **both** environments explicitly — a `Development` case and a `Production` case, as two tests with the same expectation — because the single-environment version of this test is exactly the one that would pass while the floor had a Development hole.
 
 **What none of the three demonstrates:** that a package cannot reach tenant data. Nothing demonstrates that, because it is not true (§5.4). D1 and D3 demonstrate the admission control; D2 demonstrates that the residual is still exactly the size this ADR says it is.
 

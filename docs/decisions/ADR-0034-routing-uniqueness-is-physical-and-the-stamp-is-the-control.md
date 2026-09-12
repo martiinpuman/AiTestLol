@@ -7,6 +7,7 @@
   - **ADR-0007 §9.2** — the catalog tables gain one uniqueness constraint (§3). No column is removed and no table is redefined.
   - **ADR-0007 §4** — §4 calls layers 3 and 4 "defence in depth, because a guarantee nobody can observe failing is a guarantee nobody trusts". For the **routing-identity** question that word is wrong and §4.3 is the control (§4 below). For "no `DbContext` without a tenant", §4's ordering is unchanged.
 - **Superseded by:** —
+- **Amended by:** **[ADR-0036](ADR-0036-routing-uniqueness-is-asserted-on-the-resolved-endpoint.md) (2026-09-12)** — §3.3's acceptance criterion compared *composed connection strings*, which carry a per-tenant `Application Name` and therefore can never be equal between two tenants. The criterion as written could not fail. ADR-0036 §2.3 replaces it with the resolved `(host, port, database)` triple under a **normalised** host (case folded, one trailing `.` stripped), ADR-0036 §2.2 corrects one false statement of fact in §2's variant 3 row, ADR-0036 §3 adds §3.4 (`ck_database_cluster_host_lower_case`, `ck_database_cluster_host_no_root_label` and **`ck_database_cluster_host_well_formed`, an RFC 1123 grammar replacing the character deny-list** — which had admitted `pg-1.internal,pg-2.internal`, a multi-host list that reconstructed §2's variant 3), and ADR-0036 §4 adds a **destroy-path row to §5's scope table**, where no stamp can be asserted at all. **§3.1's index, §3.2's enumeration and §4's stamp argument are unchanged.**
 - **Related:** ADR-0004 (PostgreSQL), ADR-0007 §3.2, §3.5, §4.3, §8, §9.2, §11.3, ADR-0027 §2 (`ITenantAdminConnectionFactory`, `StampAssertion`), ADR-0033 (what the stamp is *not* a control against), `../architecture/modules.md` §4
 - **Raised by:** the security review of PR #14 (`task/B-06.1`), third of three variants of one finding
 
@@ -20,7 +21,7 @@
 |---|---|---|
 | 1 | A second `catalog.tenant` row copying another tenant's `database_name` on the same cluster | Nothing — closed afterwards by `ux_tenant_cluster_id_database_name` |
 | 2 | A `catalog.tenant_host` row for a hostname the tenant does not own, marked verified by the party that benefits | `tenant_host.host` as a primary key — a *name*, verified by a claim |
-| 3 | Two `catalog.database_cluster` rows pointing at one server, one tenant each, the attacker's `database_name` copied. Both tenants resolve to `127.0.0.1:32905/aurora_t_t_82b6f49207bc` — byte-identical connection strings | `(cluster_id, database_name)` — a *logical* pair |
+| 3 | Two `catalog.database_cluster` rows pointing at one server, one tenant each, the attacker's `database_name` copied. Both tenants resolve to `127.0.0.1:32905/aurora_t_t_82b6f49207bc` — ~~byte-identical connection strings~~ **one identical physical endpoint (corrected by ADR-0036 §2.2: the composed strings differ, because `Application Name` carries the tenant key)** | `(cluster_id, database_name)` — a *logical* pair |
 
 Variant 3 is the sharpest illustration: the single-cluster shape is correctly refused with SQLSTATE `23505`, and the second cluster row walks straight around the index. `database_cluster` has a primary key on `id` and an alternate key on `(id, region)`. **Nothing makes `(host, port)` unique.**
 
@@ -73,11 +74,17 @@ Therefore `(host, port, database_name)` — the triple `ITenantConnectionResolve
 
 ### 3.3 The assertion is the property, not the index
 
+> **The criterion below was replaced by [ADR-0036](ADR-0036-routing-uniqueness-is-asserted-on-the-resolved-endpoint.md) §2.3 on 2026-09-12, three hours after this record merged.** It is kept, struck through, because it is the defect and deleting it would hide why the replacement is worded as it is. **Do not implement it.** The heading's own claim — the assertion is the property, not the index — is right; the comparand named underneath it was a mechanism.
+
 An acceptance criterion that says "the index exists" is a check on a name. The criterion is:
 
-> **No two non-deleted `catalog.tenant` rows produce the same resolved connection string**, computed by running the real `ITenantConnectionResolver` over the real catalog rows and comparing the composed strings — reporting how many tenants were resolved and how many pairs were compared, and failing on zero of either.
+> ~~**No two non-deleted `catalog.tenant` rows produce the same resolved connection string**, computed by running the real `ITenantConnectionResolver` over the real catalog rows and comparing the composed strings — reporting how many tenants were resolved and how many pairs were compared, and failing on zero of either.~~
+>
+> **Replaced by ADR-0036 §2.3:** *No two non-deleted `catalog.tenant` rows resolve to the same physical endpoint* — the `(host, port, database)` triple **parsed out of the string the real resolver produced**, with the host **normalised** (case folded, trailing `.` stripped) and a multi-host value **refused rather than compared**, reporting tenants resolved and pairs compared and failing on zero of either. Whole-string comparison is vacuous: `Application Name` is `aurora-web:<tenant key>` and `ux_tenant_key` makes the key unique, so two tenants' composed strings can never be equal however badly the routing is broken.
 
-That assertion would have caught all three variants, it does not depend on which index happens to be present, and it survives the PgBouncer change in §3.2. It is also the one to write **first**, against a catalog seeded with variant 3's two-cluster shape, and watched to fail before the index is added.
+~~That assertion would have caught all three variants~~ — it would have caught **none** of them — it does not depend on which index happens to be present, and it survives the PgBouncer change in §3.2. ADR-0036 §2.3's replacement catches the three variants **as spelled above**.
+
+> **And not the class they belong to.** A reviewer reconstructed variant 3 through the replacement with a trailing dot: `pg.internal.` beside `pg.internal` is one server, two rows, and two distinct hosts to a case-fold-only comparator. ADR-0036 §3 refuses the root label at the catalog and ADR-0036 §2.3 strips it in the comparator, but *"two spellings of one endpoint"* is an open class — a CNAME, a failover alias, a short name beside its FQDN — and closing the resolutive members would mean a test doing DNS. §3.2 already enumerates them and §4 is the answer; **this criterion is not, and a later reader should not read "catches all three" as "catches variant 3".** It is also the one to write **first**, against a catalog seeded with variant 3's two-cluster shape, and watched to fail before the index is added; ADR-0036 §2.4 D3 records that red run, because the index removes the ability to reproduce it.
 
 **A near miss worth naming:** a tenant `database_name` equal to some cluster's `maintenance_database` on the same endpoint is not caught by any of the above — `maintenance_database` is not in the tenant uniqueness axis. What covers it is the `aurora_t_` naming convention plus B-07.1's safe-adoption rule (adopt only a database owned by `aurora_migrator` that is either empty or already stamped for this tenant). Recorded so nobody later mistakes §3.1 for complete coverage of "which database could a tenant end up on".
 
@@ -106,6 +113,9 @@ The general rule, so it does not have to be re-derived per row:
 |---|---|---|
 | **DDL** — provisioning, migration, package install | `ITenantAdminConnectionFactory.OpenAsMigratorAsync(..., StampAssertion, ct)` calling `TenantIdentityStamp.AssertAsync` (ADR-0027 §2). ADR-0007 §4.3's per-physical-connection initializer belongs to the *app* data source and does **not** protect this path | **B-07.1** builds the factory; **B-06.1a** ships the stamp |
 | **App** — every request, job, outbox dispatch | The `NpgsqlDataSourceBuilder` physical-connection initializer of ADR-0007 §4.3 | **B-06.2** |
+| **Destroy** — offboarding's rename and drop (ADR-0007 §11.4) | **Nowhere. No stamp can be asserted on this path**: PostgreSQL cannot rename or drop a database from a session connected to it, so both statements run against the cluster's maintenance database, and the tenant's `platform.tenant_identity` is inside the database being destroyed. The rule that replaces it — assert the stamp on a connection *to* the tenant database, read `current_database()` there, and name **that** value in the `ALTER DATABASE … RENAME` / `DROP DATABASE` — is [ADR-0036](ADR-0036-routing-uniqueness-is-asserted-on-the-resolved-endpoint.md) §4. It leaves a check-then-act window that the 30-day reversible rename and the deletion certificate cover by detection, not prevention | **B-07.2** |
+
+> **Row added by [ADR-0036](ADR-0036-routing-uniqueness-is-asserted-on-the-resolved-endpoint.md) §4 (2026-09-12).** This table had two rows and read as though it enumerated the paths. It did not: the one path where the control is structurally unavailable — and where the operations are irreversible — was absent, so §4's *"the stamp is the control"* was a universal with a hole in it.
 
 Three orderings follow, and they are architectural, not scheduling preferences:
 
