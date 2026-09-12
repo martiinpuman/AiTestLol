@@ -62,11 +62,11 @@ readonly FAIL_TAIL_LINES=40
 # discovery failure, all of which move the count by tens or to zero; the smallest
 # assembly is 91, so any assembly dropping out still lands below it. Re-round it
 # whenever a test project joins or leaves Aurora.sln.
-# 859 executed with B-20 on B-21 (SharedKernel 231, Countries.Contracts 141,
-# Countries.Hosting 105, Platform.Tenancy 247, Architecture 135); 854 before it.
+# 883 executed with B-20 on B-21 (SharedKernel 231, Countries.Contracts 141,
+# Countries.Hosting 105, Platform.Tenancy 271, Architecture 135); 854 before it.
 # Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
-# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854, B-20 859.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-850}"
+# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854, B-20 883.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-880}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
@@ -175,7 +175,7 @@ Options:
 
 Environment:
   AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
-                          it may report PASS (default 830, the greatest multiple
+                          it may report PASS (default 880, the greatest multiple
                           of ten strictly below the suite's count). The count is always
                           printed in the summary, whatever the floor is. Set it
                           to 0 when running a deliberately narrow --filter.
