@@ -166,11 +166,22 @@ for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', '
         in_flight.add(row)
         started_by[row] = f'{ahead} commit(s) ahead'
 
+def _merged(ref):
+    # A branch already contained in the integration branch is finished, whatever
+    # still points at it. Without this the worktree arm below reported a MERGED
+    # branch as in flight -- task/B-19 merged, its worktree outlived it, and
+    # B-18.1 stayed held on a branch that no longer existed to conflict with.
+    # That is the eighth form on CLAUDE.md's list, in this file: the worktree arm
+    # was added to catch a row with no commits, and nothing re-checked what it did
+    # to a row whose commits had all landed.
+    return subprocess.run(['git', 'merge-base', '--is-ancestor', ref, INTEGRATION],
+                          capture_output=True).returncode == 0
+
 for line in subprocess.run(['git', 'worktree', 'list', '--porcelain'],
                            capture_output=True, text=True).stdout.split('\n'):
     if line.startswith('branch refs/heads/task/'):
         row = line[len('branch refs/heads/task/'):].strip()
-        if row and row not in in_flight:
+        if row and row not in in_flight and not _merged(f'refs/heads/task/{row}'):
             in_flight.add(row)
             started_by[row] = 'a worktree holds it, no commits yet'
 
