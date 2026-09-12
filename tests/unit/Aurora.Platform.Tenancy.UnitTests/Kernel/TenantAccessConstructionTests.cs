@@ -95,20 +95,39 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     private static readonly string[] TenancyGrants = ["Aurora.Platform.Tenancy.IntegrationTests", "Aurora.Platform.Tenancy.UnitTests"];
 
     /// <summary>
-    /// The assemblies <c>internal</c> reaches that ship: the contracts assembly and every assembly
-    /// its <c>[InternalsVisibleTo]</c> names that is not a test assembly - derived from link 2's
-    /// list, not written beside it, so a third shipping grant widens the scan by itself. The
-    /// named-type assertion in the scan test proves the load actually happened.
+    /// The assemblies <c>internal</c> reaches that ship: the contracts assembly and, transitively,
+    /// every shipping assembly any member of the set grants its internals to - derived from both
+    /// grant lists link 2 asserts, not written beside them, so a third shipping grant on either
+    /// assembly widens the scan by itself. A friend of <c>Aurora.Platform.Tenancy</c> can call the
+    /// internal scope factory without ever needing the contracts grant, so its surface is in the
+    /// boundary too (fourth review). The named-type assertion in the scan test proves the loads
+    /// actually happened.
     /// </summary>
-    private static readonly Assembly[] ShippingFriends =
-    [
-        Contracts,
-        .. Contracts.GetCustomAttributes<InternalsVisibleToAttribute>()
+    private static readonly Assembly[] ShippingFriends = ShippingFriendsOf(Contracts);
+
+    private static Assembly[] ShippingFriendsOf(Assembly contracts)
+    {
+        List<Assembly> friends = [contracts];
+        for (int next = 0; next < friends.Count; next++)
+        {
+            foreach (string name in ShippingGrantsOf(friends[next]))
+            {
+                Assembly friend = Assembly.Load(name);
+                if (!friends.Contains(friend))
+                {
+                    friends.Add(friend);
+                }
+            }
+        }
+
+        return [.. friends];
+    }
+
+    private static IEnumerable<string> ShippingGrantsOf(Assembly assembly) =>
+        assembly.GetCustomAttributes<InternalsVisibleToAttribute>()
             .Select(static attribute => attribute.AssemblyName)
             .Where(static name => !name.EndsWith(".UnitTests", StringComparison.Ordinal)
-                && !name.EndsWith(".IntegrationTests", StringComparison.Ordinal))
-            .Select(static name => Assembly.Load(name)),
-    ];
+                && !name.EndsWith(".IntegrationTests", StringComparison.Ordinal));
 
     /// <summary>
     /// Public members allowed to hand a proof out: the sanctioned doors, keyed by
@@ -236,7 +255,9 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     public void No_public_member_or_type_of_a_shipping_friend_assembly_mentions_a_proof_unless_it_is_named_here()
     {
         // Link 3, first scan. Every public member of every public type in both friend assemblies
-        // that ship, nested types included, and every public type's inheritance. A mention is
+        // that ship, nested types included, every interface member a type implements explicitly
+        // (private in IL, reached through the interface - the fourth review's door), and every
+        // public type's inheritance. A mention is
         // reported by exact key and must be in one of the three allow-lists; every allow-list entry
         // must match exactly one mention, so a stale or misspelled entry sanctions nothing. The
         // count is printed on every run and held to a floor, and the types the rule is about are
@@ -246,12 +267,13 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         string[] allowed = [.. SanctionedDoors, .. ProofTakingMembers, .. ProofTypesThemselves];
 
         output.WriteLine(
-            $"link 3: {scan.Examined} public members examined over {scan.VisitedTypes.Count} public types in "
+            $"link 3: {scan.Examined} public members and {scan.ExplicitImplementations} explicit interface implementations "
+            + $"examined over {scan.VisitedTypes.Count} public types in "
             + $"{Plural(ShippingFriends.Length, "assembly", "assemblies")} "
             + $"({string.Join(", ", ShippingFriends.Select(static assembly => assembly.GetName().Name))}); "
             + $"{scan.Mentions.Count} mention a proof, {allowed.Length} allow-listed; floor {ExaminedFloor}");
 
-        ShippingFriends.Length.ShouldBe(2, "the contracts assembly and the one shipping assembly its grants name");
+        ShippingFriends.Length.ShouldBe(2, "the contracts assembly and the one shipping assembly the two grant lists name between them");
         scan.Examined.ShouldBeGreaterThanOrEqualTo(
             ExaminedFloor,
             $"{scan.Examined} public members examined; the floor is the measured count rounded down to the "
@@ -286,8 +308,9 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         // BindingFlags.Public never sees them - the third review's door. This asserts that no
         // public type in either friend assembly can be derived from outside it: sealed, static, an
         // interface with no protected member, or a class with no public or protected constructor.
-        // With that true, the public surface is the whole reachable surface and the first scan is
-        // complete. Every public type is examined, nested types included, and the count is printed;
+        // With that true, no protected member is reachable from outside the set; the first scan
+        // reads the other two routes, public members and explicit interface implementations.
+        // Every public type is examined, nested types included, and the count is printed;
         // the migration classes are asserted as examined by name because EF scaffolds them public
         // and unsealed, which is exactly the shape this catches.
         DerivabilityScanResult scan = ProofMentionScan.DerivableTypes(ShippingFriends.SelectMany(ProofMentionScan.TopLevelPublicTypes));
@@ -305,7 +328,8 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         scan.Derivable.ShouldBeEmpty(
             "a public type that code outside the friend set can derive from makes every protected member "
             + "it declares, now or later, a door the member scan cannot see: seal it, make it static, or give "
-            + "it no public or protected constructor");
+            + "it no public or protected constructor. If it is a migration dotnet ef just scaffolded, add "
+            + "'sealed' - that is expected, the tool scaffolds them public and unsealed");
     }
 
     [Fact]
@@ -329,29 +353,42 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
             typeof(IEnumerable<TenantScope>), typeof(IReadOnlyList<TenantScope>), typeof(IReadOnlyCollection<TenantScope>),
         ];
 
-        scan.VisitedTypes.ShouldBe(
+        scan.VisitedTypes.Order(StringComparer.Ordinal).ShouldBe(
             [
                 probes,
+                typeof(ProofDoorProbes.ClosedHost).FullName!,
                 typeof(ProofDoorProbes.DeeperCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeCollection).FullName!,
+                typeof(ProofDoorProbes.ExplicitScopeSource).FullName!,
                 typeof(ProofDoorProbes.LockedHost).FullName!,
                 nested,
                 typeof(ProofDoorProbes.OpenScopeCollection).FullName!,
+                typeof(ProofDoorProbes.OpenedHost).FullName!,
                 typeof(ProofDoorProbes.ScopeHost).FullName!,
                 typeof(ProofDoorProbes.SealedHost).FullName!,
             ],
-            "every nested public type is expanded");
+            Case.Sensitive,
+            "every nested public type is expanded; both sides ordered ordinally, because a collection "
+            + "expression targeted at the SortedSet would take the culture comparer and order OpenedHost "
+            + "before OpenScopeCollection");
         scan.Examined.ShouldBe(
             21,
             "the fixture's public members: one event with two accessors, nine methods, three properties "
             + "with five accessors between them, the nested type's property with its getter, and the "
             + "explicit collection's ToString; the hosts' protected members are not public and are the "
             + "derivability check's to see");
+        scan.ExplicitImplementations.ShouldBe(
+            4,
+            "the explicit collection's Count getter and two GetEnumerator methods, and the explicit "
+            + "source's Provide - private in IL, reached through the interface map");
         scan.Mentions.Order(StringComparer.Ordinal).ShouldBe(
             new[]
             {
                 Inherits(typeof(ProofDoorProbes.DeeperCollection), listAncestry),
                 Inherits(typeof(ProofDoorProbes.ExplicitScopeCollection), typeof(IReadOnlyCollection<TenantScope>), typeof(IEnumerable<TenantScope>)),
+                typeof(ProofDoorProbes.ExplicitScopeCollection).FullName
+                    + ".System.Collections.Generic.IEnumerable<Aurora.Platform.Tenancy.Contracts.TenantScope>.GetEnumerator()",
+                typeof(ProofDoorProbes.ExplicitScopeSource).FullName + "." + typeof(IScopeSource).FullName + ".Provide()",
                 nested + ".Held",
                 nested + ".get_Held()",
                 Inherits(typeof(ProofDoorProbes.OpenScopeCollection), listAncestry),
@@ -374,25 +411,37 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         scan.Mentions.ShouldNotContain(probes + ".Describe(System.String)");
         scan.Mentions.ShouldNotContain(probes + ".All()", "the member names no proof; its return type is reported as a type");
         scan.Mentions.ShouldNotContain(probes + ".Bag()", "the member names no proof; its return type is reported as a type");
+        scan.Mentions.ShouldNotContain(
+            typeof(ProofDoorProbes.ExplicitScopeCollection).FullName + ".System.Collections.IEnumerable.GetEnumerator()",
+            "the non-generic enumerator names no proof");
+        scan.Mentions.ShouldNotContain(
+            typeof(ProofDoorProbes.ExplicitScopeCollection).FullName
+                + ".System.Collections.Generic.IReadOnlyCollection<Aurora.Platform.Tenancy.Contracts.TenantScope>.get_Count()",
+            "an explicit implementation is reported by its signature, not by the interface in its name");
     }
 
     [Fact]
     public void The_derivability_check_reports_every_type_an_outsider_could_derive_from_and_neither_control()
     {
         // The second scan proven to fail: the third review's ScopeHost (abstract, protected doors,
-        // an implicit protected constructor) and the unsealed collection must be reported, each with
-        // what deriving would expose; the sealed control and the internal-constructor control (the
-        // shape TenantAccess and a sealed migration take) must not. The examined set is exact.
+        // an implicit protected constructor), the unsealed collection and the opened host (whose
+        // only protected door is inherited) must be reported, each with what deriving would
+        // expose; the sealed control, the explicit source (sealed) and the internal-constructor
+        // control (the shape TenantAccess and a sealed migration take) must not. The examined set
+        // is exact.
         DerivabilityScanResult scan = ProofMentionScan.DerivableTypes([typeof(ProofDoorProbes)]);
 
-        scan.Examined.ShouldBe(
+        scan.Examined.Order(StringComparer.Ordinal).ShouldBe(
             [
                 typeof(ProofDoorProbes).FullName!,
+                typeof(ProofDoorProbes.ClosedHost).FullName!,
                 typeof(ProofDoorProbes.DeeperCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeCollection).FullName!,
+                typeof(ProofDoorProbes.ExplicitScopeSource).FullName!,
                 typeof(ProofDoorProbes.LockedHost).FullName!,
                 typeof(ProofDoorProbes.Nested).FullName!,
                 typeof(ProofDoorProbes.OpenScopeCollection).FullName!,
+                typeof(ProofDoorProbes.OpenedHost).FullName!,
                 typeof(ProofDoorProbes.ScopeHost).FullName!,
                 typeof(ProofDoorProbes.SealedHost).FullName!,
             ]);
@@ -400,6 +449,8 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
             [
                 typeof(ProofDoorProbes.OpenScopeCollection).FullName
                     + ": derivable from outside through a public constructor; protected members it would expose: none today",
+                typeof(ProofDoorProbes.OpenedHost).FullName
+                    + ": derivable from outside through a public constructor; protected members it would expose: Held, get_Held",
                 typeof(ProofDoorProbes.ScopeHost).FullName
                     + ": derivable from outside through a protected constructor; protected members it would expose: "
                     + "Held, Shared, With, get_Held, get_Shared, set_Held, set_Shared",

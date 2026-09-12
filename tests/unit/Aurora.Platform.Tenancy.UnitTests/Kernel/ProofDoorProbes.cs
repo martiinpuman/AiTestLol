@@ -10,6 +10,16 @@ namespace Aurora.Platform.Tenancy.UnitTests.Kernel;
 internal delegate void ScopeCallback(TenantScope scope);
 
 /// <summary>
+/// A non-generic interface declared outside the scanned population, whose one member names a
+/// proof: a type implementing it explicitly has a public surface, an inheritance list and a
+/// derivability verdict that are all silent about the door (fourth review).
+/// </summary>
+internal interface IScopeSource
+{
+    TenantScope? Provide();
+}
+
+/// <summary>
 /// Every shape by which a public member or a public type can hand a tenant proof to code outside
 /// the friend set, plus the inbound shape and members that mention no proof at all. Link 3's two
 /// scans are proven against this type: each door must be reported, the negatives must not be.
@@ -22,7 +32,11 @@ internal delegate void ScopeCallback(TenantScope scope);
 /// door: types that declare nothing and hand proofs out through what they inherit, which a scan of
 /// declared members cannot see. <see cref="ScopeHost"/> is the third review's: a public type nobody
 /// sealed, whose protected members anyone deriving from it can reach, which a scan of public
-/// members cannot see and the derivability check must.
+/// members cannot see and the derivability check must. <see cref="ExplicitScopeSource"/> is the
+/// fourth review's: a sealed type whose only door is an explicitly implemented member of an
+/// interface declared elsewhere, private in IL and named by nothing the type inherits, which only
+/// the interface map reaches. <see cref="OpenedHost"/> is that review's nit: a derivable type whose
+/// protected doors are all inherited, which the verdict must still list.
 /// </para>
 /// <para>
 /// The rest are the shapes that scan already caught (kept as controls, so a rewrite cannot lose
@@ -115,6 +129,15 @@ internal static class ProofDoorProbes
     }
 
     /// <summary>
+    /// Fourth-review probe: sealed, no public member, no proof-bearing base or interface - and one
+    /// explicitly implemented interface member that hands a scope to anyone holding the interface.
+    /// </summary>
+    public sealed class ExplicitScopeSource : IScopeSource
+    {
+        TenantScope? IScopeSource.Provide() => null;
+    }
+
+    /// <summary>
     /// Third-review probe: a public type nobody sealed, with three protected doors. The member scan
     /// sees none of them (protected is not public); the derivability check reports the type, because
     /// anyone deriving from it reaches all three.
@@ -140,6 +163,23 @@ internal static class ProofDoorProbes
 
         protected TenantScope? Held { get; }
     }
+
+    /// <summary>
+    /// Fourth-review nit probe: derivable, declaring no protected member of its own - every door it
+    /// exposes is <see cref="LockedHost"/>'s. Reported, and the verdict must name the inherited door.
+    /// </summary>
+    public class OpenedHost : LockedHost
+    {
+        public OpenedHost()
+        {
+        }
+    }
+
+    /// <summary>
+    /// Control: sealed at the end of the chain, so nothing derives from it and the protected door it
+    /// inherits is unreachable through it. Not reported.
+    /// </summary>
+    public sealed class ClosedHost : OpenedHost;
 
     /// <summary>Control: sealed, with a public constructor. Not derivable, not reported.</summary>
     public sealed class SealedHost

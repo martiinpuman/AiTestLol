@@ -6,20 +6,24 @@ using Aurora.Platform.Tenancy.Contracts;
 
 namespace Aurora.Platform.Tenancy.UnitTests.Kernel;
 
-/// <summary>What one scan found: how many members it examined, which types it visited, and every mention of a proof.</summary>
-internal sealed record ProofMentionScanResult(int Examined, SortedSet<string> VisitedTypes, List<string> Mentions);
+/// <summary>
+/// What one scan found: how many public members and how many explicitly implemented interface
+/// members it examined, which types it visited, and every mention of a proof.
+/// </summary>
+internal sealed record ProofMentionScanResult(int Examined, int ExplicitImplementations, SortedSet<string> VisitedTypes, List<string> Mentions);
 
 /// <summary>What the derivability check found: every public type it examined, and every one that code outside the friend set could derive from, with why.</summary>
 internal sealed record DerivabilityScanResult(SortedSet<string> Examined, List<string> Derivable);
 
 /// <summary>
 /// Link 3 of the construction chain, as two functions over the public types of the friend
-/// assemblies. <see cref="Over"/> reports every public member, and every type, wherever a
-/// <see cref="TenantAccess"/> is mentioned - in a member's signature (return type, any parameter,
-/// any generic argument, a generic constraint, the <c>Invoke</c> signature of a delegate parameter,
-/// an event's handler type) or in what a type inherits (its base chain and its interfaces).
-/// <see cref="DerivableTypes"/> reports every public type that code outside the friend set could
-/// derive from, which is what makes "public member" the same thing as "reachable member".
+/// assemblies. <see cref="Over"/> reports every public member, every interface member a type
+/// implements explicitly, and every type, wherever a <see cref="TenantAccess"/> is mentioned - in
+/// a member's signature (return type, any parameter, any generic argument, a generic constraint,
+/// the <c>Invoke</c> signature of a delegate parameter, an event's handler type) or in what a type
+/// inherits (its base chain and its interfaces). <see cref="DerivableTypes"/> reports every public
+/// type that code outside the friend set could derive from, which is what closes the protected
+/// members to it.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -53,8 +57,23 @@ internal sealed record DerivabilityScanResult(SortedSet<string> Examined, List<s
 /// outside it - each is sealed (a struct, an enum, a delegate, a static or sealed class), or has no
 /// public or protected constructor (an abstract class with an internal one, which is
 /// <c>TenantAccess</c>'s shape and the shape an EF migration takes once it is sealed by hand), and
-/// no interface carries a protected member. With that true, the public surface is the whole
-/// reachable surface, and the member scan is complete.
+/// no interface carries a protected member. With that true, no protected member is reachable from
+/// outside the set - one of the two non-public routes closed; the next paragraph is the other.
+/// </para>
+/// <para>
+/// <b>Why explicit interface implementations count.</b> The fourth review's door: a member
+/// implemented explicitly is emitted private, so <see cref="EveryPublicMember"/> never sees it,
+/// yet anyone holding the interface calls it; the type can be sealed, so the derivability check is
+/// silent; and when the interface is non-generic and declared outside the scanned population, its
+/// own type arguments name no proof, so the inheritance check is silent too. A public sealed type
+/// in the tenancy assembly with one such member, implementing an interface from a third assembly,
+/// left every test green while an assembly with no grant minted a live scope through it. So
+/// <see cref="Over"/> follows the link the interface list only hints at: for every interface a
+/// type implements, <see cref="Type.GetInterfaceMap"/> names the implementing methods whatever
+/// their accessibility, and every non-public one declared on the type is examined and keyed like a
+/// public member. A public implementation is already examined as a public member; an inherited one
+/// is its declaring type's - examined there if that type is in the population, reported through
+/// the inheritance check if it is a proof-bearing base outside it.
 /// </para>
 /// <para>
 /// <b>The default arm throws.</b> A member kind this scan does not classify is a member kind it
@@ -68,10 +87,13 @@ internal sealed record DerivabilityScanResult(SortedSet<string> Examined, List<s
 /// <c>IEnumerable</c>, a base type or interface that does not itself carry the proof type.
 /// So is a proof handed out inside something a signature does not describe - a serialised form
 /// (link 4 covers the serialisers) - and every route reflection or <c>GetUninitializedObject</c>
-/// takes (links 4 and 5). What the two functions together prove is exactly this: no public
-/// signature and no public type's inheritance in the friend set admits a proof except by name, and
-/// no public type in the friend set can be derived from outside it, so no protected member is
-/// reachable at all.
+/// takes (links 4 and 5). What the two functions together prove is this, and only this: in the
+/// friend set, no public member's signature, no explicitly implemented interface member's
+/// signature and no public type's inheritance names a proof except by allow-listed key, and no
+/// public type can be derived from outside the set. Public members, explicit implementations and
+/// protected members are the three ways a member is reached from outside without reflection, and
+/// those three are what the scans read. Three reviews each found one of them unread; the honest
+/// claim is that these three are covered now, not that the list is finished.
 /// </para>
 /// </remarks>
 internal static class ProofMentionScan
@@ -79,8 +101,9 @@ internal static class ProofMentionScan
     private const BindingFlags EveryPublicMember =
         BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
-    private const BindingFlags EveryDeclaredMember =
-        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+    /// <summary>Declared or inherited: what a derived type reaches, not only what the type declares.</summary>
+    private const BindingFlags EveryReachableMember =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.FlattenHierarchy;
 
     /// <summary>The public types declared at the top level of an assembly; nested public types are reached by expansion.</summary>
     public static IEnumerable<Type> TopLevelPublicTypes(Assembly assembly) =>
@@ -90,6 +113,7 @@ internal static class ProofMentionScan
     public static ProofMentionScanResult Over(IEnumerable<Type> roots)
     {
         int examined = 0;
+        int explicitImplementations = 0;
         SortedSet<string> visited = new(StringComparer.Ordinal);
         List<string> mentions = [];
 
@@ -98,7 +122,7 @@ internal static class ProofMentionScan
             Visit(root);
         }
 
-        return new ProofMentionScanResult(examined, visited, mentions);
+        return new ProofMentionScanResult(examined, explicitImplementations, visited, mentions);
 
         void Visit(Type type)
         {
@@ -127,8 +151,32 @@ internal static class ProofMentionScan
                     mentions.Add(MemberKey(type, member));
                 }
             }
+
+            foreach (MethodInfo implementation in ExplicitImplementations(type))
+            {
+                explicitImplementations++;
+                if (SignatureMentionsProof(implementation))
+                {
+                    mentions.Add(MemberKey(type, implementation));
+                }
+            }
         }
     }
+
+    /// <summary>
+    /// The interface members <paramref name="type"/> implements explicitly - emitted private, so
+    /// <see cref="EveryPublicMember"/> never sees them, yet called by anyone holding the interface.
+    /// Only the ones declared on this type: an inherited one is its declaring type's. An interface
+    /// has no map, and a public implementation is already examined as a public member.
+    /// </summary>
+    private static IEnumerable<MethodInfo> ExplicitImplementations(Type type) =>
+        type.IsInterface
+            ? []
+            : type.GetInterfaces()
+                .SelectMany(implemented => type.GetInterfaceMap(implemented).TargetMethods)
+                .Where(target => target.DeclaringType == type && !target.IsPublic)
+                .Distinct()
+                .OrderBy(static target => target.Name, StringComparer.Ordinal);
 
     /// <summary>
     /// Examines the given types and, recursively, their nested public types, reporting every one
@@ -232,13 +280,17 @@ internal static class ProofMentionScan
     }
 
     /// <summary>
-    /// The protected members a derived type would reach, by name. Constructors are the door itself
-    /// and are named in the verdict's first clause, so they are not listed here again.
+    /// The protected members a derived type would reach, by name, inherited ones included - a
+    /// derivable type whose protected doors are all its base's would otherwise read as exposing
+    /// "none today" (fourth review). Constructors are the door itself and are named in the
+    /// verdict's first clause, so they are not listed here again; <see cref="object"/>'s own
+    /// <c>Finalize</c> and <c>MemberwiseClone</c> are every type's and name nothing.
     /// </summary>
     private static string[] ProtectedMembers(Type type) =>
     [
-        .. type.GetMembers(EveryDeclaredMember)
+        .. type.GetMembers(EveryReachableMember)
             .Where(IsProtected)
+            .Where(static member => member.DeclaringType != typeof(object))
             .Select(static member => member.Name)
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal),
