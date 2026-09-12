@@ -238,5 +238,70 @@ detects nothing*: T15's floor of 3 was satisfied by three unrelated calls.
 
 **Next:** confirm and merge ADR-0032; close ADR-0029's five highs, then dispatch the front of the B-17
 chain (B-03.1, B-17.1, B-17.2), which is ready as written.
+
+### Merged this iteration
+
+Reviews are posted on each task's pull request. This table is the repository's own record of them,
+so a session with no GitHub access can still find the verdict and what it rested on.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
 | ARCH-TENANT-DOORS (ADR-0032) | #7 | APPROVE (fourth round, Full) | senior-reviewer ×3 | Four rounds, each finding something real and each smaller than the last: two blockers, two majors, one major, one number. Round 4 is the one worth remembering — the architect widened the definition to close a twice-deferred ambiguity and claimed the new limb added nothing to the count; the reviewer measured it against a Release build of all nine production assemblies and found it adds exactly one, `WebApplication.CreateBuilder`, matched on its **return** type where limb (i) misses it. At a floor of 4, deleting that limb takes the population 5 → 4 and passes green: the same failure as the major it had just fixed, inside the fix for it. Floor is 5, and `testing-strategy.md` now names **both** blind floors so neither recurs silently. Final fix verified by the orchestrator line-by-line against the reviewer's own specification rather than a fourth full review — three reviewers had already passed over the design, and the diff was 6 insertions and 5 deletions of one number. Gate PASS at 736. |
 | B-03.1 | #10 | APPROVE (Full) | senior-reviewer | Attacked the empty-scope property from thirteen directions — reflection, `GetUninitializedObject`, System.Text.Json, `DataContractSerializer`, `MemberwiseClone`, lying/one-shot/self-emptying sequences, `default(T)` — and found no route to a scope that is empty and not `AllCompaniesInTenant`; a private write to the backing field still fails closed. Reproduced all three of the author's fault injections exactly (1, 3, 7 red) and confirmed the strengthening that made fault B bite: two of its three reds are now **message** assertions, because the fault had been passing by throwing the wrong exception. Four minors recorded as FOLLOWUP-035…038, including a false claim that the hash code is stable across processes. Gate PASS at 761. |
+
+## Iteration 7 — 2026-09-12
+
+**Two merges, four pull requests open, and the first parallel pair that actually was parallel.**
+
+**Gitflow made strict, reviews moved to GitHub.** At the product owner's instruction the team now runs
+`main` = master (never pushed to), `claude/multi-tenant-saas-erp-pv2nap` = develop, `task/<ID>` =
+feature. Every task branch carries a draft PR, every review is a submitted review on that PR with the
+verdict as its first line, and the orchestrator merges on that verdict. The product owner neither
+reviews nor accepts anything.
+
+Two GitHub refusals shape the mechanism and both are real: the account that authored a branch can
+submit neither `APPROVE` nor `REQUEST_CHANGES` on it. So a review is submitted as `COMMENT` with
+`VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES` as the **first line of the body**. That is a real
+verdict and the orchestrator merges on it. An earlier relay of this to the product owner claimed only
+`APPROVE` was refused; that was wrong, and is corrected here so the next session does not rediscover it.
+
+**The split paid off.** `PM-SPLIT-B061` cut the tenancy core into a type surface and a resolver, both
+depending only on merged B-05. Both ran concurrently, both returned, and they contest exactly five
+files — four of them the `verify.sh` floor line, a `.csproj`, its lock file and a module README, which
+is what a clean split looks like. `file-claims.sh` names them before the merge rather than after.
+
+**A readiness check that stopped one link short.** `project-health.sh` offered `B-18.1` as dispatchable
+while B-18.1's own notes say it may not run concurrently with B-19 — which was in flight — because all
+three of B-18.1, B-18.9 and B-19 carry a `CatalogDbContext` migration and that chain has one order. It
+also offered three rows that already had branches. The check read the dependency column and stopped
+there; the answer lived one link further on, in prose.
+
+It now reads both, and the interesting part is what it admits: the concurrency constraint is a
+**sentence**, so the check matches a fixed phrase list and **prints that list and the number of cells
+it scanned**, because a parser that reads a subset of its input and reports as though it read all of it
+is the seventh distinct shape of this project's oldest defect, and it has already shipped here once.
+`FOLLOWUP-042` asks the project-manager for a real field so the answer stops depending on phrasing.
+Both faults injected: deleting the hold sentence from B-18.1 flips it to dispatchable, which is what
+proves the hold is driven by the text rather than by coincidence.
+
+**The standing hole, now written into STATE.md as a risk rather than a task note.** `verify.sh` stages
+4, 5, 7, 8, 9 and 10 do not exist, so **every integration test on this project is outside the merge
+gate** — all 54, including every tenant-isolation proof. Demonstrated: a tampered migration produces 11
+integration failures under `dev-test.sh` while the gate returns `RESULT: PASS`. That is B-11's row, and
+B-11 is itself blocked on B-10, which is blocked on B-07.4 and B-06.3. Nothing merged so far has had its
+integration tests gated; the branches have been green under `dev-test.sh` and the orchestrator has
+checked that by hand.
+
+**Next:** the four open PRs, in the order their reviews turn green — #9 (ADR-0028 A2, rework 5), #12
+(B-19, third reviewer), #13 (B-06.1a) and #14 (B-06.1). Three of the four re-round the `verify.sh`
+floor, so the second and third to merge re-measure rather than inherit. Then B-06.2 and B-06.3, which
+close the structural no-`DbContext`-without-a-tenant guarantee, and `DESIGN-001`, which is what moves
+B-15.3 — the first real Blazor screen — out of `draft`.
+
+
+### Merged this iteration
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| ARCH-IDENTITY (ADR-0029) | #5 | APPROVE (Full) | security-reviewer | Two blockers and five later highs, three of which the earlier fixes introduced. The one to remember: a bounded audit write that PostgreSQL refuses to create on a partitioned table, whose obvious repair silently stops deduplicating — a correction that re-introduces what it fixed, the fourth distinct shape of "a mechanism that cannot fail". Unblocked thirteen backlog rows. |
+| PM-SPLIT-B061 | #11 | APPROVE (Light) | senior-reviewer | Not a code change: the tenancy core row was two subsystems in one, and nothing could start on it in parallel. Split into B-06.1a (the type surface) and B-06.1 (the resolver and its live cache), both depending only on merged B-05. Both ran concurrently and both returned. |
