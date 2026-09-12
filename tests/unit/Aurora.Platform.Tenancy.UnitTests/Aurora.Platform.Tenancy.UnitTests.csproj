@@ -3,11 +3,21 @@
   <!--
     Fast tests for the Tenancy platform module (docs/architecture/testing-strategy.md 2): the
     registry's value objects and entity invariants, the EF value converter, the model-to-snapshot
-    check, and the ADR-0007 9.3 guard over the catalog *model*.
+    check, the ADR-0007 9.3 guard over the catalog *model*, and (Kernel/, B-06.1a) the tenancy
+    kernel types of Aurora.Platform.Tenancy.Contracts - TenantAccess, TenantScope, SchemaVersion
+    and the rest - including the construction tests that prove ADR-0007 3.4's "no module can
+    fabricate a TenantScope" link by link.
+
+    This is the one test assembly the contracts project grants InternalsVisibleTo, which is what
+    lets the kernel tests call TenantScope's internal constructor; the grant list is asserted as an
+    exact set in TenantAccessConstructionTests.
 
     Nothing here opens a connection. Building an EF model needs the Npgsql provider's type
     mappings but no database, so these run in verify.sh stage 6 with Docker stopped. The guard's
     twin over the *migrated schema* lives in the integration project.
+
+    FsCheck carries the ordering law of SchemaVersion over arbitrary ordinals, from a plain [Fact]
+    via QuickCheckThrowOnFailure, as Aurora.SharedKernel.UnitTests already does.
   -->
 
   <PropertyGroup>
@@ -19,6 +29,7 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Shouldly" />
+    <PackageReference Include="FsCheck" />
     <PackageReference Include="coverlet.collector" />
   </ItemGroup>
 

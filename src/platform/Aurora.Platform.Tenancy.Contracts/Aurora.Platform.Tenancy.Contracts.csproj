@@ -4,12 +4,20 @@
     Tier 1 - the public contract of the Tenancy platform module (docs/architecture/modules.md 4).
 
     Everything another module may know about tenancy lives here: the identifiers and states of the
-    tenant registry (B-05), and from B-06 onward TenantScope, ITenantConnectionResolver and
+    tenant registry (B-05); the tenancy kernel types (B-06.1a) - TenantAccess, TenantScope,
+    TenantAccessReason, SchemaVersion, CoreSchemaVersion, InstalledPackages and
+    TenantRoutingViolationException; and from B-06.1/B-06.3 onward ITenantConnectionResolver and
     ITenantDbContextFactory<T>. The implementation, including the catalog DbContext, is internal to
     Aurora.Platform.Tenancy.
 
     A *.Contracts project references Aurora.SharedKernel and Aurora.Documents.Canonical and nothing
     else (solution-layout.md 2, fitness rule L2). No EF, no Npgsql, no DI, no logging.
+
+    The InternalsVisibleTo grants below are the whole of ADR-0007 3.4's "only Aurora.Platform.Tenancy
+    may construct one": TenantAccess and TenantScope have internal constructors, and internal reaches
+    exactly these two assemblies - the tenancy module, which will hold the scope factory (B-06.3),
+    and its unit-test assembly, which proves the type surface. TenantAccessConstructionTests asserts
+    this list as an exact set, so a third grant is a red test rather than a quiet widening.
   -->
 
   <PropertyGroup>
@@ -18,6 +26,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Aurora.SharedKernel\Aurora.SharedKernel.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aurora.Platform.Tenancy" />
+    <InternalsVisibleTo Include="Aurora.Platform.Tenancy.UnitTests" />
   </ItemGroup>
 
 </Project>
