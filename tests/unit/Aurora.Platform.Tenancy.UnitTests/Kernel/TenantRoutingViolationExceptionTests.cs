@@ -44,6 +44,20 @@ public sealed class TenantRoutingViolationExceptionTests
     }
 
     [Fact]
+    public void An_unstamped_verdict_keeps_the_driver_fault_that_produced_it_as_its_inner_exception()
+    {
+        // When the read itself was refused, the server's own words are the operator's first clue;
+        // the SQLSTATE in the message is not a substitute for them.
+        InvalidOperationException fault = new("permission denied for table tenant_identity");
+
+        TenantRoutingViolationException violation =
+            TenantRoutingViolationException.Unstamped(Expected, "aurora_t_acme", "the role cannot read the stamp", fault);
+
+        violation.InnerException.ShouldBeSameAs(fault);
+        TenantRoutingViolationException.Unstamped(Expected, "aurora_t_acme", "no row").InnerException.ShouldBeNull();
+    }
+
+    [Fact]
     public void A_mismatch_between_a_tenant_and_itself_cannot_be_built()
     {
         // The factory is for the case the check caught; the same id on both sides is not a

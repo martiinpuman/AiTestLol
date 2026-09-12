@@ -197,31 +197,35 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
         await using TenantDatabase database = await TenantDatabase.CreateAsync(catalog, Unique.Identifier("aurora_t_stamp"));
         await database.StampAsync(tenant, Unique.TenantKey());
 
-        (string What, string Revoke)[] revocations =
-        [
-            ("select on the table revoked", "revoke select on platform.tenant_identity from aurora_app"),
-            ("usage on the schema revoked", "revoke usage on schema platform from aurora_app"),
-        ];
-        int refusals = 0;
-        foreach ((string what, string revoke) in revocations)
+        // Two arms that each fail on their own: the table read is revoked and refused; then it is
+        // granted back and the assertion is shown to pass again, so that the second arm's refusal
+        // can only be the schema's. Without the re-grant the arms would be cumulative and the
+        // schema arm could never fail independently.
+        await using NpgsqlConnection owner = await database.OpenAsMigratorAsync();
+
+        await Execute(owner, "revoke select on platform.tenant_identity from aurora_app");
+        TenantRoutingViolationException tableRefused = await RefusedAsAppAsync(database, tenant, "select on the table revoked");
+
+        await Execute(owner, "grant select on platform.tenant_identity to aurora_app");
+        await using (NpgsqlConnection restored = await database.OpenAsAppAsync())
         {
-            await using (NpgsqlConnection owner = await database.OpenAsMigratorAsync())
-            {
-                await Execute(owner, revoke);
-            }
+            await TenantIdentityStamp.AssertAsync(restored, tenant, CancellationToken.None);
+        }
 
-            await using NpgsqlConnection asApp = await database.OpenAsAppAsync();
-            TenantRoutingViolationException refused = await Should.ThrowAsync<TenantRoutingViolationException>(
-                () => TenantIdentityStamp.AssertAsync(asApp, tenant, CancellationToken.None), what);
+        await Execute(owner, "revoke usage on schema platform from aurora_app");
+        TenantRoutingViolationException schemaRefused = await RefusedAsAppAsync(database, tenant, "usage on the schema revoked");
 
+        foreach ((TenantRoutingViolationException refused, string what) in new[]
+                 {
+                     (tableRefused, "select on the table revoked"), (schemaRefused, "usage on the schema revoked"),
+                 })
+        {
             refused.Expected.ShouldBe(tenant, what);
             refused.Found.ShouldBeNull(what);
             refused.DatabaseName.ShouldBe(database.Name, what);
             refused.Message.ShouldContain(InsufficientPrivilege, Case.Sensitive, what);
-            refusals++;
+            refused.InnerException.ShouldBeOfType<PostgresException>(what).SqlState.ShouldBe(InsufficientPrivilege, what);
         }
-
-        refusals.ShouldBe(revocations.Length, "both revocations were tried and refused as routing violations");
     }
 
     [Fact]
@@ -255,6 +259,32 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
     }
 
     [Fact]
+    public async Task The_cleanup_drops_the_database_even_while_an_app_session_is_still_attached()
+    {
+        // The flake PR #13's second review measured (2 of 5 suite runs): DROP DATABASE ... WITH
+        // (FORCE) issued as aurora_admin is refused 42501 while an aurora_app backend is attached,
+        // because aurora_admin is a member of aurora_migrator but not of aurora_app and holds no
+        // pg_signal_backend. The database then leaks with PUBLIC CONNECT on it, and B-05's
+        // CatalogPrivilegeTests fails for a reason that has nothing to do with isolation. This holds
+        // an app session open across the drop on purpose and requires the drop to succeed anyway,
+        // and the session to be gone afterwards.
+        TenantDatabase database = await TenantDatabase.CreateAsync(catalog, Unique.Identifier("aurora_t_stamp"));
+        await using NpgsqlConnection attached = await database.OpenAsAppAsync();
+        ((string?)await Scalar(attached, "select current_database()")).ShouldBe(database.Name);
+
+        await database.DisposeAsync();
+
+        await using NpgsqlConnection admin = await catalog.OpenAdminMaintenanceConnectionAsync();
+        await using var remaining = new NpgsqlCommand("select count(*) from pg_database where datname = @name", admin);
+        remaining.Parameters.AddWithValue("name", database.Name);
+        ((long)(await remaining.ExecuteScalarAsync())!).ShouldBe(0L, "the database must be gone, attached session or not");
+
+        Exception? severed = await Record.ExceptionAsync(() => Scalar(attached, "select 1"));
+        severed.ShouldNotBeNull("the attached session was terminated by the drop");
+        severed.ShouldBeAssignableTo<NpgsqlException>();
+    }
+
+    [Fact]
     public async Task An_already_cancelled_assertion_stops_before_it_asks_the_database()
     {
         await using NpgsqlConnection connection = await catalog.OpenAppConnectionAsync();
@@ -276,6 +306,13 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
             () => TenantIdentityStamp.AssertAsync(connection, default, CancellationToken.None));
         await Should.ThrowAsync<ArgumentNullException>(
             () => TenantIdentityStamp.AssertAsync(null!, TenantId.Create(), CancellationToken.None));
+    }
+
+    private static async Task<TenantRoutingViolationException> RefusedAsAppAsync(TenantDatabase database, TenantId tenant, string what)
+    {
+        await using NpgsqlConnection asApp = await database.OpenAsAppAsync();
+        return await Should.ThrowAsync<TenantRoutingViolationException>(
+            () => TenantIdentityStamp.AssertAsync(asApp, tenant, CancellationToken.None), what);
     }
 
     private static async Task Execute(NpgsqlConnection connection, string sql, params (string Name, object Value)[] parameters)
@@ -349,15 +386,50 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
 
         public Task<NpgsqlConnection> OpenAsMigratorAsync() => OpenAsync(_catalog.MigratorConnectionString);
 
+        /// <summary>
+        /// Drops the database as the container's superuser and verifies that it is gone.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// Cleanup, not the privilege model under test. <c>DROP DATABASE ... WITH (FORCE)</c>
+        /// terminates every backend still attached, and PostgreSQL lets a role terminate only its
+        /// own backends, those of roles it is a member of, or any at all with
+        /// <c>pg_signal_backend</c>. The fixture's <c>aurora_admin</c> is a member of
+        /// <c>aurora_migrator</c>, not of <c>aurora_app</c>, and holds no <c>pg_signal_backend</c> -
+        /// so a drop issued as <c>aurora_admin</c> is refused <c>42501</c> whenever a test's app
+        /// session has closed its socket but its backend has not yet exited, the database leaks
+        /// with <c>PUBLIC CONNECT</c> on it, and B-05's <c>CatalogPrivilegeTests</c> finds a database
+        /// the app role may open. Unpooled connections do not close that race; they only keep this
+        /// process from parking an idle connection in the database. Whether the provisioner role
+        /// should hold <c>pg_signal_backend</c> for ADR-0007 §8's own drop is the architect's and
+        /// B-07's question (routed by PR #13's second review), which is why this does not answer it
+        /// by granting the role something here.
+        /// </para>
+        /// <para>
+        /// The drop is verified, not trusted: a cleanup that fails silently is how a leaked
+        /// database reaches the next test's view of the cluster.
+        /// </para>
+        /// </remarks>
         public async ValueTask DisposeAsync()
         {
-            await using NpgsqlConnection admin = await _catalog.OpenAdminMaintenanceConnectionAsync();
-            await CatalogDatabaseFixture.ExecuteAsync(admin, $"DROP DATABASE {Name} WITH (FORCE)");
+            await using NpgsqlConnection superuser = await _catalog.OpenSuperuserConnectionAsync();
+            await CatalogDatabaseFixture.ExecuteAsync(superuser, $"DROP DATABASE {Name} WITH (FORCE)");
+
+            await using var remaining = new NpgsqlCommand("select count(*) from pg_database where datname = @name", superuser);
+            remaining.Parameters.AddWithValue("name", Name);
+            if ((long)(await remaining.ExecuteScalarAsync())! != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Tenant database '{Name}' was not dropped; left in place it would leak into every later "
+                    + "test's view of the cluster.");
+            }
         }
 
         private async Task<NpgsqlConnection> OpenAsync(string roleConnectionString)
         {
-            // Unpooled, so DROP DATABASE ... WITH (FORCE) finds nothing lingering in a pool.
+            // Unpooled, so a connection a test opens is closed when its `await using` ends rather
+            // than parked idle in this process's pool, keeping the database busy. The backend on the
+            // server side may still be exiting when the drop runs; DisposeAsync handles that.
             string connectionString = new NpgsqlConnectionStringBuilder(roleConnectionString)
             {
                 Database = Name,

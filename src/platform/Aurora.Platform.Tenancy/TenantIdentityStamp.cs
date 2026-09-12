@@ -138,7 +138,8 @@ internal static class TenantIdentityStamp
             throw TenantRoutingViolationException.Unstamped(
                 expected,
                 database,
-                $"it has no {TableName} table (SQLSTATE {noTable.SqlState}), so it is not a tenant database at all");
+                $"it has no {TableName} table (SQLSTATE {noTable.SqlState}), so it is not a tenant database at all",
+                noTable);
         }
         catch (PostgresException unreadable)
             when (unreadable.SqlState is PostgresErrorCodes.InsufficientPrivilege)
@@ -146,7 +147,8 @@ internal static class TenantIdentityStamp
             throw TenantRoutingViolationException.Unstamped(
                 expected,
                 database,
-                $"the connected role cannot read {TableName} (SQLSTATE {unreadable.SqlState}), so the stamp cannot be proven");
+                $"the connected role cannot read {TableName} (SQLSTATE {unreadable.SqlState}), so the stamp cannot be proven",
+                unreadable);
         }
 
         if (!reading.HasRow)

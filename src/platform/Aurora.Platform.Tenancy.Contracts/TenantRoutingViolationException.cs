@@ -17,14 +17,20 @@ namespace Aurora.Platform.Tenancy.Contracts;
 /// </para>
 /// <para>
 /// It carries what the incident needs as data: the tenant that was expected, the tenant the
-/// database turned out to be stamped for (or none), and the database reached. None of that is
-/// personal data; all of it is what an operator asks first.
+/// database turned out to be stamped for (or none), the database reached, and - when the check
+/// could not be made because the database refused the read - the driver fault that said so, as
+/// the inner exception. None of that is personal data; all of it is what an operator asks first.
 /// </para>
 /// </remarks>
 public sealed class TenantRoutingViolationException : Exception
 {
-    private TenantRoutingViolationException(string message, TenantId expected, TenantId? found, string databaseName)
-        : base(message)
+    private TenantRoutingViolationException(
+        string message,
+        TenantId expected,
+        TenantId? found,
+        string databaseName,
+        Exception? cause)
+        : base(message, cause)
     {
         Expected = expected;
         Found = found;
@@ -66,18 +72,27 @@ public sealed class TenantRoutingViolationException : Exception
             "cannot pass as the right tenant (ADR-0007 4.3). The request is refused.",
             expected,
             found,
-            databaseName);
+            databaseName,
+            cause: null);
     }
 
     /// <summary>The database carries no stamp that could prove which tenant it belongs to.</summary>
     /// <param name="expected">The tenant the connection was opened for.</param>
     /// <param name="databaseName">The database reached.</param>
     /// <param name="reason">Why nothing could be proven: no table, no row, an id that names nobody.</param>
+    /// <param name="cause">
+    /// The driver fault that made the stamp unreadable, when there was one - a missing table, a
+    /// refused read - kept as the inner exception so the server's own words survive for the operator.
+    /// </param>
     /// <exception cref="ArgumentException">
     /// <paramref name="expected"/> is unassigned, or <paramref name="databaseName"/> or
     /// <paramref name="reason"/> is blank.
     /// </exception>
-    public static TenantRoutingViolationException Unstamped(TenantId expected, string databaseName, string reason)
+    public static TenantRoutingViolationException Unstamped(
+        TenantId expected,
+        string databaseName,
+        string reason,
+        Exception? cause = null)
     {
         RequireAssigned(expected, nameof(expected));
         ArgumentException.ThrowIfNullOrWhiteSpace(databaseName);
@@ -89,7 +104,8 @@ public sealed class TenantRoutingViolationException : Exception
             "(ADR-0007 4.3). The request is refused.",
             expected,
             found: null,
-            databaseName);
+            databaseName,
+            cause);
     }
 
     private static void RequireAssigned(TenantId tenantId, string parameterName)
