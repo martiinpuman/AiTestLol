@@ -194,3 +194,33 @@ that extension code cannot reach another tenant's data?**
 > **Proceeding on: not yet.** Under ADR-0033 §5.4 such a statement would be **false today**, and making
 > it is what ends the accepted risk. This is the one of the three with a legal edge: the answer changes
 > what may be signed, not just what gets built.
+
+## 2026-09-12 — Who may widen the tenancy trust boundary (OPEN, not blocking)
+
+Raised by the architect in ADR-0040 §4.4, and it is genuinely the product owner's rather than an
+agent's, because the answer is a repository setting no agent can make.
+
+ADR-0033 §5.3 already requires an operator surface that states, **next to the button**, that adding a
+trusted package key admits code able to read every tenant. ADR-0040 wants the same class of control for
+`[InternalsVisibleTo]`, because an `[InternalsVisibleTo]` grant is the mechanism that decides who may
+**originate** a `TenantScope` — and origination, not naming, turned out to be the real boundary.
+
+It cannot have it. There is no `CODEOWNERS` file, and branch protection is not agent-configurable.
+
+**Q17. Will you add a `CODEOWNERS` file and enable branch protection on
+`claude/multi-tenant-saas-erp-pv2nap`?**
+
+> **Proceeding on: no, and the gap is written down rather than papered over.** ADR-0040 §4.2 ships the
+> mechanical half regardless — a repository-wide rule that every grant is either to the declaring
+> assembly's own test projects or in a pinned allow-list, with the allow-list **empty** today, reporting
+> grants found / self-test / pinned / unlisted so it cannot report clean over a population it failed to
+> scan. What that rule cannot do is require a *particular human* to approve a widening.
+>
+> So without `CODEOWNERS`, the last link in "who may widen the tenancy trust boundary" is **a reviewer's
+> attention** — and this project's entire failure record is about links nobody was reading. It is the
+> cheapest control on the list and the only one that needs you.
+>
+> Worth knowing before you decide: this is not hypothetical scope creep. B-06.3 is about to add the
+> first entry to the sanctioned-doors allow-list, which ADR-0040 §4.5 judges a **larger** widening than
+> a grant would be — a grant is visible in a `.csproj` diff, a door is one line inside a test file.
+
