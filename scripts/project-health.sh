@@ -314,10 +314,35 @@ else
 fi
 echo
 
-# 6. Uncommitted work in the main checkout. Uncommitted work is lost work.
+# 6. The main checkout is on the integration branch, and its work is committed.
+#
+# Both halves are here because of one incident on 2026-09-12. An agent was
+# dispatched without being told to make a worktree, so it checked a task branch
+# out in the main checkout. The orchestrator then committed a backlog note,
+# which landed on that task branch, and `git push origin <integration>` reported
+# SUCCESS while pushing an unchanged ref - the note was reported as recorded and
+# was not on the integration branch at all. Nothing failed; the push was a real
+# push of a real branch that simply had nothing new on it.
+#
+# That is why the branch is checked before the working tree. A dirty tree is
+# visible the moment you look; the wrong branch is invisible precisely because
+# every command still succeeds.
 echo "working tree"
+checked_out="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(detached)')"
+if [ "${checked_out}" != "${INTEGRATION}" ]; then
+  fail "the main checkout is on '${checked_out}', not the integration branch '${INTEGRATION}'"
+  say "        Anything committed here lands on '${checked_out}'. A push naming the"
+  say "        integration branch will still report success - it pushes that ref, which"
+  say "        has not moved - so the work is silently somewhere else."
+  say "        An agent working in the main checkout should have a worktree instead."
+  say "        Check where your recent commits actually went:"
+  say "            git branch --contains <sha>"
+  say "            git merge-base --is-ancestor <sha> origin/${INTEGRATION}"
+else
+  ok "on ${INTEGRATION}"
+fi
 if [ -n "$(git status --porcelain)" ]; then
-  fail "uncommitted changes in the integration checkout:"
+  fail "uncommitted changes in the main checkout:"
   git status --porcelain | sed 's/^/            /'
 else
   ok "clean"
