@@ -57,10 +57,12 @@ readonly FAIL_TAIL_LINES=40
 # catch a whole assembly dropping out of Aurora.sln, a misspelled Category trait
 # or a discovery failure, all of which move the count by tens or to zero. Re-round
 # it whenever a test project joins or leaves Aurora.sln.
-# 829 executed with B-06.1a merged onto B-19 (SharedKernel 231, Countries.Contracts 141,
-# Countries.Hosting 91, Platform.Tenancy 231, Architecture 135); 764 before it.
+# 830 executed with B-06.1a merged onto the integration branch (SharedKernel 231,
+# Countries.Contracts 141, Countries.Hosting 91, Platform.Tenancy 232, Architecture
+# 135), read from the gate's own .trx files; this branch adds 65 to Platform.Tenancy,
+# so the integration branch alone measures 765 where its line said 764.
 # Re-rounded at every merge, never inherited: B-04 alone measured 342, B-05 371,
-# B-12 440, B-03.1 761, B-19 764, B-06.1a 829.
+# B-12 440, B-03.1 761, B-19 764, B-06.1a 830.
 MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-820}"
 readonly MIN_UNIT_TESTS
 
