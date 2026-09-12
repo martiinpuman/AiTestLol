@@ -448,8 +448,8 @@ seeds the one `database_cluster` row for the test container on first use, with a
 reference the resolver's `EnvironmentSecretStore` can answer for the life of the fixture; every
 routing test bed and the end-to-end resolve test place their tenants on it. Until B-20 each seeded a
 row of its own for that endpoint — variant 3 as a fixture, the shape ADR-0034 §3.2 forbids — and
-under the index five of B-06.1's six routing tests failed on the second such row until the fixture
-changed.
+under the index, measured before the fixture changed, every such test but the first in the run
+failed with `23505`: five of the six that seeded a row, plus the guard, six red where one was meant.
 
 ---
 
