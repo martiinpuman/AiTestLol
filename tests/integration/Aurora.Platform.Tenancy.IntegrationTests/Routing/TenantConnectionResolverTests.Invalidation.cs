@@ -15,8 +15,9 @@ namespace Aurora.Platform.Tenancy.IntegrationTests.Routing;
 
 /// <summary>
 /// The non-negotiable proof of B-06.1: the routing entry is served from the cache, and a tenant
-/// state change makes the next resolve read the catalog again. Plus the one shape the catalog does
-/// not yet refuse, kept red on purpose (PR #14 H-1).
+/// state change makes the next resolve read the catalog again. Plus an inertness guard over the
+/// one shape the catalog does not yet refuse (PR #14 H-1): green while the hole is open, red the day
+/// it closes, to be deleted then rather than repaired.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -164,29 +165,33 @@ public sealed partial class TenantConnectionResolverTests
     }
 
     [Fact]
-    public async Task Two_cluster_rows_on_one_server_cannot_route_two_tenants_to_one_physical_database()
+    public async Task Two_cluster_rows_on_one_server_still_route_two_tenants_to_one_physical_database()
     {
-        // RED, PENDING THE PHYSICAL-UNIQUENESS DECISION (PR #14 H-1, routed to the architect).
+        // INERTNESS GUARD: green while the hole is open, red the day it closes - and then DELETED,
+        // not repaired. The pattern of B-04's rule over the not-yet-existing kernel types and
+        // B-19's PartitionPrivileges guard: a test that asserts a gap exists, so that whoever closes
+        // the gap is stopped here and made to write the real assertion in its place.
         //
-        // ux_tenant_cluster_id_database_name is keyed on cluster_id; the identity of a physical
-        // database is (host, port, database_name); and nothing makes database_cluster (host, port)
-        // unique. Two cluster rows for one server - a replica row, a re-registration after a
-        // failover, a Draining row kept beside its replacement - one tenant each, the attacker's
-        // database_name copied from the victim's, and both resolve to one physical database. The
-        // single-cluster shape is refused correctly by the B-05 index; this one walks around it.
+        // The hole (PR #14 H-1): ux_tenant_cluster_id_database_name is keyed on cluster_id; the
+        // identity of a physical database is (host, port, database_name); and nothing makes
+        // database_cluster (host, port) unique. Two cluster rows for one server - a replica row, a
+        // re-registration after a failover, a Draining row kept beside its replacement - one tenant
+        // each, the attacker's database_name copied from the victim's, and both resolve to one
+        // physical database. The single-cluster shape is refused correctly by the B-05 index; this
+        // one walks around it. Reachability: aurora_app cannot write either row; this needs the owner.
         //
-        // The fix is a CatalogDbContext migration making the physical endpoint the unique axis, and
-        // it is not this branch's: docs/BACKLOG.md keeps the catalog migration chain to one branch
-        // at a time and task/B-19 holds it. This test therefore fails today, with the reviewer's own
-        // output, and goes green the moment the catalog refuses either the second cluster row or the
-        // second tenant on the same physical database - it accepts a 23505 at either insert, so
-        // whichever axis the architect makes unique turns it green. Not skipped: a skipped test
-        // reports nothing. Reachability: aurora_app cannot write either row; this needs the owner.
+        // The fix is the physical-uniqueness index the architect owns (ADR-0034, routed from PR #14
+        // H-1) - a CatalogDbContext migration this branch must not add while the catalog migration
+        // chain is one branch at a time. When it lands, the catalog refuses one of the two inserts
+        // below with 23505, this test fails, and its message says what to do: delete it and write
+        // the real property - no two non-deleted tenant rows produce the same resolved connection
+        // string, computed by the real resolver over real rows - in its place.
         await using RoutingTestBed bed = await RoutingTestBed.WithActiveTenantAsync(_catalog);
         Tenant victim = bed.Tenant;
         DatabaseCluster secondRow = bed.AnotherClusterRowForTheSameServer();
         Tenant attacker = RoutingTestBed.ActiveTenantOn(secondRow);
 
+        string? refusedBy = null;
         try
         {
             await bed.SeedAsync(owner =>
@@ -198,19 +203,26 @@ public sealed partial class TenantConnectionResolverTests
         }
         catch (Exception refusal) when (UniqueViolationIn(refusal) is { } constraint)
         {
-            _output.WriteLine($"the catalog refused the second row: {UniqueViolation} on {constraint}");
-            return;
+            refusedBy = constraint;
         }
+
+        refusedBy.ShouldBeNull(
+            $"the catalog now refuses a second cluster row on one server ({UniqueViolation} on {refusedBy}): the PR #14 H-1 "
+            + "hole is closed and this inertness guard is obsolete. Delete it and write the real property in its place - "
+            + "no two non-deleted tenant rows produce the same resolved connection string, computed by the real resolver "
+            + "over real rows (ADR-0034).");
 
         string victimEndpoint = PhysicalEndpointOf(await bed.ResolveAsync(victim.Id));
         string attackerEndpoint = PhysicalEndpointOf(await bed.ResolveAsync(attacker.Id));
 
         _output.WriteLine($"victim   -> {victimEndpoint}");
         _output.WriteLine($"attacker -> {attackerEndpoint}");
-        attackerEndpoint.ShouldNotBe(
+        _output.WriteLine("the PR #14 H-1 hole is still open: two tenants resolve to one physical database (inertness guard, green)");
+        attackerEndpoint.ShouldBe(
             victimEndpoint,
-            "two tenants resolved to one physical database (PR #14 H-1): ux_tenant_cluster_id_database_name is keyed on "
-            + "cluster_id and nothing makes database_cluster (host, port) unique; red until the architect's index lands");
+            "the two tenants no longer resolve to one physical database, so something closed the PR #14 H-1 hole "
+            + "without a 23505 at either insert: this inertness guard is obsolete. Delete it and write the real property "
+            + "in its place (ADR-0034).");
     }
 
     /// <summary>The constraint a unique violation names, whether PostgreSQL threw directly or through EF's save.</summary>

@@ -361,10 +361,14 @@ Three things a reader will want stated:
   copied, and both resolve to one physical database. The M-1 check above does not catch that (the
   row genuinely is the attacker's); the fix is a catalog migration on the physical axis, which is the
   architect's and not this branch's (the catalog migration chain is one branch at a time, and
-  `task/B-19` holds it). `Two_cluster_rows_on_one_server_cannot_route_two_tenants_to_one_physical_database`
-  is **red on purpose, not skipped**, printing both endpoints, and accepts a `23505` at either
-  insert so that whichever axis the architect makes unique turns it green. `aurora_app` can write
-  neither row; the shape needs the owner. B-07.1, the row that writes cluster rows, is held on it.
+  `task/B-19` holds it). `aurora_app` can write neither row; the shape needs the owner. B-07.1, the
+  row that writes cluster rows, is held on it. **The thing that expires with the hole** is
+  `Two_cluster_rows_on_one_server_still_route_two_tenants_to_one_physical_database`, an inertness
+  guard in the pattern of B-04's and B-19's: green while two cluster rows on one server still resolve
+  to one physical database (it prints both endpoints), red the day the catalog refuses either insert
+  with `23505` — and its message then says to delete it and write ADR-0034's real property in its
+  place, that no two non-deleted tenant rows produce the same resolved connection string, computed
+  by the real resolver over real rows.
 - **What invalidation promises, and what it does not.** The interceptor sees every state change
   written through the entity; a change written around the change tracker (raw SQL, `ExecuteUpdate`)
   is bounded by the entry's 60 s lifetime, as is another instance's copy until an L2 exists
