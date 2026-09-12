@@ -118,21 +118,23 @@ public sealed partial class TenantConnectionResolverTests
         var endpoint = new NpgsqlConnectionStringBuilder(_catalog.AppConnectionString);
         string secretName = "AURORA_TEST_APP_SECRET_" + Guid.NewGuid().ToString("N");
         Environment.SetEnvironmentVariable(secretName, endpoint.Password);
+        DatabaseCluster cluster = DatabaseCluster.Register(
+            Unique.ClusterId(),
+            Region.Parse("nz", null),
+            endpoint.Host!,
+            endpoint.Port,
+            CatalogDatabaseFixture.MaintenanceDatabaseName,
+            SecretReference.Of("vault://kv/aurora/test/admin"),
+            SecretReference.Of("vault://kv/aurora/test/migrator"),
+            SecretReference.Of("env:" + secretName),
+            1_000);
+        Tenant tenant = Unique.Tenant(cluster);
+        tenant.Activate(1, Unique.Now);
+        string databaseName = tenant.DatabaseName!;
+
+        await CreateHardenedTenantDatabaseAsync(databaseName);
         try
         {
-            DatabaseCluster cluster = DatabaseCluster.Register(
-                Unique.ClusterId(),
-                Region.Parse("nz", null),
-                endpoint.Host!,
-                endpoint.Port,
-                CatalogDatabaseFixture.MaintenanceDatabaseName,
-                SecretReference.Of("vault://kv/aurora/test/admin"),
-                SecretReference.Of("vault://kv/aurora/test/migrator"),
-                SecretReference.Of("env:" + secretName),
-                1_000);
-            Tenant tenant = Unique.Tenant(cluster);
-            tenant.Activate(1, Unique.Now);
-            await CreateHardenedTenantDatabaseAsync(tenant.DatabaseName!);
             await _catalog.SeedAsync(owner =>
             {
                 owner.DatabaseClusters.Add(cluster);
@@ -146,7 +148,7 @@ public sealed partial class TenantConnectionResolverTests
                 .ResolveAsync(tenant.Id, default);
 
             connection.ClusterId.ShouldBe(cluster.Id);
-            connection.DatabaseName.ShouldBe(tenant.DatabaseName);
+            connection.DatabaseName.ShouldBe(databaseName);
             connection.ResidencyRegion.ShouldBe(cluster.Region);
 
             await using var open = new NpgsqlConnection(connection.ConnectionString);
@@ -157,13 +159,20 @@ public sealed partial class TenantConnectionResolverTests
             (await reader.ReadAsync()).ShouldBeTrue();
 
             _output.WriteLine($"connected to {reader.GetString(0)} as {reader.GetString(1)} with application_name {reader.GetString(2)}");
-            reader.GetString(0).ShouldBe(tenant.DatabaseName);
+            reader.GetString(0).ShouldBe(databaseName);
             reader.GetString(1).ShouldBe(CatalogDatabaseFixture.AppRole);
             reader.GetString(2).ShouldBe($"aurora-web:{tenant.Key.Value}");
+
+            // The resolved string pools (§5.2), so after disposal the physical connection sits idle
+            // in a pool rather than closing; clear that pool so nothing reuses a connection to a
+            // database about to be dropped.
+            await reader.DisposeAsync();
+            NpgsqlConnection.ClearPool(open);
         }
         finally
         {
             Environment.SetEnvironmentVariable(secretName, null);
+            await DropTenantDatabaseAsync(databaseName);
         }
     }
 
@@ -185,6 +194,17 @@ public sealed partial class TenantConnectionResolverTests
             $"CREATE DATABASE {databaseName} OWNER {CatalogDatabaseFixture.MigratorRole} TEMPLATE template0 ENCODING 'UTF8'");
         await CatalogDatabaseFixture.ExecuteAsync(admin, $"REVOKE ALL ON DATABASE {databaseName} FROM PUBLIC");
         await CatalogDatabaseFixture.ExecuteAsync(admin, $"GRANT CONNECT ON DATABASE {databaseName} TO {CatalogDatabaseFixture.AppRole}");
+    }
+
+    /// <summary>
+    /// Leaves the cluster as it was found: <c>CatalogPrivilegeTests</c> proves <c>aurora_app</c> can
+    /// open no database but the catalog by trying every one on the cluster, and a hardened tenant
+    /// database left behind would be one it can open. <c>WITH (FORCE)</c> ends any session still on it.
+    /// </summary>
+    private async Task DropTenantDatabaseAsync(string databaseName)
+    {
+        await using NpgsqlConnection admin = await _catalog.OpenAdminMaintenanceConnectionAsync();
+        await CatalogDatabaseFixture.ExecuteAsync(admin, $"DROP DATABASE IF EXISTS {databaseName} WITH (FORCE)");
     }
 
     /// <summary>ADR-0007 §11.4: the row is kept as id, key and dates; every routing column is blanked. As the owner, which B-05 made the only principal able to.</summary>
