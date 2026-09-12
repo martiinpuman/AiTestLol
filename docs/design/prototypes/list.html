@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurora ERP — Sales Orders</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  .col-settings-panel { right: 0; left: auto; min-width: 240px; }
+  .col-settings-panel label { display:flex; align-items:center; gap:8px; padding:6px var(--space-2); font-size:12px; cursor:pointer; border-radius:var(--radius-sm); }
+  .col-settings-panel label:hover { background: var(--color-surface-hover); }
+  .col-settings-panel input { accent-color: var(--color-accent-solid); }
+  select.view-select { height:32px; border-radius:var(--radius-sm); border:1px solid var(--color-border-strong); background:var(--color-surface); font-size:12px; padding:0 var(--space-2); }
+  .note-banner { font-size:11px; color: var(--color-text-subtle); padding: 0 var(--space-3); }
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+  <header class="topbar">
+    <button class="icon-btn" title="Toggle navigation" aria-label="Toggle navigation" onclick="toggleRail()">☰</button>
+    <div class="brand"><span class="mark">A</span> Aurora ERP</div>
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('company-popover', event)">
+        <span class="company-badge" style="--badge-color:#2454CC">NT</span>
+        <span class="tenant-name">Nordwind Group</span>
+        <span class="sep">▸</span>
+        <span class="company-name">Nordwind Trading AB</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="company-popover" hidden>
+        <div class="group-label">Nordwind Group</div>
+        <div class="popover-item active">
+          <span class="company-badge" style="--badge-color:#2454CC">NT</span>
+          <div><div>Nordwind Trading AB</div><div class="meta">Sweden · Trading &amp; wholesale</div></div>
+        </div>
+        <div class="popover-item" onclick="requestCompanySwitch('Nordwind Manufacturing GmbH', false)">
+          <span class="company-badge" style="--badge-color:#8A5200">NM</span>
+          <div><div>Nordwind Manufacturing GmbH</div><div class="meta">Germany · Light manufacturing</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="search-box"><span>🔍</span><input placeholder="Search this company…"></div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('cmdk-modal')">Commands <span class="kbd">⌘K</span></button>
+    <button class="icon-btn" title="Notifications" aria-label="Notifications">🔔</button>
+    <button class="switcher-trigger" onclick="togglePopover('user-popover', event)"><span class="company-badge" style="--badge-color:#57616C">MP</span><span class="chev">▾</span></button>
+    <div class="popover" id="user-popover" hidden style="right:0;left:auto;min-width:200px;">
+      <div class="popover-item">Preferences</div><div class="popover-item">Sign out</div>
+    </div>
+  </header>
+
+  <nav class="nav-rail">
+    <div class="nav-section-label">Recent</div>
+    <div class="recent-item" onclick="location.href='detail.html'"><span class="title">SO-2038 — Atlas Components Inc</span><span class="co">Nordwind Trading AB</span></div>
+    <div class="nav-section-label">Modules</div>
+    <a class="nav-item" href="shell.html"><span class="ic">⌂</span><span class="label">Home</span></a>
+    <a class="nav-item active" href="list.html"><span class="ic">🧾</span><span class="label">Sales</span></a>
+    <a class="nav-item"><span class="ic">📦</span><span class="label">Purchasing</span></a>
+    <a class="nav-item"><span class="ic">🏭</span><span class="label">Inventory</span></a>
+    <a class="nav-item"><span class="ic">⚙</span><span class="label">Manufacturing</span></a>
+    <a class="nav-item"><span class="ic">💰</span><span class="label">Finance</span></a>
+    <a class="nav-item"><span class="ic">🔧</span><span class="label">Settings</span></a>
+  </nav>
+
+  <main class="main">
+    <div class="page" style="max-width:1600px;">
+      <div class="page-header">
+        <div>
+          <div class="breadcrumb">Sales</div>
+          <h1>Sales Orders</h1>
+        </div>
+        <div style="display:flex; gap:var(--space-2); align-items:center;">
+          <div class="theme-toggle">
+            <button data-mode="light" onclick="setTheme('light')">Light</button>
+            <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+            <button data-mode="system" onclick="setTheme('system')">System</button>
+          </div>
+          <button class="btn btn-primary" onclick="location.href='detail.html'">+ New order</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="bulk-bar" id="bulk-bar">
+          <span><strong id="bulk-count">0</strong> selected</span>
+          <button class="btn btn-secondary btn-sm">Approve</button>
+          <button class="btn btn-secondary btn-sm">Export</button>
+          <button class="btn btn-danger btn-sm">Delete</button>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn btn-ghost btn-sm" onclick="clearSelection()">Clear selection</button>
+        </div>
+
+        <div class="toolbar">
+          <select class="view-select">
+            <option>My view: Open orders</option>
+            <option>Team view: This week's shipments</option>
+            <option>All orders</option>
+          </select>
+          <div class="toolbar sep" style="padding:0;border:none;"></div>
+          <span class="chip">Status: Open, Confirmed <button onclick="removeChip(this)">✕</button></span>
+          <span class="chip">Ship date: Next 30 days <button onclick="removeChip(this)">✕</button></span>
+          <button class="btn btn-ghost btn-sm">+ Add filter</button>
+          <div class="spacer"></div>
+          <div class="switcher">
+            <button class="btn btn-secondary btn-sm" onclick="togglePopover('col-settings', event)">⚙ Columns</button>
+            <div class="popover col-settings-panel" id="col-settings" hidden>
+              <div class="group-label">Visible columns</div>
+              <label><input type="checkbox" checked disabled> Order #</label>
+              <label><input type="checkbox" checked> Customer</label>
+              <label><input type="checkbox" checked> Status</label>
+              <label><input type="checkbox" checked> Order date</label>
+              <label><input type="checkbox" checked> Ship date</label>
+              <label><input type="checkbox" checked> Salesperson</label>
+              <label><input type="checkbox" checked> Total</label>
+              <label><input type="checkbox"> Payment status</label>
+              <label><input type="checkbox"> Warehouse</label>
+              <hr>
+              <div class="popover-item" style="color:var(--color-accent)">Reset to default</div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-sm">Save view</button>
+        </div>
+
+        <div class="grid-scroll">
+          <table class="grid density-compact" id="orders-grid">
+            <thead>
+              <tr>
+                <th class="checkbox-cell"><input type="checkbox" id="grid-select-all" onchange="toggleAllRows(this)"></th>
+                <th onclick="sortGridBy(document.getElementById('orders-grid'),1,'text')">Order # <span class="arrow"></span></th>
+                <th onclick="sortGridBy(document.getElementById('orders-grid'),2,'text')">Customer <span class="arrow"></span></th>
+                <th onclick="sortGridBy(document.getElementById('orders-grid'),3,'text')">Status <span class="arrow"></span></th>
+                <th onclick="sortGridBy(document.getElementById('orders-grid'),4,'text')">Order date <span class="arrow"></span></th>
+                <th onclick="sortGridBy(document.getElementById('orders-grid'),5,'text')">Ship date <span class="arrow"></span></th>
+                <th>Salesperson</th>
+                <th class="num" onclick="sortGridBy(document.getElementById('orders-grid'),7,'num')">Total <span class="arrow"></span></th>
+              </tr>
+            </thead>
+            <tbody id="orders-body">
+              <!-- rows injected below via explicit markup (static prototype; production pages 50/virtualizes from the server, never renders a fixed client array — see components.md #8) -->
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid-footer">
+          <span>Showing 1–20 of 3,412 orders · sort/filter re-query the server in production (this prototype simulates it over a fixed sample)</span>
+          <span style="display:flex;align-items:center;gap:8px;">
+            Rows per page:
+            <select class="view-select" style="height:26px;"><option>20</option><option>50</option><option>100</option></select>
+            <button class="btn btn-ghost btn-sm" disabled>‹ Prev</button>
+            <button class="btn btn-ghost btn-sm">Next ›</button>
+          </span>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<div class="demo-controls">
+  <div class="title">Prototype controls</div>
+  <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+
+<div class="modal-overlay" id="cmdk-modal" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true">
+    <input placeholder="Search records, or type a command…" autofocus>
+    <div class="results">
+      <div class="group-label">Navigate to</div>
+      <div class="result" onclick="location.href='shell.html'"><span>⌂</span> Home</div>
+      <div class="group-label">Records</div>
+      <div class="result" onclick="location.href='detail.html'"><span>📄</span> SO-2038 — Atlas Components Inc <span class="co">Nordwind Trading AB</span></div>
+    </div>
+  </div>
+</div>
+<div class="toast-stack"></div>
+
+<script src="app.js"></script>
+<script>
+  var statuses = [
+    ["Draft","info"], ["Confirmed","success"], ["On hold","warning"],
+    ["Shipped","success"], ["Cancelled","danger"], ["Invoiced","success"]
+  ];
+  var customers = [
+    "Contoso Wholesale","Atlas Components Inc","BrightPly Manufacturing","Solheim Timber & Steel",
+    "Kesler Fasteners GmbH","Meridian Wholesale Ltd","Northgate Distribution","Havenport Trading Co",
+    "Ashford Industrial Supply","Delta Ridge Hardware","Comet Bay Logistics","Ferro & Sons Metalworks",
+    "Ilkkala Paper Group","Redwood Fixtures Ltd","Marchetti Componenti SRL","Union Bolt & Fastener",
+    "Falkenberg Plywood AB","Sterling Freight Traders","Bright Harbor Retail Group","Northline Cabinetry"
+  ];
+  var reps = ["A. Larsen","J. Okafor","M. Chen","P. Novak","S. Iyer"];
+  var rows = [];
+  for (var i = 0; i < 20; i++) {
+    var st = statuses[i % statuses.length];
+    var d = new Date(2026, 8, 1 + i);
+    var ship = new Date(2026, 8, 5 + i);
+    var amount = (Math.random() * 18000 + 500).toFixed(2);
+    rows.push({
+      num: "SO-" + (2041 - i),
+      customer: customers[i % customers.length],
+      status: st[0], statusClass: st[1],
+      date: d.toISOString().slice(0,10),
+      ship: ship.toISOString().slice(0,10),
+      rep: reps[i % reps.length],
+      amount: parseFloat(amount)
+    });
+  }
+  var tbody = document.getElementById("orders-body");
+  tbody.innerHTML = rows.map(function(r){
+    return '<tr tabindex="0" onclick="location.href=\'detail.html\'">' +
+      '<td class="checkbox-cell" onclick="event.stopPropagation()"><input type="checkbox" class="grid-body-checkbox" onchange="onRowCheck()"></td>' +
+      '<td class="mono">' + r.num + '</td>' +
+      '<td>' + r.customer + '</td>' +
+      '<td><span class="badge badge-' + r.statusClass + '">' + r.status + '</span></td>' +
+      '<td>' + r.date + '</td>' +
+      '<td>' + r.ship + '</td>' +
+      '<td>' + r.rep + '</td>' +
+      '<td class="num tnum">' + formatMoney(r.amount) + '</td>' +
+      '</tr>';
+  }).join("");
+</script>
+</body>
+</html>

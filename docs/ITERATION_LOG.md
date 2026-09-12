@@ -1,0 +1,422 @@
+# Iteration log
+
+Append-only. One entry per iteration, newest at the bottom.
+
+---
+
+## Iteration 1 — 2026-09-10 — Bootstrap B1 (scaffold)
+
+**Done**
+- Read the supplied agent bundle; installed the six role definitions into `.claude/agents/`.
+- Put the four locked product decisions to the human and recorded the answers in `docs/HUMAN_INBOX.md`.
+- Adapted `CLAUDE.md`: generic core + Country Packages, .NET 10 LTS, EF Core, PostgreSQL, Blazor Server, database-per-tenant.
+- Provisioned the toolchain: .NET SDK 10.0.401 (LTS) at `/usr/share/dotnet`, Docker daemon running, `postgres:17-alpine` pulled for Testcontainers.
+- Created the docs skeleton, `.gitignore` and `scripts/dev-env.sh`.
+
+**verify.sh** — does not exist yet (arrives in B5).
+
+**Problems** — none.
+
+**Wasted effort** — none.
+
+**Next** — B2: researcher (landscape pass) and ui-designer (design foundation) in parallel.
+
+### Environment capability spike (orchestrator, iteration 1)
+
+Before letting the architect commit ADRs to the locked stack, the orchestrator verified the stack
+actually works in this container. A throwaway spike (built outside the repo, not committed as code)
+provisioned two PostgreSQL databases through Testcontainers, pointed a separate EF Core `DbContext`
+at each, wrote a row into tenant A and asserted tenant B could not see it.
+
+**Result: PASSED in 9 s.** Verified versions:
+
+| Component | Version |
+|---|---|
+| .NET SDK | 10.0.401 (LTS) |
+| ASP.NET Core runtime | 10.0.12 |
+| Npgsql.EntityFrameworkCore.PostgreSQL | 10.0.3 |
+| Testcontainers.PostgreSql | 4.15.0 |
+| PostgreSQL test image | postgres:17-alpine |
+| xunit | 2.9.3 |
+
+Notes for developers:
+- `dotnet new blazor --interactivity Server --empty` produces the correct Blazor Server starting point.
+- `PostgreSqlBuilder`'s parameterless constructor is **obsolete** in Testcontainers 4.15.0. Use
+  `new PostgreSqlBuilder("postgres:17-alpine")` so the image is pinned explicitly.
+- Creating a database requires a connection to a *different* database on the same server, so tenant
+  provisioning needs an admin connection distinct from any tenant connection. This shapes the
+  provisioning service's design.
+- Roughly 9 s of container startup per integration-test class. Share one PostgreSQL container across
+  a test collection rather than starting one per test, or `verify.sh` will get slow fast.
+
+**Conclusion:** the locked stack is sound and database-per-tenant is demonstrably workable here.
+The architect may design against these versions with confidence.
+
+---
+
+## Iteration 2 — 2026-09-11 — Bootstrap B3, B4 and the first code task
+
+**Done**
+- **B3 architecture complete.** 25 ADRs, module map, solution layout, testing strategy, scalability
+  and dependencies. Resumed the previous session's interrupted architect rather than restarting it;
+  its committed forward references (ADR-0007, 0008, 0013, 0018, 0021, 0023 and the `TenantScope` /
+  `ITenantConnectionResolver` vocabulary) were honoured exactly.
+- **Dependency licences verified, not assumed.** Rejected AutoMapper, MediatR, MassTransit
+  (commercial since 2025), FluentAssertions v8, Hangfire (LGPL), Duende IdentityServer, Redis server
+  (RSAL/SSPL), plus Moq and NetArchTest on maintainer-trust and maintenance grounds.
+- **Orchestrator verification:** restored all 25 chosen packages at their stated versions in a
+  scratch project. Every one resolved. The version numbers in `dependencies.md` are real.
+- **B4 planning complete.** Roadmap, glossary, SPEC-001, SPEC-002 and a 29-row backlog
+  (16 `ready`, 12 `draft`). The PM split B-15 into three rows because as specified it did not fit
+  one session — correct application of its own sizing rule.
+- **B-01 recovered and completed.** See below.
+
+**verify.sh** — still does not exist; it is task B-02. The gate for B-01 is `dotnet build -c Release`.
+
+**Problems**
+1. **A session restart killed the B-01 developer before it committed.** Its worktree survived with
+   the work intact and uncommitted. The orchestrator verified the build (Release, 0 warnings,
+   0 errors, 9/9 lock files, all four acceptance criteria met) and committed it unchanged on
+   `task/B-01`.
+2. **The Docker daemon failed to start on resume** — the stale-pid fix added in iteration 1 caught
+   it, retried and recovered. The fix worked exactly as intended on its first real exercise.
+
+**Wasted effort** — none, but two near-misses. Both were recoveries of work that a less careful
+handoff would have thrown away and redone.
+
+**Lessons folded into the loop**
+- A usage limit or a session restart can kill an agent at any moment, but **files already written
+  survive**. Always read what exists and resume from it; never discard sound partial work.
+- **Developers must commit as soon as their work first compiles**, not at the end. B-01 came within
+  one reclaimed container of losing a complete, correct scaffold. The task brief template now
+  requires an early WIP commit on the task branch.
+
+### Orchestrator verification — the pinned test runner (iteration 2)
+
+The architect corrected a factual claim in ADR-0020: the rule that the test-runner major must match
+the framework major held for runner 2.x and is false from 3.0, so `xunit.runner.visualstudio` **3.1.4**
+beside `xunit` **2.9.3** is correct and must not be "fixed" by downgrading.
+
+Nothing had actually exercised that pairing — the solution has no tests yet, so `dotnet test` reporting
+"No test is available" proves only that the run does not abort. If the claim were wrong, every test
+project would be silently broken and the first symptom would arrive at B-03 with the first real test.
+
+Verified directly: a scratch project at exactly those two pinned versions, with one passing and one
+deliberately failing test.
+
+**Result: 2 tests discovered, 1 passed, 1 failed, exit 1.**
+
+The runner discovers and runs xunit 2.9.3 tests, and a failing test genuinely fails the run — which the
+quality gate depends on. The architect's correction is confirmed; ADR-0020's decision stands unchanged.
+
+---
+
+## Iteration 3 — 2026-09-11 — B-01 merged, the gate and the kernel reviewed
+
+**Done**
+- **B-01 merged.** Solution skeleton, 9 projects, Release clean at 0 warnings. Reviewed twice: the
+  first review found a solution-wide red `dotnet test` that no planned gate stage would have caught.
+- **B-02 reviewed** → CHANGES_REQUESTED: stage 6 reported PASS having executed zero tests, and
+  nothing in the backlog would ever have made it notice.
+- **B-03 reviewed** → CHANGES_REQUESTED with a **blocker**: `Money.Allocate` silently lost or invented
+  minor units for ordinary ratio weights. 20.6% of 300 000 randomised splits did not sum to their
+  total. Reproduced independently by the orchestrator before acting.
+- Architect closed four spec corrections and swept §6 for acceptance rows narrower than the ADRs they
+  implement. Found five, of which **B-07's would have permitted cross-tenant database adoption**.
+
+**verify.sh** — green on the integration branch throughout.
+
+**Problems** — the `decimal` precision trap was invisible to a clean build, 203 passing tests and
+strict analyzers. Only a reviewer reading the implementation against the ADR found it.
+
+**Lessons folded in** — `CLAUDE.md` gained the self-check list; every rejection so far has been one of
+three shapes, and they are now stated where developers read them before starting.
+
+---
+
+## Iteration 4 — 2026-09-11 — parallel build, and optimisation at the product owner's request
+
+**Done**
+- **B-02 and B-03 merged.** The quality gate is live (stages 0–3, 6, 11, plus a 16-case self-test
+  harness); `Aurora.SharedKernel` landed 208 tests and raised the gate's test floor from 0 to 200.
+- **B-05 completed and in review** — catalog database, 363 solution tests, 41 integration tests.
+- **B-04, B-12, B-02-FU** dispatched in parallel.
+- **Optimisation pass**, on the product owner's instruction: review depth and length tiered by risk;
+  reviewers now write their own review files instead of returning 5 000 words through the
+  orchestrator's context; `docs/DEVELOPER_BRIEF.md` added as a routing document; Standard and Light
+  tasks may now stack on a gate-green predecessor branch; parallelism limits measured (4 CPUs is the
+  binding constraint, not disk or memory).
+
+**Measured** — B-01 44 min of agent time, B-02 74, B-03 96. Roughly half of the two larger tasks went
+on the rejection round, which is what the self-check list and tiering target.
+
+**Problems**
+1. **Three concurrent Fable agents exhausted Fable's quota in under a minute**, all dying before doing
+   work. Fable's quota is separate from Opus's and tighter. The loop now prefers one or two and falls
+   back to Opus on a rate limit rather than idling.
+2. **A completion notice badly understated what an agent had done** — B-05's showed a single sentence
+   while its branch held 24 commits. Always check the branch before concluding nothing happened.
+
+**Wasted effort** — the three killed Fable spawns. Nothing else; every interrupted task resumed from
+committed work.
+
+## Iteration 5 — 2026-09-11
+
+**Reviews returned, all four rejecting.** B-04 REJECT (2 mechanical majors, but the reviewer planted
+eleven real violations in production code and watched every rule go red — the rule set is sound).
+B-05 security re-review CHANGES_REQUESTED with 2 High: the privilege oracle that replaced
+`ALTER DEFAULT PRIVILEGES` is blind to column-level grants and to PG 17's `MAINTAIN`, and the
+request-path role owns the tenant routing tables — the reviewer repointed another tenant's database
+and cluster host as `aurora_app`, with no DDL and no superuser. B-12 CHANGES_REQUESTED twice: four
+majors from the peer review and one High from security, the latter a case-insensitivity bypass of the
+`Aurora.*` assembly rule. Three rework agents dispatched; every one returns to a second reviewer.
+
+**Automation built** (`docs/architecture/automation.md`). Three levers against the cost of a review
+round trip, which on the tasks measured so far has been roughly half of a task's wall clock:
+
+- Two hooks. A `PreToolUse(Bash)` guard blocks force-push, a push to any branch but the integration or
+  a `task/*` branch, deleting an ADR, staging a `.env`, and `dotnet` without `dev-env.sh` sourced in
+  the same call. A `PostToolUse(Write|Edit)` guard reports a country compared to a string literal in
+  core, an ambient clock read, a `float`/`double` in `src/`, a `TODO` with no backlog id, and a
+  credential-shaped literal. `hooks-selftest.sh` asserts every rule from both sides and prints its
+  case count: 35 cases, 17 blocking, 18 allowing.
+- `scripts/dev-test.sh`: the executed counts and the failures, nothing else. 89% less output than raw
+  `dotnet test` on a passing run. Zero executed tests is a failure, not a pass.
+- Three skills (`aurora-status`, `dispatch`, `integrate`) and `senior-developer` gaining
+  `memory: project`, `maxTurns: 400` and `disallowedTools: Agent`.
+
+**What building it taught.** Writing the hook selftest caught four defects in the hooks, three of them
+rules that never fired at all because the path derivation was wrong — the guards would have sat there
+looking like enforcement. Then *using* the guard caught two more that the selftest had not: a push
+whose output went through a pipe was refused, and a commit message describing a blocked command was
+analysed as if it were one. Both are now cases in the selftest. The allow side of a guard is not a
+formality; it is half of what the guard is.
+
+**Next:** integrate the three reworks as they return, each through a second reviewer. Then B-06.
+
+### Merged this iteration
+
+Reviews are now posted on each task's pull request. This table is the repository's own record of
+them, so a session with no GitHub access can still find the verdict and what it rested on.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| B-12 | #4 | APPROVE (second reviewer, Full) | senior-reviewer | Reproduced both carrying claims itself rather than accepting them. Mutated the tax implementation to naive and watched the new boundary property go red; 500 draws, 500 constructible, 188 phantom minor units against naive and 0 against shipped; confirmed rate and target are genuinely arbitrary (500 distinct rates) while sign, midpoint and currency are the fixed lists the remark claims. Broke the generator's construction deliberately to check the property goes red rather than being discarded. Probed twelve alternative assembly-name spellings through the package load context: no third bypass, and no culture-sensitive comparison anywhere. Reverting `src/` to the pre-rework commit turned 16 new tests red, confirming all four unbounded-range rows had been green-as-passing. Gate PASS at 440 executed, self-test 21/21. |
+| ARCH-CORRECTIONS | #6 | APPROVE (second reviewer, Full) | senior-reviewer | Reproduced all ten PostgreSQL behaviours the ADR-0028 amendment claims, against 17.11 — the REVOKE form leaves `pg_default_acl` empty and permits a later GRANT; the positive grant constrains a table created afterwards; the row trigger is cloned to a new partition and the truncate trigger is not; event triggers need a superuser this project does not define. Two rounds of new majors, both false claims *introduced by the fixes* — the second in text the first fix commit had just added. Verified the collateral check by hand: all 12 references to ADR-0008's own §6.1/§6.2 byte-identical to base after the renumbering. GitHub refused `APPROVE` with `403: Submitting APPROVE reviews is not permitted for this session type` — a session-policy restriction, not an authorship one, so the verdict is in the review body. |
+| B-05 | #3 | APPROVE (third security reviewer, Full) | security-reviewer | Re-ran all nineteen attack shapes from both earlier rounds; every one returns `42501` except `UPDATE … RETURNING database_name`, which crosses no privilege. Re-derived all three counted assertions against its own cluster and found them exact. Verified by execution on PG 17.11 that the per-schema `ALTER DEFAULT PRIVILEGES … REVOKE` form stores nothing — independently re-confirming ADR-0028 §2's second mechanism as a permanent no-op on a third cluster. Four mediums remain, none blocking, now recorded as FOLLOWUP-010…013 rather than routed a fourth time. Gate PASS at 603 unit tests on the merged tree (B-05 alone 371, B-12 alone 440), integration 54/54. |
+| B-04 | #8 | APPROVE (third reviewer, Full) | senior-reviewer | Executed eight fault injections rather than re-deriving the author's table: ghost `.csproj` under `src/Fixtures/` (21 of 136 red unbuilt, F1 reporting its `double` when built, against 42/42 green before the fix), `TMPDIR` inside the repo, the cross-assembly base walk, the plain-prefix and exact-list faults, the hosted set dropped, the simple-name catalog exemption, and the pre-rework argument-keyed T2. **Could not break** three things it tried: a hosted service reached through `IPlatformJob : IHostedService`, one implementing `IHostedLifecycleService`, and ADR-0032's sanctioned open-generic factory registration. Accepted the interim tenancy prefix on the explicit condition that it does not survive B-07 (FOLLOWUP-018). Gate PASS at 736 on the merged tree; floor re-rounded 600 → 730. PR #2 was closed in favour of #8: its head was the pre-rework branch, which diverged from the rework lineage when the author rebased, and force-pushing is a hard limit. |
+
+## Iteration 6 — 2026-09-12
+
+**Three merges: B-12, B-05, B-04, plus the ADR corrections.** Every one took two or three reworks and a
+reviewer who reproduced rather than accepted. The hardening floor is now five of its tasks complete.
+
+**What the reviews found that reading would not have.** A privilege oracle blind to column-level grants
+and to PG 17's `MAINTAIN`. Then `INSERT` reproducing a whole tenant takeover with no `UPDATE` and no
+`DELETE`. Then a `SECURITY DEFINER` function bypassing the *replacement* oracle, because a function's
+default ACL is `EXECUTE TO PUBLIC` and it did not read `pg_proc`. A production `.csproj` under any
+directory named `Fixtures/` vanishing from every architecture rule with the suite green at 42/42. And an
+assembly-name check using `Ordinal` where the .NET loader binds case-insensitively.
+
+**Process defects found and mechanised this iteration:**
+- Two PRs showed **pre-rework code for hours** because the reworks lived on `-rework2` branches. B-05
+  fast-forwarded; B-04 had diverged and could not, so PR #2 was closed and #8 opened from the branch
+  holding the work — force-pushing is a hard limit and hand-merging two rebased copies is what already
+  put a defect in a third document.
+- **Routings were evaporating.** B-05's third security reviewer reported three of its routings as being
+  made for the third time. Now `FOLLOWUP-010`…`025`, and transcription is a step in the merge procedure.
+  Three of the first rows cited the wrong ADR sections and had to be corrected — a pointer that does not
+  resolve is not a transcription.
+- **Removing an agent's worktree makes it unresumable.** Cost a resume: a one-test follow-up went to a
+  cold agent instead of the one that wrote the mechanism.
+- A **session rate limit killed three agents mid-task**; all three resumed from disk with context.
+
+**Two new rules earned, both about mechanisms that cannot fail** — the project's oldest theme, one level
+up each time. *A demonstration that cannot fail is not a demonstration*: ADR-0032's fault "proved" a rule
+while merely moving the report from one clause to another. *A floor set below the narrowing it detects,
+detects nothing*: T15's floor of 3 was satisfied by three unrelated calls.
+
+**Next:** confirm and merge ADR-0032; close ADR-0029's five highs, then dispatch the front of the B-17
+chain (B-03.1, B-17.1, B-17.2), which is ready as written.
+
+### Merged this iteration
+
+Reviews are posted on each task's pull request. This table is the repository's own record of them,
+so a session with no GitHub access can still find the verdict and what it rested on.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| ARCH-TENANT-DOORS (ADR-0032) | #7 | APPROVE (fourth round, Full) | senior-reviewer ×3 | Four rounds, each finding something real and each smaller than the last: two blockers, two majors, one major, one number. Round 4 is the one worth remembering — the architect widened the definition to close a twice-deferred ambiguity and claimed the new limb added nothing to the count; the reviewer measured it against a Release build of all nine production assemblies and found it adds exactly one, `WebApplication.CreateBuilder`, matched on its **return** type where limb (i) misses it. At a floor of 4, deleting that limb takes the population 5 → 4 and passes green: the same failure as the major it had just fixed, inside the fix for it. Floor is 5, and `testing-strategy.md` now names **both** blind floors so neither recurs silently. Final fix verified by the orchestrator line-by-line against the reviewer's own specification rather than a fourth full review — three reviewers had already passed over the design, and the diff was 6 insertions and 5 deletions of one number. Gate PASS at 736. |
+| B-03.1 | #10 | APPROVE (Full) | senior-reviewer | Attacked the empty-scope property from thirteen directions — reflection, `GetUninitializedObject`, System.Text.Json, `DataContractSerializer`, `MemberwiseClone`, lying/one-shot/self-emptying sequences, `default(T)` — and found no route to a scope that is empty and not `AllCompaniesInTenant`; a private write to the backing field still fails closed. Reproduced all three of the author's fault injections exactly (1, 3, 7 red) and confirmed the strengthening that made fault B bite: two of its three reds are now **message** assertions, because the fault had been passing by throwing the wrong exception. Four minors recorded as FOLLOWUP-035…038, including a false claim that the hash code is stable across processes. Gate PASS at 761. |
+
+## Iteration 7 — 2026-09-12
+
+**Two merges, four pull requests open, and the first parallel pair that actually was parallel.**
+
+**Gitflow made strict, reviews moved to GitHub.** At the product owner's instruction the team now runs
+`main` = master (never pushed to), `claude/multi-tenant-saas-erp-pv2nap` = develop, `task/<ID>` =
+feature. Every task branch carries a draft PR, every review is a submitted review on that PR with the
+verdict as its first line, and the orchestrator merges on that verdict. The product owner neither
+reviews nor accepts anything.
+
+Two GitHub refusals shape the mechanism and both are real: the account that authored a branch can
+submit neither `APPROVE` nor `REQUEST_CHANGES` on it. So a review is submitted as `COMMENT` with
+`VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES` as the **first line of the body**. That is a real
+verdict and the orchestrator merges on it. An earlier relay of this to the product owner claimed only
+`APPROVE` was refused; that was wrong, and is corrected here so the next session does not rediscover it.
+
+**The split paid off.** `PM-SPLIT-B061` cut the tenancy core into a type surface and a resolver, both
+depending only on merged B-05. Both ran concurrently, both returned, and they contest exactly five
+files — four of them the `verify.sh` floor line, a `.csproj`, its lock file and a module README, which
+is what a clean split looks like. `file-claims.sh` names them before the merge rather than after.
+
+**A readiness check that stopped one link short.** `project-health.sh` offered `B-18.1` as dispatchable
+while B-18.1's own notes say it may not run concurrently with B-19 — which was in flight — because all
+three of B-18.1, B-18.9 and B-19 carry a `CatalogDbContext` migration and that chain has one order. It
+also offered three rows that already had branches. The check read the dependency column and stopped
+there; the answer lived one link further on, in prose.
+
+It now reads both, and the interesting part is what it admits: the concurrency constraint is a
+**sentence**, so the check matches a fixed phrase list and **prints that list and the number of cells
+it scanned**, because a parser that reads a subset of its input and reports as though it read all of it
+is the seventh distinct shape of this project's oldest defect, and it has already shipped here once.
+`FOLLOWUP-042` asks the project-manager for a real field so the answer stops depending on phrasing.
+Both faults injected: deleting the hold sentence from B-18.1 flips it to dispatchable, which is what
+proves the hold is driven by the text rather than by coincidence.
+
+**The standing hole, now written into STATE.md as a risk rather than a task note.** `verify.sh` stages
+4, 5, 7, 8, 9 and 10 do not exist, so **every integration test on this project is outside the merge
+gate** — all 54, including every tenant-isolation proof. Demonstrated: a tampered migration produces 11
+integration failures under `dev-test.sh` while the gate returns `RESULT: PASS`. That is B-11's row, and
+B-11 is itself blocked on B-10, which is blocked on B-07.4 and B-06.3. Nothing merged so far has had its
+integration tests gated; the branches have been green under `dev-test.sh` and the orchestrator has
+checked that by hand.
+
+**Next:** the four open PRs, in the order their reviews turn green — #9 (ADR-0028 A2, rework 5), #12
+(B-19, third reviewer), #13 (B-06.1a) and #14 (B-06.1). Three of the four re-round the `verify.sh`
+floor, so the second and third to merge re-measure rather than inherit. Then B-06.2 and B-06.3, which
+close the structural no-`DbContext`-without-a-tenant guarantee, and `DESIGN-001`, which is what moves
+B-15.3 — the first real Blazor screen — out of `draft`.
+
+
+### Merged this iteration
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| ARCH-IDENTITY (ADR-0029) | #5 | APPROVE (Full) | security-reviewer | Two blockers and five later highs, three of which the earlier fixes introduced. The one to remember: a bounded audit write that PostgreSQL refuses to create on a partitioned table, whose obvious repair silently stops deduplicating — a correction that re-introduces what it fixed, the fourth distinct shape of "a mechanism that cannot fail". Unblocked thirteen backlog rows. |
+| PM-SPLIT-B061 | #11 | APPROVE (Light) | senior-reviewer | Not a code change: the tenancy core row was two subsystems in one, and nothing could start on it in parallel. Split into B-06.1a (the type surface) and B-06.1 (the resolver and its live cache), both depending only on merged B-05. Both ran concurrently and both returned. || B-19 | #12 | APPROVE (fourth reviewer, Full) | senior-reviewer ×3 + security-reviewer | Four rounds, three executed bypasses of one mechanism, each invisible to the check that caught the previous one: a `WHEN` clause conditioning a correctly-bound guard on something never true; a `pg_rewrite` rule discarding a statement without touching a trigger; and a **conditional function body**, where the binding check resolved `tgfoid` to the function's *name* and never read its *definition* — clean and tampered runs byte-identical at `75 executed, 75 passed, 0 failed`. Closed by a byte-exact `pg_get_functiondef` comparison; the same tamper now reds 16. **The design decision worth remembering:** the first fix derived the expected definition from a constant in the migration "so the two literals cannot drift", and the author reversed it on realising a source-derived expectation *moves with the tamper*. The fourth reviewer measured that reversal rather than debating it — tampered with the literal held by the test gives `77/61/16`; tampered with it derived from the migration gives `77/77/0`, the bypass shipping green again. The duplication is the difference between a check and a tautology. Also measured: weakening the comparison to `Contains("RAISE EXCEPTION")` reds exactly the two conditional-body rows, because the conditional body still contains `RAISE EXCEPTION` — the exactness is load-bearing. Gate PASS at 764, integration 54 → 77, fifteen tamper shapes. Routed: FOLLOWUP-045 (the literal is pinned to PostgreSQL's default output settings; both known divergences are fail-closed). |
+| ARCH-AUDIT-TRUNCATE (ADR-0028 A2) | #9 | APPROVE (seventh review, Full) | senior-reviewer ×5 + security-reviewer ×2 | **Seven rounds on one docs-only clause, and the only reason that was worth paying is that each round found something the previous one could not have.** The hole: truncate triggers are not cloned to partitions, so `TRUNCATE` on a partition emptied an append-only audit trail while the parent's row trigger never saw it. Round 4 found the obvious predicate wrong — `ENABLE REPLICA TRIGGER` leaves `tgenabled = 'R'`, so `tgenabled <> 'D'` counts a guard *while the `TRUNCATE` succeeds*. Round 5 found the pinned side of the comparison unconstrained, so a skip-on-miss comparator reproduced round 3's blocker inside round 5's fix. **Round 6 found what round 5's fix broke**, and it is the finding that generalised: one row of the fourteen-row evidence matrix had been green *because* of the old comparator; the fix turned it red; nobody re-ran the table. The document then carried an executed-looking matrix with a wrong cell and a load-bearing sentence resting on it — nothing broken, no check failing, the mechanism improving while the argument for it rotted. That is now `CLAUDE.md`'s **eighth** form: *a fix that silently invalidates the evidence for the claim it was fixing*. **What finally settled it was reviewers implementing the clause from its own text rather than reading it** — rounds 5, 6 and 7 each built part 3 from the ADR alone and independently arrived at `360` column comparisons, the published count. Round 7 re-ran all fourteen rows rather than the sample asked for, confirmed red in fourteen of fourteen, and confirmed the subtle part: `5 / 225` identifies **two** different states and the discriminator is `findings: 3` versus `findings: 0`. Three cells remain wrong in a quieter probe column (`6 of 6` where the specified probe prints `9`) — follow-ups on the approving reviewer's own recommendation, not round eight. Gate PASS at 764 on the merged tree; docs-only, so no gate line speaks to the change itself. |
+| ARCH-SCOPE-RUNTIME (ADR-0033/34/35) | #15 | APPROVE (first pass, Full) | security-reviewer | **Approved first pass — the first branch on this project to manage it at Full tier** — and the reason is that the reviewer attacked the claims rather than reading them. It reproduced ADR-0033's scope-mint independently and byte-accurately (`ctor.IsAssembly=True`, `SAME TYPE IDENTITY AS HOST'S: True`), then went after the sentence that actually decides future work: *the forged scope is the most **legible** path, not the most **privileged**.* It built a second hostile package **naming no tenancy type at all**, which reached the already-loaded Npgsql assembly, read the process's catalog credential from configuration, swapped the database name and read a victim tenant's ledger row. So a countermeasure aimed at scope forgery reduces nothing — and any future reviewer proposing to harden `TenantScope` against this is wasting a round, which is exactly what the ADR warns. That sentence is now executed rather than argued, which is the single most valuable outcome of this branch. It also verified ADR-0034's composition proof link by link against the real schema (`host`/`port` both `NOT NULL` so no NULL-distinctness escape; the check constraint forcing totality for non-deleted tenants; the FK `Restrict` and not deferrable), confirmed the new index breaks no existing fixture because the helper already generates a fresh host per call, and confirmed **both** ADR-0027 §1 contradictions against the project files. Two doc-integrity findings closed before merge; the medium is self-check #1 at ADR scale — ADR-0035 *asserted* that ADR-0007 §3.4 pointed at it and it did not, leaving every data-access developer who lands on §3.4 with no path to the definition or to the security-relevant `Active`/`TryGetActive` split. On a project whose repository is its only memory, the pointer **is** the mechanism. Orchestrator verified all five fixed locations independently against the review rather than against the author's description. Gate PASS at 764. |
+
+## Iteration 8 — 2026-09-12
+
+**Three merges — B-19, ADR-0028 Amendment 2, and ADR-0033/0034/0035 — and the last of those was
+the first branch on this project to be approved on its first pass at Full tier.**
+
+**What made the difference is worth isolating, because it is repeatable.** The reviews that settled
+the two long-running branches did not read the work; they **implemented it from its own text**.
+Rounds 5, 6 and 7 of ADR-0028 A2 each built part 3 from the ADR alone and independently reached
+`360` column comparisons, the published count. PR #15's reviewer did the same to ADR-0033's
+demonstration and then went further, building a *second* hostile package to test the claim that
+fixing scope-forgery would be wasted work — it read the process's own catalog credential and opened
+its own connection to a victim tenant, naming no tenancy type at all. That sentence is now executed
+rather than argued, and it will stop the next reviewer spending a round on the wrong fix.
+
+**The eighth failure form was earned this iteration and then immediately earned again, twice more.**
+*A fix that silently invalidates the evidence for the claim it was fixing.* First in ADR-0028 A2,
+where a correctly widened comparison flipped one row of the fourteen-row evidence matrix and nobody
+re-ran the table. Then on B-06.1a, where replacing seven hand-written property reads with a
+reflection loop that treats a throwing getter as fail-closed made the check **strictly weaker** than
+before the fix, for the exact mistake it exists to catch. Then on B-09, where a statement count of 27
+was written in three places against a mechanism that produces 31, measured inside the same commit
+that changed the mechanism. Nothing breaks; no check fails; the argument rots while the mechanism
+improves.
+
+**And it caught the orchestrator three times in one file.** `project-health.sh`'s readiness check was
+fixed three times, each closing a gap the previous fix left: commits-ahead missed a row whose agent
+had not committed; the worktree arm then counted a *merged* branch as in flight, holding B-18.1 on a
+branch that no longer existed; and both together still missed the seconds between dispatching a row
+and the agent putting anything on disk — which is a live double-dispatch window, observed on B-20 and
+B-21. The status flip to `in-progress` is now a step in the dispatch skill rather than a courtesy,
+and readiness reports in-progress rows explicitly, because a row with nothing on disk is also exactly
+what a dead agent looks like.
+
+**The tenant-takeover finding reached three variants and was closed as a class.** Every one defined a
+uniqueness constraint over a *logical* identifier where the thing that must be unique is the
+*physical* endpoint. ADR-0034 states the invariant at that level, and its acceptance criterion is the
+property — *no two non-deleted tenant rows produce the same resolved connection string*, computed by
+the real resolver — not the existence of an index, which would have caught none of the three.
+
+**The first measured cost of the gate gap.** Stage 8 does not exist, so integration tests run outside
+the merge gate. A 2-in-5 flake in the tenancy suite, whose casualty was a **tenant-isolation test**,
+went entirely unseen. That is no longer a hypothetical argument for B-11.
+
+**Also this iteration:** `DESIGN-001` delivered the Company create dialog and the first UI the product
+owner can click, with 20 machine-checkable acceptance criteria and a measured accessibility audit that
+found the contrast table contains **no `surface-raised` pair at all** — the background of every dialog
+in the system, outside the population the audit measured.
+
+**Next:** merge B-06.1, then B-20 behind it; close B-06.1a's and B-09's reworks; then B-06.2 and
+B-06.3, which complete the no-`DbContext`-without-a-tenant guarantee.
+| B-06.1 | #14 | APPROVE (second reviewer, Full) | security-reviewer ×2 | The first review executed the **third** variant of the tenant-takeover finding — two `database_cluster` rows on one server give two tenants the same connection string, because the unique index is keyed on `cluster_id` while a physical database is `(host, port, database_name)`. The branch-local half closed here: the routing row's tenant id is compared at **both** places a row can enter the cache, each proved independently. The structural half is ADR-0034's index (B-20), and this branch ships an **inertness guard** asserting the hole is still open and failing the day it closes — the second reviewer applied the index and watched it fire, then found it reds **six** integration tests rather than one, because `RoutingTestBed` builds a cluster row per bed on one endpoint, the fixture shape ADR-0034 §3.2 forbids. Also closed: redaction became a property of the **value** (`ConnectionSecret` with a `JsonConverter`), and the reviewer hunted a seventh rendering path across **fourteen** more — `TypeDescriptor`, `IncludeFields`, boxing, `Convert.ToString`, a containing record's `PrintMembers`, a dictionary, an anonymous type — and found none; the only leak is private-**field** reflection, which no log sink performs. And the watched-column list now partitions the tenant row with a count, where removing a routing column from both lists in lockstep had left 218/218 green **and silently widened a second security control**. Five minors taken after approval, two of them *a test that passes for the wrong reason*: the read-through identity check was unexercised because its test could not tell "never stored" from "stored, then evicted", and a theory row varied two columns so it could not isolate the one it named. **The stage-6 floor rule changed here and binds every branch:** the greatest multiple of ten *strictly below* the count, because rounding down to the nearest ten makes the floor an exact count whenever the count is a multiple of ten — at 840 it was 840, so deleting one obsolete test would fail the gate on a branch that did nothing wrong. Gate PASS at 840, floor 830, integration 87/87. Routed: FOLLOWUP-051. |
+| B-21 (slice 1) | #17 | APPROVE (first pass, Full) | security-reviewer | The admission floor — the control ADR-0033 calls the **only** one, since a package runs in-process and .NET offers no in-process privilege boundary against loaded managed code. The reviewer found **no route past it**: `Load`, `Inspect` (proven inert by the branch's own witness), the catalogue scan, a cached context and a second loader entry point all closed, and D3 has no fifth configuration route. **The fault injection worth remembering is the third:** the same refusal, same message, moved to *after* the package activates — every assertion about the error still passes, and only the module-initialiser witness notices, reporting that the floor fired after execution, which is not a refusal. A `Result`-based test could never have written it. **The branch also reported two injections that proved the wrong thing rather than counting them** — one red on a description assertion instead of the behaviour, one that failed to build. Both look like successful demonstrations in a summary and neither is evidence; volunteering them is what made the rest of the handback trustworthy. Narrowed before merge on an executed reviewer finding: the signature covers the **manifest-bearing assembly only**, so an unsigned sibling DLL dropped into an admitted package's directory after signing loads through the normal dependency probe and runs its module initialiser — the floor is not bypassed, but the claim was wider than the mechanism. Narrowed in five places, two of which the author found itself. Four places record what the suite does **not** claim: none of it shows a package cannot reach tenant data. Gate PASS at 854, floor 850. Routed: FOLLOWUP-055 (the ADR-0033 residual), FOLLOWUP-056 (**the reviewer added a plausible floor-free loader to `src/` and the whole gate stayed PASS** — the floor is a chokepoint only while one place loads package code, and nothing enforces that), FOLLOWUP-057. |
+
+## Iteration 9 — 2026-09-12
+
+**Five merges — B-19 (#12), ADR-0028 Amendment 2 (#9), ADR-0033/0034/0035 (#15), B-06.1 (#14) and
+B-21 (#17)** — taking the project from nine merged tasks to fourteen, and the integration branch from
+764 unit tests to 854.
+
+**The floor rule itself changed, and the reason is worth keeping.** B-06.1 found that rounding the
+stage-6 floor *down* to the nearest ten made the floor an **exact count** whenever the count was
+itself a multiple of ten — at 840 executed the floor was 840, so deleting a single obsolete test
+would red the gate on a branch that had done nothing wrong. The rule is now the greatest multiple of
+ten **strictly below** the count, `10 * ((executed - 1) / 10)`. Every branch re-rounds it against the
+merged result and never inherits the incoming line, because git cannot see that conflict.
+
+**PR #9 took seven rounds on a docs-only change, and what finally settled it generalises.** The
+reviews that closed it did not read the clause — they **implemented it from its own text**, and three
+independent from-the-text implementations all reached 360 column comparisons. Reading a
+specification tells you whether it is plausible; building from it tells you whether it is a
+specification.
+
+**The tenant-takeover finding reached a fourth variant, and the fourth one indicts the criterion.**
+Variants 1–3 were closed as a class by ADR-0034: a uniqueness constraint defined over a *logical*
+identifier where the thing that must be unique is the *physical* endpoint. Then PR #18's reviewer
+found `localhost` beside `LOCALHOST` beside `127.0.0.1` — three spellings, one machine — which the
+class-closing criterion does not catch. And PR #18 then proved that **ADR-0034 §3.3's acceptance
+criterion could not fail as written**: comparing whole connection strings gives `collisions: 0`
+where comparing physical endpoints gives `collisions: 1`, because `Application Name` carries the
+tenant key. ADR-0036 replaces it with the `(host, port, database)` triple and states the
+generalisation so it cannot be simplified back — *a connection string is a serialisation of an
+intent, not a description of a destination*, and any discriminator anywhere in it makes equality
+vacuous.
+
+**The eighth failure form was earned five separate times this iteration**, across unrelated branches
+and twice in the orchestrator's own code: *a fix that silently invalidates the evidence for the claim
+it was fixing.* `CLAUDE.md` now carries it with the rule that follows — when you change a mechanism,
+re-run every demonstration resting on it and say in the handback which ones you re-ran and what each
+printed. A table of executed results is evidence only for the version of the code that produced it.
+
+**Three orchestrator errors, recorded as errors rather than bad luck.** Five agents with four
+building, sustained, exhausted the session limit and killed all four mid-task — about three hours of
+wall clock, nothing lost, every branch pushed and every agent resumable. Four building is the stated
+cap and it is a cap, not a target. Second: `scripts/project-health.sh` needed fixing three times in
+one iteration, each fix closing a gap the previous one left — a merged branch counted as in flight, a
+dispatch counted as nothing because status was set at the end of the turn rather than the start.
+Third: PR #13's Counts section went stale for **three consecutive reviews** after the orchestrator
+twice said it owned it. The durable fix was not the numbers but attaching the sha they were measured
+on, so a reader can see staleness instead of discovering it by running the branch.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| B-19 | #12 | APPROVE (second reviewer, Full) | security-reviewer ×2 | Four executed bypasses of the append-only guard across two reviews, each on a link nothing was reading: the privilege, the trigger's presence, its `tgparentid`, its `WHEN` clause. The merged version asserts effect, not presence. |
+| ADR-0028 A2 | #9 | APPROVE (seventh round, Full) | senior-reviewer ×3 | Three independent implementations **from the ADR's own text**, all reaching 360 column comparisons. The round that mattered caught a fix that flipped a row of the evidence matrix nobody re-ran. |
+| ADR-0033/34/35 | #15 | APPROVE (first pass, Full) | security-reviewer | The reviewer built a *second* hostile package to test the claim that fixing scope-forgery would be wasted work — it read the process's own catalog credential and opened its own connection to a victim tenant, naming no tenancy type at all. |
+| B-06.1 | #14 | APPROVE (second reviewer, Full) | security-reviewer ×2 | The third tenant-takeover variant, executed: two `database_cluster` rows on one server give two tenants the same physical database while every logical uniqueness check stays green. Also the floor-rule defect above. |
+| B-21 (slice 1) | #17 | APPROVE (first pass, Full) | security-reviewer | The admission floor — ADR-0033 calls it the only control, since a package runs in-process and .NET offers no in-process privilege boundary. The reviewer then showed the floor **protects nothing today**: no host composes `CountryPackageHostOptions` (FOLLOWUP-052), and a plausible floor-free loader added to `src/` left the whole gate PASS (FOLLOWUP-056). |
+
+**Next:** four PRs in flight, none waiting on a human — B-06.1a rework 4 (#13), B-09 rework 3 (#16),
+B-20 with a second reviewer (#18), and PR #19's four new ADRs under review. Then B-06.2 and B-06.3,
+which complete the no-`DbContext`-without-a-tenant guarantee, and B-11, which is the row that would
+put the 90-odd integration tests inside the merge gate at last.

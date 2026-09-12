@@ -1,0 +1,97 @@
+<Project>
+
+  <!--
+    Aurora ERP - central package management.
+
+    Every version in the solution lives here and nowhere else; a project writes
+    <PackageReference Include="X" /> with no Version attribute.
+
+    This file mirrors docs/architecture/dependencies.md one row per entry, in the same order and
+    under the same headings. A package that is not in that file must not appear here: scripts/
+    verify.sh stage 4 cross-checks the restored graph against it and fails on anything missing or
+    non-permissively licensed. Adding a package means following the checklist in
+    dependencies.md 6 - licence, maintenance, transitive graph, a row there, and the updated
+    packages.lock.json committed in the same change.
+
+    Packages listed here but not yet referenced by any project are approved versions waiting for
+    the task that needs them; CentralPackageTransitivePinningEnabled also makes each one a pin,
+    so a transitive dependency cannot drift to a version nobody reviewed.
+
+    Deliberately absent: Bogus (dependencies.md 3 requires its licence file to be read and its
+    exact terms recorded before first use), and Microsoft.AspNetCore.App, which is a shared
+    framework reached through <FrameworkReference>, not a NuGet package.
+  -->
+
+  <ItemGroup Label="Framework and data - dependencies.md 2.1">
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.12" />
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageVersion Include="System.Reflection.MetadataLoadContext" Version="10.0.12" />
+    <PackageVersion Include="NuGet.Versioning" Version="7.9.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Web, API and UI - dependencies.md 2.2">
+    <PackageVersion Include="Microsoft.AspNetCore.Components.QuickGrid" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.QuickGrid.EntityFrameworkAdapter" Version="10.0.12" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.12" />
+    <PackageVersion Include="Asp.Versioning.Http" Version="10.2.3" />
+    <PackageVersion Include="Asp.Versioning.Mvc.ApiExplorer" Version="10.2.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Identity and authorization - dependencies.md 2.3">
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.12" />
+    <PackageVersion Include="OpenIddict.Server.AspNetCore" Version="7.7.0" />
+    <PackageVersion Include="OpenIddict.Validation.AspNetCore" Version="7.7.0" />
+    <PackageVersion Include="OpenIddict.EntityFrameworkCore" Version="7.7.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Platform services - dependencies.md 2.4">
+    <PackageVersion Include="Quartz.Extensions.Hosting" Version="4.0.1" />
+    <PackageVersion Include="Quartz.Serialization.SystemTextJson" Version="4.0.1" />
+    <PackageVersion Include="Microsoft.Extensions.Caching.Hybrid" Version="10.10.0" />
+    <PackageVersion Include="Microsoft.FeatureManagement" Version="4.7.0" />
+    <PackageVersion Include="Microsoft.Extensions.Http.Resilience" Version="10.10.0" />
+    <PackageVersion Include="FluentValidation" Version="12.1.1" />
+    <PackageVersion Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <PackageVersion Include="Riok.Mapperly" Version="4.3.1" />
+  </ItemGroup>
+
+  <ItemGroup Label="Observability - dependencies.md 2.5">
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.18.0" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.18.0" />
+    <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.3" />
+    <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+    <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
+    <PackageVersion Include="Microsoft.Extensions.Compliance.Redaction" Version="10.10.0" />
+  </ItemGroup>
+
+  <ItemGroup Label="Test tooling - dependencies.md 3">
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <!--
+      dependencies.md records this as "matching the framework major". xunit.runner.visualstudio 3.x
+      is the runner for xunit 2.9.x; its own major tracks the runner, not the framework. 3.1.4 is
+      the pairing the .NET 10.0.401 SDK templates ship. Revisit together with the xunit.v3 move.
+    -->
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.10.0" />
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+    <PackageVersion Include="NSubstitute" Version="6.2.0" />
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.15.0" />
+    <PackageVersion Include="TngTech.ArchUnitNET" Version="0.13.4" />
+    <PackageVersion Include="TngTech.ArchUnitNET.xUnit" Version="0.13.4" />
+    <PackageVersion Include="FsCheck" Version="3.4.0" />
+    <PackageVersion Include="Verify.Xunit" Version="31.12.5" />
+    <PackageVersion Include="bunit" Version="2.10.3" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.10.0" />
+    <PackageVersion Include="coverlet.collector" Version="10.0.1" />
+    <!-- dependencies.md records this as "latest stable"; 5.6.0 is the latest stable release. -->
+    <PackageVersion Include="Microsoft.CodeAnalysis.PublicApiAnalyzers" Version="5.6.0" />
+  </ItemGroup>
+
+</Project>

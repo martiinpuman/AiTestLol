@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Fast tests for the Tenancy platform module (docs/architecture/testing-strategy.md 2): the
+    registry's value objects and entity invariants, the EF value converter, the model-to-snapshot
+    check, and the ADR-0007 9.3 guard over the catalog *model*.
+
+    Nothing here opens a connection. Building an EF model needs the Npgsql provider's type
+    mappings but no database, so these run in verify.sh stage 6 with Docker stopped. The guard's
+    twin over the *migrated schema* lives in the integration project.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Platform.Tenancy.UnitTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <!-- Drives the routing cache's clock, so the 60 s expiry is proven without a sleep. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\platform\Aurora.Platform.Tenancy\Aurora.Platform.Tenancy.csproj" />
+  </ItemGroup>
+
+</Project>

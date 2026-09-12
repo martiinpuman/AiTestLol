@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aurora ERP — Sales Order SO-2038</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  .side-panel { display:flex; flex-direction:column; gap:var(--space-3); }
+  .activity-item { display:flex; gap:8px; font-size:12px; padding:8px 0; border-bottom:1px solid var(--color-border); }
+  .activity-item:last-child { border-bottom:none; }
+  .activity-item .who { font-weight:600; }
+  .activity-item .when { color:var(--color-text-subtle); }
+  .layout-2col { display:grid; grid-template-columns: 1fr 300px; gap: var(--space-4); align-items:start; }
+  @media (max-width:1199px){ .layout-2col{ grid-template-columns: 1fr; } .info-grid{ grid-template-columns: repeat(2,1fr);} }
+  .country-pkg-note { font-size:11px; color:var(--color-text-subtle); border-top:1px dashed var(--color-border); margin-top:var(--space-2); padding-top:var(--space-2); }
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+  <header class="topbar">
+    <button class="icon-btn" title="Toggle navigation" aria-label="Toggle navigation" onclick="toggleRail()">☰</button>
+    <div class="brand"><span class="mark">A</span> Aurora ERP</div>
+    <div class="switcher">
+      <button class="switcher-trigger" onclick="togglePopover('company-popover', event)">
+        <span class="company-badge" style="--badge-color:#2454CC">NT</span>
+        <span class="tenant-name">Nordwind Group</span>
+        <span class="sep">▸</span>
+        <span class="company-name">Nordwind Trading AB</span>
+        <span class="chev">▾</span>
+      </button>
+      <div class="popover" id="company-popover" hidden>
+        <div class="group-label">Nordwind Group</div>
+        <div class="popover-item active">
+          <span class="company-badge" style="--badge-color:#2454CC">NT</span>
+          <div><div>Nordwind Trading AB</div><div class="meta">Sweden · Trading &amp; wholesale</div></div>
+        </div>
+        <div class="popover-item" onclick="requestCompanySwitch('Nordwind Manufacturing GmbH', true)">
+          <span class="company-badge" style="--badge-color:#8A5200">NM</span>
+          <div><div>Nordwind Manufacturing GmbH</div><div class="meta">Germany · Light manufacturing</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <div class="search-box"><span>🔍</span><input placeholder="Search this company…"></div>
+    <button class="btn btn-secondary btn-sm" onclick="openModal('cmdk-modal')">Commands <span class="kbd">⌘K</span></button>
+    <button class="icon-btn" title="Notifications" aria-label="Notifications">🔔</button>
+    <button class="switcher-trigger" onclick="togglePopover('user-popover', event)"><span class="company-badge" style="--badge-color:#57616C">MP</span><span class="chev">▾</span></button>
+    <div class="popover" id="user-popover" hidden style="right:0;left:auto;min-width:200px;">
+      <div class="popover-item">Preferences</div><div class="popover-item">Sign out</div>
+    </div>
+  </header>
+
+  <nav class="nav-rail">
+    <div class="nav-section-label">Recent</div>
+    <div class="recent-item" onclick="location.href='list.html'"><span class="title">Sales Orders (list)</span><span class="co">Nordwind Trading AB</span></div>
+    <div class="nav-section-label">Modules</div>
+    <a class="nav-item" href="shell.html"><span class="ic">⌂</span><span class="label">Home</span></a>
+    <a class="nav-item active" href="list.html"><span class="ic">🧾</span><span class="label">Sales</span></a>
+    <a class="nav-item"><span class="ic">📦</span><span class="label">Purchasing</span></a>
+    <a class="nav-item"><span class="ic">🏭</span><span class="label">Inventory</span></a>
+    <a class="nav-item"><span class="ic">💰</span><span class="label">Finance</span></a>
+    <a class="nav-item"><span class="ic">🔧</span><span class="label">Settings</span></a>
+  </nav>
+
+  <main class="main">
+    <div class="page" id="doc-root" style="max-width:1500px;">
+      <div class="breadcrumb"><a href="list.html">Sales</a> ▸ <a href="list.html">Sales Orders</a> ▸ SO-2038</div>
+
+      <div class="doc-header">
+        <div class="doc-title">
+          <div class="company-line">
+            <span class="company-badge" style="--badge-color:#2454CC;width:16px;height:16px;font-size:9px;">NT</span>
+            Nordwind Trading AB
+          </div>
+          <h1>Sales Order SO-2038 <span id="doc-status-badge" class="badge badge-success" style="vertical-align:2px;">Confirmed</span></h1>
+        </div>
+        <div class="doc-actions">
+          <div class="theme-toggle">
+            <button data-mode="light" onclick="setTheme('light')">Light</button>
+            <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+            <button data-mode="system" onclick="setTheme('system')">System</button>
+          </div>
+          <button class="btn btn-secondary">Save draft</button>
+          <button class="btn btn-primary" id="confirm-btn" onclick="simulateSaving(this)">Post to Nordwind Trading AB</button>
+        </div>
+      </div>
+
+      <div class="panel" style="padding:0 var(--space-4);">
+        <div class="stepper">
+          <div class="step done"><span class="dot">✓</span><span class="label">Draft</span></div>
+          <div class="step-line"></div>
+          <div class="step current"><span class="dot">2</span><span class="label">Confirmed</span></div>
+          <div class="step-line"></div>
+          <div class="step"><span class="dot">3</span><span class="label">Shipped</span></div>
+          <div class="step-line"></div>
+          <div class="step"><span class="dot">4</span><span class="label">Invoiced</span></div>
+        </div>
+      </div>
+
+      <div class="layout-2col">
+        <div style="display:flex; flex-direction:column; gap:var(--space-4);">
+
+          <div class="panel" style="padding:var(--space-4);">
+            <div class="info-grid">
+              <div class="field">
+                <label>Customer</label>
+                <input class="input" list="customer-options" value="Atlas Components Inc" readonly>
+              </div>
+              <div class="field">
+                <label>Order date</label>
+                <input class="input" value="10/09/2026" readonly>
+                <span class="hint">Format shown per company locale (Country Package)</span>
+              </div>
+              <div class="field">
+                <label>Requested ship date</label>
+                <input class="input" value="17/09/2026" readonly>
+              </div>
+              <div class="field">
+                <label>Payment terms</label>
+                <input class="input" value="Net 30" readonly>
+              </div>
+              <div class="field">
+                <label>Salesperson</label>
+                <input class="input" value="A. Larsen" readonly>
+              </div>
+              <div class="field">
+                <label>Warehouse</label>
+                <input class="input" value="Main — Gothenburg" readonly>
+              </div>
+              <div class="field">
+                <label>Currency</label>
+                <input class="input" value="USD (document) — company base: SEK" readonly>
+              </div>
+              <div class="field">
+                <label>Customer PO reference</label>
+                <input class="input" value="ATL-PO-88213" readonly>
+              </div>
+            </div>
+            <div class="country-pkg-note">This form reserves an extra-fields slot here for jurisdiction-specific data (e.g., a VAT identifier field appears only when a Country Package that requires one is installed) — see components.md §9.</div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header" style="display:flex;justify-content:space-between;align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--color-border);">
+              <h2 style="font-size:var(--font-size-heading-sm);font-weight:600;">Order lines</h2>
+              <button class="btn btn-secondary btn-sm" id="add-line-btn" onclick="addLine()">+ Add line</button>
+            </div>
+            <div class="panel-body" style="padding:var(--space-3) var(--space-4);overflow-x:auto;">
+              <table class="line-editor">
+                <thead>
+                  <tr>
+                    <th style="width:22%">Item</th>
+                    <th style="width:22%">Description</th>
+                    <th class="num" style="width:8%">Qty</th>
+                    <th class="num" style="width:12%">Unit price</th>
+                    <th class="num" style="width:8%">Disc %</th>
+                    <th style="width:14%">Tax</th>
+                    <th class="num" style="width:10%">Line total</th>
+                    <th style="width:4%"></th>
+                  </tr>
+                </thead>
+                <tbody id="line-body">
+                  <tr>
+                    <td><input class="cell-input" value="ST-BR-40" list="item-options" onkeydown="lineEditorKeydown(event,this)" onpaste="handleLinePaste(event,this)"></td>
+                    <td><input class="cell-input" value="Steel Bracket 40mm, zinc-plated" onkeydown="lineEditorKeydown(event,this)"></td>
+                    <td><input class="cell-input num tnum" value="120" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" value="4.25" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" value="5" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td class="tax-cell"><select class="cell-input" onkeydown="lineEditorKeydown(event,this)" onchange="recalcLine(this)"><option selected>Standard 20%</option><option>Reduced 5%</option><option>Zero-rated 0%</option></select></td>
+                    <td class="num tnum line-total">$484.50</td>
+                    <td><button class="row-del" title="Remove line" onclick="this.closest('tr').remove(); recalcTotals();">✕</button></td>
+                  </tr>
+                  <tr>
+                    <td><input class="cell-input" value="HX-M8-40" list="item-options" onkeydown="lineEditorKeydown(event,this)" onpaste="handleLinePaste(event,this)"></td>
+                    <td><input class="cell-input" value="Hex Bolt M8x40, stainless" onkeydown="lineEditorKeydown(event,this)"></td>
+                    <td><input class="cell-input num tnum" value="500" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" value="0.38" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" value="0" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td class="tax-cell"><select class="cell-input" onkeydown="lineEditorKeydown(event,this)" onchange="recalcLine(this)"><option selected>Standard 20%</option><option>Reduced 5%</option><option>Zero-rated 0%</option></select></td>
+                    <td class="num tnum line-total">$190.00</td>
+                    <td><button class="row-del" title="Remove line" onclick="this.closest('tr').remove(); recalcTotals();">✕</button></td>
+                  </tr>
+                  <tr>
+                    <td>
+                      <input class="cell-input has-error" value="PLY-18-BR" list="item-options" onkeydown="lineEditorKeydown(event,this)" onpaste="handleLinePaste(event,this)">
+                    </td>
+                    <td><input class="cell-input" value="Birch Plywood 18mm Sheet" onkeydown="lineEditorKeydown(event,this)"></td>
+                    <td><input class="cell-input num tnum" value="40" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" value="22.90" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" value="0" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td class="tax-cell"><select class="cell-input" onkeydown="lineEditorKeydown(event,this)" onchange="recalcLine(this)"><option selected>Standard 20%</option><option>Reduced 5%</option><option>Zero-rated 0%</option></select></td>
+                    <td class="num tnum line-total">$916.00</td>
+                    <td><button class="row-del" title="Remove line" onclick="this.closest('tr').remove(); recalcTotals();">✕</button></td>
+                  </tr>
+                  <tr class="new-line">
+                    <td><input class="cell-input" placeholder="Type to find item…" list="item-options" onkeydown="lineEditorKeydown(event,this)" oninput="this.closest('tr').classList.remove('new-line')" onpaste="handleLinePaste(event,this)"></td>
+                    <td><input class="cell-input" placeholder="Description" onkeydown="lineEditorKeydown(event,this)"></td>
+                    <td><input class="cell-input num tnum" type="text" value="1" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" type="text" value="0.00" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td><input class="cell-input num tnum" type="text" value="0" onkeydown="lineEditorKeydown(event,this)" oninput="recalcLine(this)"></td>
+                    <td class="tax-cell"><select class="cell-input" onkeydown="lineEditorKeydown(event,this)" onchange="recalcLine(this)"><option>Standard 20%</option><option>Reduced 5%</option><option>Zero-rated 0%</option></select></td>
+                    <td class="num tnum line-total">$0.00</td>
+                    <td><button class="row-del" title="Remove line" onclick="this.closest('tr').remove(); recalcTotals();">✕</button></td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="field" style="max-width:340px;margin-top:6px;">
+                <span class="error-msg">⚠ Item PLY-18-BR: quantity exceeds available stock (32 on hand). Confirming will backorder 8 units.</span>
+              </div>
+
+              <div class="totals">
+                <table>
+                  <tr><td class="label">Subtotal</td><td class="val tnum" id="t-subtotal">$1,590.50</td></tr>
+                  <tbody id="tax-breakdown">
+                    <tr><td class="label">Tax — Standard 20%</td><td class="val tnum">$318.10</td></tr>
+                  </tbody>
+                  <tr class="grand"><td class="label">Total (USD)</td><td class="val tnum" id="t-grand">$1,908.60</td></tr>
+                </table>
+              </div>
+              <div class="hint" style="text-align:right;padding-right:4px;">Totals recompute instantly as you type (optimistic); the server's authoritative recalculation reconciles on save — see components.md §11.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="side-panel">
+          <div class="panel">
+            <div class="panel-header" style="padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--color-border);"><h2 style="font-size:var(--font-size-heading-sm);font-weight:600;">Activity</h2></div>
+            <div class="panel-body" style="padding:var(--space-3) var(--space-4);">
+              <div class="activity-item"><span>🧾</span><div><div><span class="who">A. Larsen</span> confirmed this order</div><div class="when">Today, 11:42</div></div></div>
+              <div class="activity-item"><span>✎</span><div><div><span class="who">A. Larsen</span> changed Ship date to 17/09/2026</div><div class="when">Today, 11:40</div></div></div>
+              <div class="activity-item"><span>＋</span><div><div><span class="who">A. Larsen</span> created this order</div><div class="when">Yesterday, 16:03</div></div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header" style="padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--color-border);"><h2 style="font-size:var(--font-size-heading-sm);font-weight:600;">Fulfillment</h2></div>
+            <div class="panel-body" style="padding:var(--space-3) var(--space-4);font-size:12px;color:var(--color-text-muted);display:flex;flex-direction:column;gap:6px;">
+              <div>0 of 3 lines shipped</div>
+              <div>No shipments created yet</div>
+              <button class="btn btn-secondary btn-sm" style="align-self:flex-start;">Create shipment</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<datalist id="item-options">
+  <option value="ST-BR-40">Steel Bracket 40mm</option>
+  <option value="HX-M8-40">Hex Bolt M8x40</option>
+  <option value="PLY-18-BR">Birch Plywood 18mm Sheet</option>
+  <option value="RAL7016">Powder Coat — RAL 7016</option>
+  <option value="CST-100">Industrial Caster Wheel 100mm</option>
+</datalist>
+<datalist id="customer-options">
+  <option value="Atlas Components Inc">
+  <option value="Contoso Wholesale">
+  <option value="BrightPly Manufacturing">
+</datalist>
+
+<div class="demo-controls">
+  <div class="title">Prototype controls</div>
+  <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
+  <button class="btn btn-secondary btn-sm" onclick="togglePostedDemo()">Toggle posted (read-only)</button>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+
+<div class="modal-overlay" id="cmdk-modal" hidden>
+  <div class="cmdk" role="dialog" aria-modal="true">
+    <input placeholder="Search records, or type a command…" autofocus>
+    <div class="results">
+      <div class="group-label">Navigate to</div>
+      <div class="result" onclick="location.href='shell.html'"><span>⌂</span> Home</div>
+      <div class="result" onclick="location.href='list.html'"><span>🧾</span> Sales Orders</div>
+    </div>
+  </div>
+</div>
+<div class="toast-stack"></div>
+
+<script src="app.js"></script>
+<script>
+  function simulateSaving(btn) {
+    var original = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Posting…';
+    setTimeout(function () {
+      btn.innerHTML = original;
+      btn.disabled = false;
+      showToast("success", "Posted SO-2038 to Nordwind Trading AB.");
+    }, 900);
+  }
+</script>
+</body>
+</html>

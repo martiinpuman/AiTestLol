@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Unit tests for the Country Package host (docs/architecture/solution-layout.md 6, B-12).
+
+    No database and no network, so verify.sh stage 6 runs them with Docker stopped - but they are
+    not hermetic in the in-memory sense: they copy a real package assembly into a temporary
+    directory, sign it with a freshly generated ECDSA P-256 key, and load it into a real collectible
+    AssemblyLoadContext. That is deliberate. Every mechanism under test is about an assembly as a
+    file on disk, and a test double would prove none of it.
+
+    The references to Aurora.Countries.TestPackage and Aurora.Countries.HostilePackage are what put
+    those assemblies beside the tests. The tests never reference a type from either: each must load
+    into the package's own load context, and touching a type here would load it into the default
+    one instead - and, for the hostile package, run the module initialiser the D1 tests observe.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Countries.Hosting.UnitTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="coverlet.collector" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Aurora.Countries.Hosting\Aurora.Countries.Hosting.csproj" />
+    <ProjectReference Include="..\..\fixtures\Aurora.Countries.TestPackage\Aurora.Countries.TestPackage.csproj" />
+    <ProjectReference Include="..\..\fixtures\Aurora.Countries.HostilePackage\Aurora.Countries.HostilePackage.csproj" />
+  </ItemGroup>
+
+</Project>

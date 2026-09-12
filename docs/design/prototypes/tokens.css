@@ -1,0 +1,223 @@
+/*
+ * tokens.css — GENERATED from docs/design/tokens.json by tokens.build.py + gen_css step.
+ * Do not hand-edit. Change tokens.json, regenerate, review the contrast audit, then copy this file.
+ * This is the reference implementation prototypes/ links to; the real app generates its own
+ * copy of this file (or equivalent Sass/Blazor CSS isolation vars) from the same tokens.json.
+ */
+
+:root {
+  --color-canvas: #F4F5F7;
+  --color-surface: #FFFFFF;
+  --color-surface-raised: #FFFFFF;
+  --color-surface-sunken: #EBEDF0;
+  --color-surface-hover: #F1F3F5;
+  --color-surface-selected: #E7EEFC;
+  --color-overlay: rgba(17,20,24,0.48);
+  --color-text: #1B1F24;
+  --color-text-muted: #57616C;
+  --color-text-subtle: #818A94;
+  --color-text-disabled: #A7ADB5;
+  --color-text-on-accent: #FFFFFF;
+  --color-border: #D6DAE0;
+  --color-border-strong: #7C8590;
+  --color-border-focus: #2454CC;
+  --color-accent: #2454CC;
+  --color-accent-hover: #1D45AA;
+  --color-accent-active: #173989;
+  --color-accent-muted: #E7EEFC;
+  --color-accent-solid: #2454CC;
+  --color-accent-solid-hover: #1D45AA;
+  --color-accent-solid-active: #173989;
+  --color-danger: #B3261E;
+  --color-danger-muted: #FCEBEA;
+  --color-danger-solid: #B3261E;
+  --color-danger-solid-hover: #96201A;
+  --color-danger-solid-active: #7A1A15;
+  --color-warning: #8A5200;
+  --color-warning-muted: #FCEEDA;
+  --color-warning-solid: #C77700;
+  --color-warning-solid-text: #1B1F24;
+  --color-success: #146C2E;
+  --color-success-muted: #E6F4EA;
+  --color-success-solid: #146C2E;
+  --color-info: #0B5FA5;
+  --color-info-muted: #E5F1FB;
+  --color-info-solid: #0B5FA5;
+
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+  --space-24: 96px;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+
+  --elevation-0: none;
+  --elevation-1: 0 1px 2px rgba(16,20,24,0.06), 0 1px 1px rgba(16,20,24,0.04);
+  --elevation-2: 0 2px 6px rgba(16,20,24,0.10), 0 1px 2px rgba(16,20,24,0.06);
+  --elevation-3: 0 8px 24px rgba(16,20,24,0.16), 0 2px 6px rgba(16,20,24,0.08);
+  --elevation-4: 0 16px 40px rgba(16,20,24,0.22), 0 4px 10px rgba(16,20,24,0.10);
+
+  --duration-instant: 80ms;
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 240ms;
+  --duration-slower: 320ms;
+  --easing-standard: cubic-bezier(0.2, 0, 0, 1);
+  --easing-entrance: cubic-bezier(0, 0, 0.2, 1);
+  --easing-exit: cubic-bezier(0.4, 0, 1, 1);
+
+  --font-family-ui: "Segoe UI", -apple-system, BlinkMacSystemFont, "Inter", Roboto, Helvetica, Arial, sans-serif;
+  --font-family-mono: "Cascadia Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --font-feature-numeric: "tnum" 1, "lnum" 1;
+  --font-size-micro: 11px;
+  --line-height-micro: 16px;
+  --font-weight-micro: 400;
+  --font-size-small: 12px;
+  --line-height-small: 16px;
+  --font-weight-small: 400;
+  --font-size-body: 13px;
+  --line-height-body: 20px;
+  --font-weight-body: 400;
+  --font-size-body-lg: 15px;
+  --line-height-body-lg: 22px;
+  --font-weight-body-lg: 400;
+  --font-size-heading-sm: 17px;
+  --line-height-heading-sm: 24px;
+  --font-weight-heading-sm: 600;
+  --font-size-heading-md: 20px;
+  --line-height-heading-md: 28px;
+  --font-weight-heading-md: 600;
+  --font-size-heading-lg: 24px;
+  --line-height-heading-lg: 32px;
+  --font-weight-heading-lg: 600;
+  --font-size-display: 30px;
+  --line-height-display: 36px;
+  --font-weight-display: 600;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  --density-compact-row-height: 32px;
+  --density-compact-font-size: 12px;
+  --density-comfortable-row-height: 44px;
+  --density-comfortable-font-size: 13px;
+}
+
+/* Dark theme: explicit opt-in via [data-theme="dark"] on <html>, */
+/* OR automatic via prefers-color-scheme when no explicit choice is stored. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-canvas: #14171B;
+    --color-surface: #1C2027;
+    --color-surface-raised: #262B33;
+    --color-surface-sunken: #101317;
+    --color-surface-hover: #262B33;
+    --color-surface-selected: #1E2A44;
+    --color-overlay: rgba(0,0,0,0.6);
+    --color-text: #E7E9EC;
+    --color-text-muted: #A9B0BA;
+    --color-text-subtle: #6B7280;
+    --color-text-disabled: #5B6472;
+    --color-text-on-accent: #FFFFFF;
+    --color-border: #333941;
+    --color-border-strong: #6B7480;
+    --color-border-focus: #8AB2FF;
+    --color-accent: #8AB2FF;
+    --color-accent-hover: #A8C6FF;
+    --color-accent-active: #6C99EE;
+    --color-accent-muted: #1E2A44;
+    --color-accent-solid: #3565CE;
+    --color-accent-solid-hover: #3A69D4;
+    --color-accent-solid-active: #2C56B0;
+    --color-danger: #FF8A80;
+    --color-danger-muted: #3A1B18;
+    --color-danger-solid: #C4392F;
+    --color-danger-solid-hover: #D8493D;
+    --color-danger-solid-active: #A72F26;
+    --color-warning: #F2B84B;
+    --color-warning-muted: #3A2A0E;
+    --color-warning-solid: #C77700;
+    --color-warning-solid-text: #10141A;
+    --color-success: #6FDB94;
+    --color-success-muted: #123420;
+    --color-success-solid: #1E7A3E;
+    --color-info: #7CC0FF;
+    --color-info-muted: #122A3E;
+    --color-info-solid: #1D6FB8;
+    --elevation-0: none;
+    --elevation-1: 0 1px 2px rgba(0,0,0,0.40);
+    --elevation-2: 0 2px 8px rgba(0,0,0,0.48);
+    --elevation-3: 0 10px 28px rgba(0,0,0,0.56);
+    --elevation-4: 0 20px 48px rgba(0,0,0,0.64);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-canvas: #14171B;
+  --color-surface: #1C2027;
+  --color-surface-raised: #262B33;
+  --color-surface-sunken: #101317;
+  --color-surface-hover: #262B33;
+  --color-surface-selected: #1E2A44;
+  --color-overlay: rgba(0,0,0,0.6);
+  --color-text: #E7E9EC;
+  --color-text-muted: #A9B0BA;
+  --color-text-subtle: #6B7280;
+  --color-text-disabled: #5B6472;
+  --color-text-on-accent: #FFFFFF;
+  --color-border: #333941;
+  --color-border-strong: #6B7480;
+  --color-border-focus: #8AB2FF;
+  --color-accent: #8AB2FF;
+  --color-accent-hover: #A8C6FF;
+  --color-accent-active: #6C99EE;
+  --color-accent-muted: #1E2A44;
+  --color-accent-solid: #3565CE;
+  --color-accent-solid-hover: #3A69D4;
+  --color-accent-solid-active: #2C56B0;
+  --color-danger: #FF8A80;
+  --color-danger-muted: #3A1B18;
+  --color-danger-solid: #C4392F;
+  --color-danger-solid-hover: #D8493D;
+  --color-danger-solid-active: #A72F26;
+  --color-warning: #F2B84B;
+  --color-warning-muted: #3A2A0E;
+  --color-warning-solid: #C77700;
+  --color-warning-solid-text: #10141A;
+  --color-success: #6FDB94;
+  --color-success-muted: #123420;
+  --color-success-solid: #1E7A3E;
+  --color-info: #7CC0FF;
+  --color-info-muted: #122A3E;
+  --color-info-solid: #1D6FB8;
+  --elevation-0: none;
+  --elevation-1: 0 1px 2px rgba(0,0,0,0.40);
+  --elevation-2: 0 2px 8px rgba(0,0,0,0.48);
+  --elevation-3: 0 10px 28px rgba(0,0,0,0.56);
+  --elevation-4: 0 20px 48px rgba(0,0,0,0.64);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-instant: 1ms;
+    --duration-fast: 1ms;
+    --duration-base: 1ms;
+    --duration-slow: 1ms;
+    --duration-slower: 1ms;
+  }
+}
+

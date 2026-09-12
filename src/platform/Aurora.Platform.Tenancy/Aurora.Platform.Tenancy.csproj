@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tier 1 - the Tenancy platform module (docs/architecture/modules.md 4, ADR-0007).
+
+    B-05 lands the catalog database here: the internal CatalogDbContext over schema `catalog`, its
+    entity types, its migrations, and AddCatalogDatabase() for the composition root. B-06.1 adds
+    the connection resolver, its routing cache and the pool settings (Routing/, Secrets/); B-06.2
+    the data-source cache and B-06.3 the scope factory and the tenant DbContext factory; B-07 the
+    provisioning saga; B-08 the migration runner. See README.md in this folder.
+
+    This is the only module allowed to build a connection string (modules.md 4), which is why it
+    references the Npgsql provider directly rather than through a separate Infrastructure project.
+
+    Everything here is internal except the two DI extensions, the TenantPoolProfile a host picks
+    when it calls one of them, and the migration classes, which
+    `dotnet ef migrations add` scaffolds public and EF finds by attribute rather than by
+    accessibility. CatalogContextAccessibilityTests asserts exactly that set and fails on anything
+    else - the public surface of a platform module is its Contracts assembly. The two test
+    assemblies below see the internals so they can exercise the context and the entities without
+    widening that surface.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Platform.Tenancy</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <!-- The 60 s routing cache of ADR-0007 3.5 / ADR-0012 3, L1 only at bootstrap. -->
+    <PackageReference Include="Microsoft.Extensions.Caching.Hybrid" />
+    <!--
+      Design-time only: what `dotnet ef migrations add` needs to scaffold a migration against
+      CatalogDbContext. PrivateAssets=all keeps it out of every consumer's graph. The tool itself
+      is pinned in .config/dotnet-tools.json; run `dotnet tool restore` once.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.Platform.Tenancy.Contracts\Aurora.Platform.Tenancy.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aurora.Platform.Tenancy.UnitTests" />
+    <InternalsVisibleTo Include="Aurora.Platform.Tenancy.IntegrationTests" />
+  </ItemGroup>
+
+</Project>
