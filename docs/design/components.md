@@ -295,7 +295,7 @@ Added by `DESIGN-002` for `screens/SPEC-003-tenant-list.md`, the first list whos
 
 | State | Behavior |
 |---|---|
-| Nothing needs attention | **Not rendered at all** — no empty strip, no "0 issues" reassurance banner. A healthy list costs the operator zero additional visual attention, the same reasoning `app-shell.md`'s connection banner uses for the healthy-connection case. |
+| Nothing needs attention | **Not rendered at all** — no empty strip, no "0 issues" reassurance banner, and **no landmark role or accessible name left behind either**: a container that keeps `role="navigation"`/`aria-label` while empty of content is still "rendered" to a screen reader even though it looks absent to a sighted user, which is exactly the gap this row exists to close — a healthy list costs the operator (sighted or not) zero additional attention, the same reasoning `app-shell.md`'s connection banner uses for the healthy-connection case. |
 | One or more categories non-zero | One segment per non-zero category, ordered by severity (most urgent first), each `{count} {label}` (e.g., "2 need action", "3 pending deletion, soonest in 2 days"). Counts are locale-formatted per Principle 6, never a literal. |
 | Segment activated | Applies that category's filter to the grid below (replacing, not stacking with, any unrelated filter already active on the same dimension) and moves focus into the grid's toolbar filter-chip region so a screen-reader user lands where the state actually changed, not back at the strip. |
 | Loading | The strip is absent until the first count query resolves — it never shows a skeleton, because a wrong or stale attention count is worse than a one-beat delay in showing it at all. |

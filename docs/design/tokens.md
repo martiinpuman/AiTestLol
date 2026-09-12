@@ -53,7 +53,7 @@ Every semantic color exists once per theme (`color.light`, `color.dark` in `toke
 
 ## WCAG 2.2 AA contrast audit
 
-Method: relative luminance and contrast ratio computed per the WCAG formula (`(L1+0.05)/(L2+0.05)` on relative luminance from linearized sRGB), scripted in `tokens.build.py`, not eyeballed. Thresholds applied: **4.5:1** for normal text (criterion 1.4.3) and **3.0:1** for large text and non-text UI component boundaries/indicators (criterion 1.4.11 — input borders, focus rings, button fills against their surrounding surface). All 54 pairs below pass; none were rounded up or asterisked past a threshold.
+Method: relative luminance and contrast ratio computed per the WCAG formula (`(L1+0.05)/(L2+0.05)` on relative luminance from linearized sRGB), scripted in `tokens.build.py`, not eyeballed. Thresholds applied: **4.5:1** for normal text (criterion 1.4.3) and **3.0:1** for large text and non-text UI component boundaries/indicators (criterion 1.4.11 — input borders, focus rings, button fills against their surrounding surface). **68 of the 70 pairs below pass; none of those 68 were rounded up or asterisked past a threshold.** The remaining 2 are a real, deliberate exception — a combination no component actually uses — explained where they appear in the dark-theme table below, not hidden from the count.
 
 ### Light theme
 
@@ -86,6 +86,14 @@ Method: relative luminance and contrast ratio computed per the WCAG formula (`(L
 | danger-solid fill vs surface (button visibility) | `#B3261E` | `#FFFFFF` | 6.54:1 | 3.0:1 | Pass |
 | success-solid fill vs surface (icon/button visibility) | `#146C2E` | `#FFFFFF` | 6.53:1 | 3.0:1 | Pass |
 | warning-solid fill vs surface (button visibility) | `#C77700` | `#FFFFFF` | 3.46:1 | 3.0:1 | Pass |
+| text on surface-raised | `#1B1F24` | `#FFFFFF` | 16.56:1 | 4.5:1 | Pass |
+| text-muted on surface-raised | `#57616C` | `#FFFFFF` | 6.30:1 | 4.5:1 | Pass |
+| border-strong vs surface-raised (input boundary) | `#7C8590` | `#FFFFFF` | 3.74:1 | 3.0:1 | Pass |
+| focus ring vs surface-raised | `#2454CC` | `#FFFFFF` | 6.53:1 | 3.0:1 | Pass |
+| accent-solid fill vs surface-raised (button visibility) | `#2454CC` | `#FFFFFF` | 6.53:1 | 3.0:1 | Pass |
+| danger-solid fill vs surface-raised (button visibility) | `#B3261E` | `#FFFFFF` | 6.54:1 | 3.0:1 | Pass |
+| accent-solid fill vs surface-sunken (dialog action row) | `#2454CC` | `#EBEDF0` | 5.57:1 | 3.0:1 | Pass |
+| danger-solid fill vs surface-sunken (dialog action row) | `#B3261E` | `#EBEDF0` | 5.57:1 | 3.0:1 | Pass |
 
 ### Dark theme
 
@@ -118,8 +126,20 @@ Method: relative luminance and contrast ratio computed per the WCAG formula (`(L
 | danger-solid fill vs surface (button visibility) | `#C4392F` | `#1C2027` | 3.09:1 | 3.0:1 | Pass |
 | success-solid fill vs surface (icon/button visibility) | `#1E7A3E` | `#1C2027` | 3.04:1 | 3.0:1 | Pass |
 | warning-solid fill vs surface (button visibility) | `#C77700` | `#1C2027` | 4.72:1 | 3.0:1 | Pass |
+| text on surface-raised | `#E7E9EC` | `#262B33` | 11.70:1 | 4.5:1 | Pass |
+| text-muted on surface-raised | `#A9B0BA` | `#262B33` | 6.51:1 | 4.5:1 | Pass |
+| border-strong vs surface-raised (input boundary) | `#6B7480` | `#262B33` | 3.01:1 | 3.0:1 | **Pass — by 0.01** |
+| focus ring vs surface-raised | `#8AB2FF` | `#262B33` | 6.70:1 | 3.0:1 | Pass |
+| accent-solid fill vs surface-raised (button visibility) | `#3565CE` | `#262B33` | 2.65:1 | 3.0:1 | **Fail** |
+| danger-solid fill vs surface-raised (button visibility) | `#C4392F` | `#262B33` | 2.69:1 | 3.0:1 | **Fail** |
+| accent-solid fill vs surface-sunken (dialog action row) | `#3565CE` | `#101317` | 3.46:1 | 3.0:1 | Pass |
+| danger-solid fill vs surface-sunken (dialog action row) | `#C4392F` | `#101317` | 3.52:1 | 3.0:1 | Pass |
 
-Two pairs are the closest margins in the whole system and deserve a flag for anyone editing the palette later: **light `warning-solid-text` on `warning-solid`** (4.78:1, needs 4.5:1) and **dark `accent-solid`/`success-solid` fill vs `surface`** (3.04:1, needs 3.0:1). Both pass today; do not nudge those specific hex pairs without re-running `tokens.build.py`'s audit.
+**The two `Fail` rows above are real, measured, and deliberately left in this table** — added by `DESIGN-002`'s rework after a review found that `surface-raised` (the background of every dialog, popover and menu in the system) had **zero** audited pairs despite two solid-fill buttons depending on it, a gap `SPEC-002-company-create.md` finding 2 had already measured by hand in prose and never promoted into this table — the mechanism that is supposed to keep this audit authoritative had never actually been re-run over it. The fix is not a palette change: `components.md` §14's dialog anatomy and `prototypes/app.css`'s `.dialog .actions` rule now seat every dialog's button row on `surface-sunken` rather than the bare `surface-raised` background, which is exactly the two `Pass` rows immediately below the failures — measured on the *same* two fills, the *same* dark theme, the only variable being which surface token the button sits on. **No component in this system renders a solid `accent`/`danger` button directly on bare `surface-raised`** — this table keeps the failing combination visible anyway, as the permanent, checkable record of why the CSS rule has to exist, rather than removing an inconvenient row now that a fix exists elsewhere.
+
+Three pairs are the closest margins in the whole system and deserve a flag for anyone editing the palette later: **light `warning-solid-text` on `warning-solid`** (4.78:1, needs 4.5:1), **dark `accent-solid`/`success-solid` fill vs `surface`** (3.04:1, needs 3.0:1), and **dark `border-strong` vs `surface-raised`** (3.01:1, needs 3.0:1 — the newest and tightest of the three). All three pass today; do not nudge those specific hex pairs without re-running `tokens.build.py`'s audit.
+
+**The audit script itself had a bug that mattered here.** `tokens.build.py` wrote its output to a path in a previous agent's temporary scratch directory, not to `docs/design/tokens.json` — meaning running it, as this file's own header instructs after any edit, never actually updated the checked-in token values or the audit table at all. Found while adding the rows above (the script needed to genuinely write them back for this section to be real). Fixed: it now writes next to itself, `docs/design/tokens.json`, regardless of the working directory it's invoked from. Re-run this round; printed **70 total audit rows, 2 failed** (both are the deliberate, documented `surface-raised` rows above) — the exact output is reproducible by running `python3 docs/design/tokens.build.py`.
 
 `text-subtle` and `text-disabled` are intentionally excluded from this audit — WCAG 1.4.3/1.4.11 explicitly exempt placeholder text and disabled controls, and these tokens exist precisely to be used only in those two exempt cases. Never use them for a value the user is meant to read as data.
 

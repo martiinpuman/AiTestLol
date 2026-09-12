@@ -534,7 +534,23 @@ table.grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var
 }
 .dialog h2 { font-size: var(--font-size-heading-sm); font-weight: 600; }
 .dialog p { font-size: var(--font-size-small); color: var(--color-text-muted); }
-.dialog .actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+/* Seated on surface-sunken, full-bleed to the dialog's own edges, not left
+   sitting directly on the dialog's surface-raised background. Fixes a real,
+   measured failure (tokens.build.py, re-run this round): a solid accent or
+   danger button fill against surface-raised is 2.65:1 / 2.69:1 in dark
+   theme, below the 3.0:1 SC 1.4.11 needs — this was flagged once already
+   (SPEC-002-company-create.md finding 2, measured only in prose, never
+   fixed) and is the "raised twice and left" case CLAUDE.md calls out.
+   surface-sunken clears 3.46:1 / 3.52:1 for the same two fills — see
+   tokens.md's audit for both the failing and the passing measurements. */
+.dialog .actions {
+  display: flex; justify-content: flex-end; gap: var(--space-2);
+  margin: var(--space-3) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-surface-sunken);
+  border-top: 1px solid var(--color-border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
 
 /* ===========================================================================
    THEME TOGGLE CONTROL (shared widget)

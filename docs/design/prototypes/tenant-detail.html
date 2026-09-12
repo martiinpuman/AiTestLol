@@ -103,7 +103,7 @@
         <h2 data-i18n="tenants.detail.blockedReasonHeading">Blocked reason</h2>
         <p id="blocked-reason-text"></p>
         <div>
-          <button class="btn btn-secondary btn-sm" data-i18n="tenants.detail.viewMigrationRun">View migration run</button>
+          <button class="btn btn-secondary btn-sm" data-i18n="tenants.detail.viewMigrationRun" onclick="showToast('info', t('tenants.detail.migrationRunNotYetAvailable'))">View migration run</button>
         </div>
       </div>
 
@@ -182,7 +182,10 @@
     </select>
   </div>
   <label style="font-size:11px;display:flex;gap:6px;align-items:center;">
-    <input type="checkbox" id="simulate-mismatch"> Simulate identity mismatch on destroy
+    <input type="checkbox" id="simulate-mismatch"> Simulate mismatch on 1st check (dialog open)
+  </label>
+  <label style="font-size:11px;display:flex;gap:6px;align-items:center;">
+    <input type="checkbox" id="simulate-mismatch-at-submit"> Simulate mismatch on 2nd check (at submit)
   </label>
   <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
   <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
@@ -198,22 +201,31 @@
   // actually swapping the rendered action set — not just the badge.
   // ---------------------------------------------------------------------
   var SCENARIOS = {
+    // Every activity entry names an actionKey (resolved through t(), with
+    // actionVars where the sentence interpolates a number) rather than a
+    // literal English action string — see components #tenants.detail.activity.*
+    // and the "fourteen hard-coded strings" finding this correction closes.
     Provisioning: {
       name: "Larkspur Logistics AB", key: "larkspur-logistics", state: "Provisioning",
       plan: "Standard", region: "eu-west", created: "2026-09-12",
       cluster: "eu-west-1", database: "aurora_t_larkspur_logistics",
       step: 5, attempts: 0,
-      activity: [{ ts: "2026-09-12 08:00", actor: "J. Alvarez", action: "Provisioning requested" }]
+      activity: [{ ts: "2026-09-12 08:00", actor: "J. Alvarez", actionKey: "tenants.detail.activity.provisioningRequested" }]
     },
     ProvisioningFailed: {
       name: "Kessler Fasteners GmbH", key: "kessler-fasteners", state: "ProvisioningFailed",
       plan: "Standard", region: "eu-west", created: "2026-09-08",
       cluster: "eu-west-1", database: "aurora_t_kessler_fasteners",
       step: 5, attempts: 5,
+      // Verbatim exception text — a deliberate exception to localization,
+      // not an oversight: like a stack trace, it is diagnostic content for
+      // support/engineering, not prose an operator reads for comprehension,
+      // and translating a caught .NET exception message would produce a
+      // string nobody could then correlate back to server-side logs.
       lastError: "MigrateSchema: relation \"platform.tenant_identity\" already exists but does not match tenant id — refusing to adopt.",
       activity: [
-        { ts: "2026-09-08 09:41", actor: "System", action: "Provisioning failed after 5 attempts" },
-        { ts: "2026-09-08 09:20", actor: "System", action: "Provisioning requested" }
+        { ts: "2026-09-08 09:41", actor: "System", actionKey: "tenants.detail.activity.provisioningFailedAfterAttempts", actionVars: { attempts: 5 } },
+        { ts: "2026-09-08 09:20", actor: "System", actionKey: "tenants.detail.activity.provisioningRequested" }
       ]
     },
     Active: {
@@ -223,7 +235,7 @@
       schemaVersion: 14, schemaStatus: "current",
       packages: [{ id: "se-fiscal", version: "3.2", state: "Active", installedAt: "2026-06-02", installedBy: "J. Alvarez" }],
       activity: [
-        { ts: "2026-06-02 09:02", actor: "J. Alvarez", action: "Provisioned" }
+        { ts: "2026-06-02 09:02", actor: "J. Alvarez", actionKey: "tenants.detail.activity.provisioned" }
       ]
     },
     Suspended: {
@@ -233,8 +245,8 @@
       schemaVersion: 14, schemaStatus: "current",
       packages: [{ id: "se-fiscal", version: "3.1", state: "Active", installedAt: "2025-11-19", installedBy: "J. Alvarez" }],
       activity: [
-        { ts: "2026-09-07 09:00", actor: "M. Okafor", action: "Suspended — offboarding started" },
-        { ts: "2025-11-19 10:12", actor: "J. Alvarez", action: "Provisioned" }
+        { ts: "2026-09-07 09:00", actor: "M. Okafor", actionKey: "tenants.detail.activity.suspendedOffboardingStarted" },
+        { ts: "2025-11-19 10:12", actor: "J. Alvarez", actionKey: "tenants.detail.activity.provisioned" }
       ]
     },
     SchemaBlocked: {
@@ -242,11 +254,11 @@
       plan: "Standard", region: "eu-north", created: "2026-06-02",
       cluster: "eu-north-1", database: "aurora_t_solheim_trading",
       schemaVersion: 9, minVersion: 11, schemaStatus: "blocked",
-      blockedReason: "Migration run #4821 quarantined this tenant at 2026-09-10 08:14 UTC — schema fell to v9, below the minimum supported v11.",
+      blockedReasonVars: { runId: "4821", timestamp: "2026-09-10 08:14 UTC", fromVersion: 9, minVersion: 11 },
       packages: [{ id: "se-fiscal", version: "3.2", state: "Active", installedAt: "2026-06-02", installedBy: "J. Alvarez" }],
       activity: [
-        { ts: "2026-09-10 08:14", actor: "System", action: "Suspended by migration run — SchemaBlocked" },
-        { ts: "2026-06-02 09:02", actor: "J. Alvarez", action: "Provisioned" }
+        { ts: "2026-09-10 08:14", actor: "System", actionKey: "tenants.detail.activity.suspendedByMigrationRun" },
+        { ts: "2026-06-02 09:02", actor: "J. Alvarez", actionKey: "tenants.detail.activity.provisioned" }
       ]
     },
     Exporting: {
@@ -260,8 +272,8 @@
       ],
       packages: [{ id: "se-fiscal", version: "3.2", state: "Active", installedAt: "2026-02-20", installedBy: "J. Alvarez" }],
       activity: [
-        { ts: "2026-09-11 09:00", actor: "M. Okafor", action: "Export started" },
-        { ts: "2026-09-04 09:00", actor: "M. Okafor", action: "Suspended — offboarding started" }
+        { ts: "2026-09-11 09:00", actor: "M. Okafor", actionKey: "tenants.detail.activity.exportStarted" },
+        { ts: "2026-09-04 09:00", actor: "M. Okafor", actionKey: "tenants.detail.activity.suspendedOffboardingStarted" }
       ]
     },
     PendingDeletion: {
@@ -272,16 +284,16 @@
       deletionDueDays: 2, deletionDueDate: "2026-09-14",
       packages: [{ id: "se-fiscal", version: "3.2", state: "Deactivated", installedAt: "2026-01-15", installedBy: "J. Alvarez" }],
       activity: [
-        { ts: "2026-08-15 09:40", actor: "System", action: "Export completed" },
-        { ts: "2026-08-15 09:02", actor: "J. Alvarez", action: "Suspended — offboarding started" }
+        { ts: "2026-08-15 09:40", actor: "System", actionKey: "tenants.detail.activity.exportCompleted" },
+        { ts: "2026-08-15 09:02", actor: "J. Alvarez", actionKey: "tenants.detail.activity.suspendedOffboardingStarted" }
       ]
     },
     Deleted: {
       name: "Old Bridge Traders", key: "old-bridge-traders", state: "Deleted",
       created: "2025-08-04", deletedAt: "2026-07-01", deletedBy: "J. Alvarez", backupExpiry: "2026-08-05",
       activity: [
-        { ts: "2026-07-01 10:15", actor: "J. Alvarez", action: "Permanently deleted" },
-        { ts: "2026-06-01 09:00", actor: "J. Alvarez", action: "Pending-deletion grace period elapsed" }
+        { ts: "2026-07-01 10:15", actor: "J. Alvarez", actionKey: "tenants.detail.activity.permanentlyDeleted" },
+        { ts: "2026-06-01 09:00", actor: "J. Alvarez", actionKey: "tenants.detail.activity.pendingDeletionGraceElapsed" }
       ]
     }
   };
@@ -296,6 +308,12 @@
   var currentState = "Active";
 
   function stateLabel(s) { return t("tenants.state." + s.charAt(0).toLowerCase() + s.slice(1)); }
+  // InstalledPackageState display names go through the resource layer too
+  // (ADR-0022 rule 1: "enum display names" are user-facing text, not an
+  // exemption) — an earlier draft of this prototype rendered the raw C#
+  // enum value (p.state) directly as the badge's visible text, bypassing
+  // localization entirely. Fixed.
+  function packageStateLabel(s) { return t("tenants.packageState." + s.charAt(0).toLowerCase() + s.slice(1)); }
   function show(id, visible) { document.getElementById(id).hidden = !visible; }
 
   function render(state) {
@@ -330,15 +348,18 @@
     // Provisioning progress — Provisioning and ProvisioningFailed only.
     show("progress-panel", state === "Provisioning" || state === "ProvisioningFailed");
     if (state === "Provisioning" || state === "ProvisioningFailed") {
-      var steps = ["ReserveTenant", "CreateDatabase", "HardenDatabase", "StampIdentity", "MigrateSchema", "SeedPlatformData", "InstallPackages", "RegisterRouting", "Announce"];
+      // Step labels are localized (tenants.detail.step.*), not the raw saga
+      // step name — an operator reading this list is not expected to know
+      // C# type names, even though ADR-0007 SS8's own step table uses them.
+      var stepKeys = ["reserveTenant", "createDatabase", "hardenDatabase", "stampIdentity", "migrateSchema", "seedPlatformData", "installPackages", "registerRouting", "announce"];
       var list = document.getElementById("step-list");
       list.innerHTML = "";
-      steps.forEach(function (name, i) {
+      stepKeys.forEach(function (stepKey, i) {
         var n = i + 1;
         var cls = n < s.step ? "done" : (n === s.step ? "current" : "upcoming");
         var row = document.createElement("div");
         row.className = "s-row " + cls;
-        row.textContent = (n < s.step ? "✓" : (n === s.step ? "●" : "○")) + " " + n + ". " + name;
+        row.textContent = (n < s.step ? "✓" : (n === s.step ? "●" : "○")) + " " + n + ". " + t("tenants.detail.step." + stepKey);
         list.appendChild(row);
       });
       show("last-error-wrap", state === "ProvisioningFailed");
@@ -348,7 +369,7 @@
 
     // Blocked reason — SchemaBlocked only.
     show("blocked-panel", state === "SchemaBlocked");
-    if (state === "SchemaBlocked") document.getElementById("blocked-reason-text").textContent = s.blockedReason;
+    if (state === "SchemaBlocked") document.getElementById("blocked-reason-text").textContent = t("tenants.detail.blockedReasonBody", s.blockedReasonVars);
 
     // Export progress — Exporting only.
     show("export-progress-panel", state === "Exporting");
@@ -373,7 +394,7 @@
         var tr = document.createElement("tr");
         tr.innerHTML = "<td class='mono'>" + p.id + "</td><td>" + p.version + "</td><td><span class='badge badge-" +
           PKG_BADGE[p.state] + "'></span></td><td></td>";
-        tr.querySelectorAll("span.badge")[0].textContent = p.state;
+        tr.querySelectorAll("span.badge")[0].textContent = packageStateLabel(p.state);
         tr.lastElementChild.textContent = formatDate(p.installedAt) + " · " + p.installedBy;
         body.appendChild(tr);
       });
@@ -404,7 +425,7 @@
       tr.innerHTML = "<td class='ts'></td><td></td><td></td>";
       tr.children[0].textContent = e.ts;
       tr.children[1].textContent = e.actor;
-      tr.children[2].textContent = e.action;
+      tr.children[2].textContent = t(e.actionKey, e.actionVars);
       actBody.appendChild(tr);
     });
 
@@ -454,12 +475,36 @@
     var btn = document.getElementById("destroy-confirm-btn");
     btn.setAttribute("aria-disabled", typed === s.key ? "false" : "true");
   }
+  // The first identity check (openDestroyDialog) only gates whether the
+  // typed-confirmation field appears; it is NOT the check that authorizes
+  // the drop. A second, independent identity check runs here, at act time,
+  // immediately before the destroy command would be sent — SPEC-003's
+  // "Detection, not prevention" residual: the check and the drop cannot be
+  // one atomic operation (Postgres can't rename/drop a database from a
+  // session connected to it), so this is the closest a UI can get, and the
+  // "simulate mismatch at submit" demo control exists specifically to prove
+  // this second check is a REAL, separate round trip, not the first one
+  // reused.
   function submitDestroy() {
     var btn = document.getElementById("destroy-confirm-btn");
     if (btn.getAttribute("aria-disabled") === "true") return;
     var s = SCENARIOS[currentState];
     btn.textContent = "…";
+    btn.setAttribute("aria-disabled", "true");
+    var mismatchAtSubmit = document.getElementById("simulate-mismatch-at-submit").checked;
     setTimeout(function () {
+      if (mismatchAtSubmit) {
+        // Second check disagrees with the first — nothing is destroyed.
+        document.getElementById("typed-confirm-field").hidden = true;
+        document.getElementById("identity-confirmed").hidden = true;
+        var m = document.getElementById("identity-mismatch");
+        m.hidden = false;
+        m.textContent = t("tenants.destroy.identityMismatch", { key: s.key });
+        announce(m.textContent, true);
+        btn.hidden = true;
+        btn.textContent = t("tenants.destroy.confirm");
+        return;
+      }
       closeModal("destroy-modal");
       showToast("success", t("tenants.destroy.successToast", { key: s.key }));
       setTimeout(function () { location.href = "tenant-list.html"; }, 900);

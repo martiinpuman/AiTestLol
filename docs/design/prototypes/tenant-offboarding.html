@@ -71,6 +71,14 @@
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="delete-title" style="width:480px;">
     <h2 id="delete-title"></h2>
 
+    <!-- Identity check #1 (on open) — gates whether the three operator
+         gates below are even reachable. A SEPARATE, second check runs again
+         at submit (see submitPermanentDelete) — see spec, "Detection, not
+         prevention": the two checks are never the same round trip. -->
+    <div id="delete-identity-checking" role="status" aria-live="polite"></div>
+    <div id="delete-identity-confirmed" class="field-foot" style="color:var(--color-success);" hidden></div>
+    <div id="delete-identity-mismatch" class="last-error" style="color:var(--color-danger);background:var(--color-danger-muted);" hidden></div>
+
     <div id="export-expired-block" class="last-error" style="color:var(--color-danger);background:var(--color-danger-muted);" hidden></div>
 
     <div id="delete-gates-body">
@@ -109,6 +117,12 @@
   </select>
   <label style="font-size:11px;display:flex;gap:6px;align-items:center;">
     <input type="checkbox" id="simulate-expired"> Simulate expired export
+  </label>
+  <label style="font-size:11px;display:flex;gap:6px;align-items:center;">
+    <input type="checkbox" id="simulate-delete-mismatch-open"> Simulate mismatch on 1st check (dialog open)
+  </label>
+  <label style="font-size:11px;display:flex;gap:6px;align-items:center;">
+    <input type="checkbox" id="simulate-delete-mismatch-submit"> Simulate mismatch on 2nd check (at submit)
   </label>
   <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
   <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
@@ -218,7 +232,7 @@
 
   function stageDoneSummary(i, s) {
     if (i === 1) return s.suspendedAt + " · " + s.suspendedBy;
-    if (i === 2) return "both bundles ready";
+    if (i === 2) return t("tenants.offboarding.bothBundlesReady");
     if (i === 3) return "—";
     return "";
   }
@@ -347,11 +361,11 @@
       submitLabel = t("tenants.offboarding.stageSuspended");
     } else if (kind === "resume") {
       title = t("tenants.offboarding.resume");
-      body = "Restores " + TENANT.name + " to Active immediately.";
+      body = t("tenants.offboarding.resumeBody", { tenant: TENANT.name });
       submitLabel = t("tenants.offboarding.resume");
     } else if (kind === "startExport") {
       title = t("tenants.offboarding.startExport");
-      body = "This begins producing an export. The tenant stays read-only.";
+      body = t("tenants.offboarding.startExportBody");
       submitLabel = t("tenants.offboarding.startExport");
     } else if (kind === "cancelDeletion") {
       title = t("tenants.offboarding.cancelDeletion");
@@ -373,11 +387,37 @@
 
   // --------------------- Permanent-delete dialog (three gates) --------------------
   function openPermanentDeleteDialog() {
-    var s = SCENARIOS[currentScenario];
     document.getElementById("delete-title").textContent = t("tenants.offboarding.confirmDelete") + " — " + TENANT.name;
     document.getElementById("verify-checkbox").checked = false;
     document.getElementById("delete-typed-input").value = "";
     document.getElementById("delete-typed-label").textContent = t("tenants.offboarding.typeToConfirm", { key: TENANT.key });
+    document.getElementById("export-expired-block").hidden = true;
+    document.getElementById("delete-gates-body").hidden = true;
+    document.getElementById("delete-identity-confirmed").hidden = true;
+    document.getElementById("delete-identity-mismatch").hidden = true;
+    var checking = document.getElementById("delete-identity-checking");
+    checking.hidden = false;
+    checking.textContent = "…";
+    openModal("delete-modal");
+    var mismatchFirst = document.getElementById("simulate-delete-mismatch-open").checked;
+    setTimeout(function () {
+      checking.hidden = true;
+      if (mismatchFirst) {
+        var m = document.getElementById("delete-identity-mismatch");
+        m.hidden = false;
+        m.textContent = t("tenants.destroy.identityMismatch", { key: TENANT.key });
+        announce(m.textContent, true);
+        return; // gates never reveal — nothing left in this dialog to satisfy
+      }
+      var c = document.getElementById("delete-identity-confirmed");
+      c.hidden = false;
+      c.textContent = t("tenants.destroy.identityConfirmed", { key: TENANT.key });
+      announce(c.textContent, false);
+      revealGates();
+    }, 500);
+  }
+  function revealGates() {
+    var s = SCENARIOS[currentScenario];
     var expired = document.getElementById("simulate-expired").checked;
     var block = document.getElementById("export-expired-block");
     var gatesBody = document.getElementById("delete-gates-body");
@@ -396,7 +436,6 @@
       document.getElementById("verify-checkbox-label").textContent = t("tenants.offboarding.verifiedExportCheckbox", { timestamp: formatDate(s.bundles[0].expiresOn) });
       updateGates();
     }
-    openModal("delete-modal");
   }
   function updateGates() {
     var expired = document.getElementById("simulate-expired").checked;
@@ -409,12 +448,35 @@
     status.className = "gate-status" + (satisfied === 3 ? " all-met" : "");
     document.getElementById("confirm-delete-btn").setAttribute("aria-disabled", satisfied === 3 ? "false" : "true");
   }
+  // The identity check on open (above) only gates whether the three gates
+  // are reachable — it is NOT what authorizes the drop. A SECOND,
+  // independent identity check runs here, at act time, immediately before
+  // the destroy command would be sent (SPEC-003-tenant-offboarding.md,
+  // "Detection, not prevention"). "simulate-delete-mismatch-submit" proves
+  // this is a real, separate round trip: ticking it makes the two checks
+  // disagree even though every gate above was genuinely satisfied.
   function submitPermanentDelete() {
     var btn = document.getElementById("confirm-delete-btn");
     if (btn.getAttribute("aria-disabled") === "true") return;
-    closeModal("delete-modal");
-    render("Deleted");
-    showToast("success", t("tenants.offboarding.successToast", { tenant: TENANT.name }));
+    btn.setAttribute("aria-disabled", "true");
+    var priorLabel = btn.textContent;
+    btn.textContent = "…";
+    var mismatchAtSubmit = document.getElementById("simulate-delete-mismatch-submit").checked;
+    setTimeout(function () {
+      if (mismatchAtSubmit) {
+        document.getElementById("delete-gates-body").hidden = true;
+        document.getElementById("delete-identity-confirmed").hidden = true;
+        var m = document.getElementById("delete-identity-mismatch");
+        m.hidden = false;
+        m.textContent = t("tenants.destroy.identityMismatch", { key: TENANT.key });
+        announce(m.textContent, true);
+        btn.hidden = true;
+        return;
+      }
+      closeModal("delete-modal");
+      render("Deleted");
+      showToast("success", t("tenants.offboarding.successToast", { tenant: TENANT.name }));
+    }, 500);
   }
 
   document.addEventListener("DOMContentLoaded", function () { render("PendingDeletionBefore"); });

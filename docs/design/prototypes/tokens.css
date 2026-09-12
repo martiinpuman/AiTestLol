@@ -1,8 +1,17 @@
 /*
- * tokens.css — GENERATED from docs/design/tokens.json by tokens.build.py + gen_css step.
- * Do not hand-edit. Change tokens.json, regenerate, review the contrast audit, then copy this file.
- * This is the reference implementation prototypes/ links to; the real app generates its own
- * copy of this file (or equivalent Sass/Blazor CSS isolation vars) from the same tokens.json.
+ * tokens.css — hand-synchronized from docs/design/tokens.json's color/typography/
+ * spacing/radius/elevation/motion values (a "gen_css step" was previously named
+ * in this comment as the mechanism; it does not exist anywhere in this repo —
+ * tokens.build.py emits tokens.json only. Found and corrected by DESIGN-002's
+ * rework rather than left as a claim nothing produces. Building a real CSS
+ * emitter, so this file is generated rather than kept in sync by hand, is
+ * routed to the orchestrator/a developer as follow-up, not done here).
+ * When you change a value in tokens.json, change it here too, in the same
+ * commit, and re-run tokens.build.py's contrast audit before either ships.
+ * This is the reference implementation prototypes/ links to; the real app
+ * needs its own copy of this file (or equivalent Sass/Blazor CSS isolation
+ * vars) derived from the same tokens.json — how it gets built is an
+ * engineering decision, not specified here.
  */
 
 :root {

@@ -105,9 +105,9 @@ Read together: the strip answers "is anything wrong, right now" in one glance wi
 |---|---|---|
 | Tenant | `display_name` (primary line) + `key` (secondary line, `mono`, muted) | Plain text; wraps rather than truncates (see "Long values") |
 | State | `state` | Status badge (`components.md` §12) + a one-line status detail beneath it, state-specific (see table below) — the detail line is what makes two `SchemaBlocked` rows distinguishable from each other, not just from an `Active` one |
-| Plan | `plan` | Plain text — set at reservation (`Tenant.Reserve`, ADR-0007 §8 step 1), so present even while `Provisioning`, unlike `Schema` below. *(An earlier draft of this row claimed Plan was blank until `Activate` — checked against `Tenant.cs` and corrected: `Plan`, like `Region`, is a constructor argument to `Reserve`, not a field `Activate` fills in.)* |
-| Region | `residency_region` | Monospace region code (e.g. `eu-north`) — an infrastructure identifier, never localized, never translated (same reasoning as `SPEC-002`'s `{permission}` interpolation) |
-| Schema | `core_schema_version` | Right-aligned tabular number; `—` until `Activate` has run |
+| Plan | `plan` | Plain text — set at reservation (`Tenant.Reserve`, ADR-0007 §8 step 1), so present for `Provisioning` and `ProvisioningFailed` too, unlike `Schema` below; `—` only for `Deleted`, whose catalog row is tombstoned to id/key/dates (ADR-0007 §11.4). *(An earlier draft of this row claimed Plan was blank until `Activate` — checked against `Tenant.cs` and corrected: `Plan`, like `Region`, is a constructor argument to `Reserve`, not a field `Activate` fills in.)* |
+| Region | `residency_region` | Monospace region code (e.g. `eu-north`) — an infrastructure identifier, never localized, never translated (same reasoning as `SPEC-002`'s `{permission}` interpolation); `—` only for `Deleted`, same reason as `Plan` |
+| Schema | `core_schema_version` | Right-aligned tabular number; `—` for `Provisioning` and `ProvisioningFailed` (neither has reached `Activate`, the only method that sets it) and for `Deleted` (tombstoned away); a real value everywhere else |
 | Created | `created_at` | Locale-formatted date, same discipline as every other date in this design system |
 | Last activity | `last_activity_at` | Locale-formatted date-time; `—` if never opened a scope (true for every `Provisioning` tenant) |
 
@@ -176,7 +176,7 @@ No badge invents a new color — all six map onto the five semantic categories `
 
 ## Accessibility notes
 
-- The Attention summary strip is a landmark region with an accessible name ("Needs attention"); each segment is a real `<button>` whose accessible name includes the count and label, never color/icon alone (§19).
+- The Attention summary strip is a landmark region with a localized accessible name (`tenants.attentionLandmarkLabel`) **only while it has content** — the `role` and `aria-label` are applied and removed together with the element's `hidden` state, in one code path, specifically so an empty landmark can never linger in the accessibility tree while looking gone to a sighted reviewer (Design-system finding 1). Each segment is a real `<button>` whose accessible name includes the count and label, never color/icon alone (§19).
 - The grid's `State` column groups a Status badge with a text detail line in the same cell; both are read by a screen reader as ordinary cell content — no extra ARIA is needed beyond what `components.md` §8's grid semantics already require, because nothing here is presented as an icon-only or color-only signal.
 - The severity-first default sort is announced the same way any grid sort state is (`components.md` §8) — an `aria-sort` value on the effective sort column where one exists; where the default view has no single-column equivalent (it is a compound rank, not one column), the toolbar's view selector reads "Needs attention first" as its accessible name, so a screen-reader user knows *that* an ordering choice is active even where it can't be expressed as a single `aria-sort`.
 - `Include deleted` is a real checkable control (`role="switch"` or a native checkbox, not a styled `<div>`), labeled, and its state change re-queries and announces the new row count via the same polite live region toasts use.
@@ -214,6 +214,7 @@ English is the base locale; sv-SE demonstrates the layer is real, per Principle 
 | `tenants.filterPlan` | Plan | Plan | Filter chip label |
 | `tenants.includeDeleted` | Include deleted | Inkludera raderade | Toggle label |
 | `tenants.defaultView` | Needs attention first | Kräver åtgärd först | View selector |
+| `tenants.attentionLandmarkLabel` | Needs attention | Kräver åtgärd | Attention strip's `aria-label` (assistive-only — see Design-system findings, #1) |
 | `tenants.attentionNeedsAction` | {count} need action | {count} kräver åtgärd | Attention strip segment |
 | `tenants.attentionPendingDeletion` | {count} pending deletion, soonest in {days} | {count} väntar på radering, snarast om {days} | Attention strip segment |
 | `tenants.footerCount` | Showing {rangeStart}–{rangeEnd} of {total} tenants | Visar {rangeStart}–{rangeEnd} av {total} klienter | List footer |
@@ -251,7 +252,7 @@ English is the base locale; sv-SE demonstrates the layer is real, per Principle 
 **Severity mechanisms**
 
 1. **[M]** With at least one `ProvisioningFailed` or `SchemaBlocked` tenant and at least one `PendingDeletion` tenant in the result set, the Attention strip renders exactly two segments, each showing a count equal to the true count of its category in the *whole filtered fleet*, not just the current page. *Fails if the count reflects only the fetched page.*
-2. **[M]** With zero tenants in both attention categories, the Attention strip element does not render at all (absent from the DOM, not merely empty or hidden-with-zero). *Fails if a "0 need action" segment renders.*
+2. **[M]** With zero tenants in both attention categories, the Attention strip element is `hidden` **and** carries no `role` or `aria-label` — not merely empty of visible content. *Fails if a "0 need action" segment renders, and (this is the counterexample a purely visual check would miss) fails if an empty, still-`role="navigation"`-and-named container remains in the accessibility tree — a landmark with nothing in it is still "rendered" to a screen reader even when it looks absent to a sighted reviewer.*
 3. **[M]** Activating an Attention-strip segment applies the matching state filter to the grid and moves focus into the toolbar's filter-chip region.
 4. **[M]** Under the default view, row order matches the five-rank severity order defined above, with `PendingDeletion` sub-ordered by ascending `deletion_due_at` and `Provisioning`/`Exporting` sub-ordered by ascending start time. *Fails if any rank is alphabetical instead of severity-first, or if a later rank precedes an earlier one.*
 5. **[M]** Clicking a column header re-sorts the grid by that column and replaces the "Needs attention first" view label with the column's own `aria-sort` state; "Reset to default" restores the severity order.
@@ -260,7 +261,7 @@ English is the base locale; sv-SE demonstrates the layer is real, per Principle 
 **Grid mechanics and formatting**
 
 7. **[M]** Every row's State cell renders both a Status badge and a state-specific detail line; the detail line is styled `text-muted`, never `text-subtle`. *Fails if the detail text fails the 4.5:1 contrast check.*
-8. **[M]** The `Schema` column renders `—` for any row in `Provisioning` state and a real value for every other state; the `Plan` and `Region` columns render a real value in **every** state including `Provisioning`, since both are set at reservation, not at activation. *Fails if `Plan`/`Region` are ever blanked for a `Provisioning` row — that would repeat the error this spec's own "Columns" section caught and corrected.*
+8. **[M]** Per-column, per-state, exactly this and nothing looser — **the previous wording of this criterion was itself wrong, falsified by this spec's own fixture, and is corrected here rather than quietly re-stated**: `Schema` renders `—` for `Provisioning` **and** `ProvisioningFailed` (neither has reached `Tenant.Activate`, which is the only thing that sets `core_schema_version`) and for `Deleted` (a tombstone retains no schema version at all), and a real value for `Active`, `Suspended`, `SchemaBlocked`, `Exporting` and `PendingDeletion`. `Plan` and `Region` render a real value for **every state except `Deleted`** — including `Provisioning`/`ProvisioningFailed`, since both are set at reservation (`Tenant.Reserve`), not at activation — and render `—` for `Deleted`, whose catalog row is tombstoned to "id, key and dates only" (ADR-0007 §11.4). *Fails if `Plan`/`Region` are blanked for `Provisioning`/`ProvisioningFailed`, if `Schema` is non-blank for `ProvisioningFailed` or `Deleted`, or if `Plan`/`Region` are non-blank for `Deleted` — the last two are exactly the two ways the previous version of this criterion was falsifiable against this spec's own fixture (a `ProvisioningFailed` row with a real `Schema` value, and a `Deleted` row with a real `Plan`/`Region`), so a test written from the old wording would have failed against correct code and "fixed" it into a lie.*
 9. **[M]** The footer's `{total}` and the two Attention-strip counts are each produced by the locale number formatter, not a literal — verified by rendering under two locales with different grouping separators and asserting the two renders differ only in punctuation, never in digits.
 10. **[M]** `Created` and `Last activity` render through the shared date/date-time formatter; a null `Last activity` renders `tenants.state.activeDetailNever`, never a blank cell or "Invalid Date."
 11. **[M]** No row-level checkbox column exists anywhere in this grid's markup, in any state.
@@ -275,7 +276,7 @@ English is the base locale; sv-SE demonstrates the layer is real, per Principle 
 
 **Localisation and access**
 
-17. **[M]** Rendered under a pseudo-locale whose every value carries a marker prefix, every visible string on this screen carries the prefix except region codes and tenant keys (which must **not** carry it, proving they bypass translation on purpose rather than by omission).
+17. **[M]** Rendered under a pseudo-locale whose every value carries a marker prefix, **every user-facing string on this screen — visible text and assistive-only text (`aria-label`, `role`-bearing landmark names, live-region announcements) alike** — carries the prefix except region codes and tenant keys (which must **not** carry it, proving they bypass translation on purpose rather than by omission). *The population was widened from "every visible string" specifically because a visible-only population is exactly what let the Attention strip's hard-coded `aria-label="Needs attention"` (finding, below) through: the string was never on screen for a pseudo-locale sweep to find, since a `data-i18n` scan only ever looked at `textContent`. That is a population gap in the check, not a verdict gap in what it found — the mechanism was sound, it was just never pointed at assistive-only attributes. See the Attention strip's own row above (AC 2) and "Design-system findings" below.*
 18. **[M]** axe-core reports zero violations on the default state, the Attention-strip-active state, and the missing-permission state.
 19. **[M]** Every interactive element in the toolbar and grid (search, filter chips, include-deleted toggle, Attention-strip segments, column headers, rows) is reachable and operable by keyboard alone, in visual reading order.
 
@@ -285,6 +286,16 @@ English is the base locale; sv-SE demonstrates the layer is real, per Principle 
 21. **[H]** With every en string doubled (pseudo-locale length test), no column header truncates and the Attention strip wraps to a second line rather than clipping a segment.
 22. **[H]** At 3,000+ simulated rows with the default view active, scrolling and re-sorting feel responsive (no perceptible jank) — a real performance judgment the automated suite can't make, distinct from the correctness assertions above.
 23. **[H]** Dark and light themes both read correctly at `compact` and `comfortable` density, including the `danger`-badge/`text-muted`-detail-line pairing in the `SchemaBlocked`/`ProvisioningFailed` rows specifically (the two states this screen is built to make impossible to miss).
+
+## Design-system findings
+
+Written out rather than designed around, per the project rule that a check is only as good as the last link it follows.
+
+**1. The Attention strip's landmark survived being "empty."** The prototype's first draft set `role="navigation"` and a hard-coded `aria-label="Needs attention"` directly in the markup and only cleared the strip's *contents* when both counts were zero — leaving a named, empty landmark in the accessibility tree exactly when `components.md` §19 requires nothing be rendered at all. A sighted reviewer would never catch this (the strip visibly disappears), which is precisely why it survived a design-direction review. Fixed: the container starts `hidden` with no `role`/`aria-label` in the markup, and `renderAttentionStrip()` adds `hidden = false` + `role` + a localized `aria-label` together only when there is something to show, removing all three together otherwise — one code path, not "clear the text and hope."
+
+**2. AC 17's population was "every visible string," and that is exactly what missed finding 1.** A pseudo-locale sweep that only walks `textContent`/`data-i18n` targets will never see a hard-coded `aria-label`, because that attribute is never on screen for the sweep to read. The mechanism itself was fine; it was pointed at the wrong population. AC 17 above is now widened to "every user-facing string, visible or assistive," and the same widening applies to `SPEC-003-tenant-detail.md`'s and `SPEC-003-tenant-offboarding.md`'s equivalent criteria.
+
+**3. `select.view-select` was a bootstrap prototype's private style, not a shared one.** `list.html` (pre-`DESIGN-001`) defined it in its own `<style>` block rather than `app.css`; this task's `tenant-list.html` would have been the second file to need it and the second to silently duplicate it had this not been caught while cross-checking every class this prototype uses against a defined selector. Promoted to `app.css`.
 
 ## To route (outside `docs/design/`)
 

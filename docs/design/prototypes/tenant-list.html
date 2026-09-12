@@ -61,7 +61,15 @@
       <div id="default-view">
         <!-- Attention summary strip — components.md #19. Absent entirely
              when both counts are zero; see renderAttentionStrip(). -->
-        <div class="attention-strip" id="attention-strip" role="navigation" aria-label="Needs attention"></div>
+        <!-- No role/aria-label/hidden set here: a landmark that exists in
+             markup with nothing in it is exactly what components.md #19
+             forbids ("Not rendered at all" when healthy) even though it
+             LOOKS empty to a sighted user — an assistive-tech user still
+             lands on a named region with nothing in it. renderAttentionStrip()
+             adds the landmark role, the (localized) label, and un-hides this
+             element together, only when there is something to show, and
+             removes all three together otherwise. -->
+        <div class="attention-strip" id="attention-strip" hidden></div>
 
         <div class="panel">
           <div class="toolbar">
@@ -182,7 +190,7 @@
        An earlier draft of this fixture nulled Plan/Region here too; caught
        against Tenant.cs and fixed, see SPEC-003-tenant-list.md "Columns." */
     { key: "kessler-fasteners", name: "Kessler Fasteners GmbH", state: "ProvisioningFailed", attempts: 5, plan: "Standard", region: "eu-west", schema: null, created: "2026-09-08" },
-    { key: "solheim-trading", name: "Solheim Trading", state: "SchemaBlocked", schemaVersion: 9, minVersion: 11, plan: "Standard", region: "eu-north", created: "2026-06-02" },
+    { key: "solheim-trading", name: "Solheim Trading", state: "SchemaBlocked", schemaVersion: 9, minVersion: 11, schema: 9, plan: "Standard", region: "eu-north", created: "2026-06-02" },
     { key: "meridian-distribution", name: "Meridian Distribution", state: "PendingDeletion", deletionDueDays: 2, deletionDueDate: "2026-09-14", plan: "Standard", region: "eu-north", schema: 14, created: "2026-01-15" },
     { key: "ashcroft-retail", name: "Ashcroft Retail Group", state: "PendingDeletion", deletionDueDays: 9, deletionDueDate: "2026-09-21", plan: "Trial", region: "eu-west", schema: 14, created: "2026-03-03" },
     { key: "larkspur-logistics", name: "Larkspur Logistics AB", state: "Provisioning", step: 5, plan: "Standard", region: "eu-west", schema: null, created: "2026-09-12" },
@@ -263,7 +271,18 @@
     var pending = TENANTS.filter(function (r) { return r.state === "PendingDeletion"; }).sort(function (a, b) { return a.deletionDueDays - b.deletionDueDays; });
     var strip = document.getElementById("attention-strip");
     strip.innerHTML = "";
-    if (needsAction.length === 0 && pending.length === 0) return; // components.md #19: absent, not empty
+    if (needsAction.length === 0 && pending.length === 0) {
+      // components.md #19: absent, not empty — remove the landmark itself,
+      // not just its contents, so an assistive-tech user never lands on a
+      // named region with nothing in it (the bug this fix corrects).
+      strip.hidden = true;
+      strip.removeAttribute("role");
+      strip.removeAttribute("aria-label");
+      return;
+    }
+    strip.hidden = false;
+    strip.setAttribute("role", "navigation");
+    strip.setAttribute("aria-label", t("tenants.attentionLandmarkLabel"));
     if (needsAction.length) {
       var b1 = document.createElement("button");
       b1.className = "attention-segment needs-action";
