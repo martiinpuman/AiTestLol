@@ -62,14 +62,15 @@ readonly FAIL_TAIL_LINES=40
 # discovery failure, all of which move the count by tens or to zero; the smallest
 # assembly is 105, so any assembly dropping out still lands below it. Re-round it
 # whenever a test project joins or leaves Aurora.sln.
-# 924 executed with B-06.1a merged onto B-21 and B-06.1 (SharedKernel 231,
-# Countries.Contracts 141, Countries.Hosting 105, Platform.Tenancy 312, Architecture
-# 135), read from the gate's own .trx files. B-06.1a adds 70 to Platform.Tenancy
-# (242 -> 312: the 66 its third review measured on the B-19 base, 166 -> 232, plus
-# four rework-3 tests); the integration branch's own line, 854, is confirmed.
+# 960 executed with B-06.1a (rework 4) merged onto B-21 and B-06.1 (SharedKernel 231,
+# Countries.Contracts 141, Countries.Hosting 105, Platform.Tenancy 348, Architecture
+# 135), read from the gate's own .trx files. B-06.1a adds 106 to Platform.Tenancy
+# (242 -> 348: 70 through rework 3, then 36 in rework 4 - the explicit-implementation
+# probes and the PackageIdFormat theories); the integration branch's own line, 854,
+# is confirmed.
 # Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
-# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854, B-06.1a 924.
-readonly DEFAULT_MIN_UNIT_TESTS=920
+# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854, B-06.1a 960.
+readonly DEFAULT_MIN_UNIT_TESTS=950
 MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-${DEFAULT_MIN_UNIT_TESTS}}"
 readonly MIN_UNIT_TESTS
 
