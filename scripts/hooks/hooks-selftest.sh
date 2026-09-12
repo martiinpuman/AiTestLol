@@ -49,6 +49,7 @@ must_block $BASH_HOOK "$(json_cmd 'git push -f origin task/B-09')"              
 must_block $BASH_HOOK "$(json_cmd 'git push --force-with-lease origin task/B-09')"        AURORA-BASH-01 'force-with-lease'
 must_block $BASH_HOOK "$(json_cmd 'git push -u origin main')"                             AURORA-BASH-02 'push to main'
 must_block $BASH_HOOK "$(json_cmd 'git push origin HEAD:refs/heads/master')"              AURORA-BASH-02 'push to master via refspec'
+must_block $BASH_HOOK "$(json_cmd 'for b in task/B-04 main; do git push -u origin "$b"; done')" AURORA-BASH-02 'a variable refspec, which cannot be evaluated'
 must_block $BASH_HOOK "$(json_cmd 'rm -rf docs/decisions/ADR-0007-tenancy.md')"           AURORA-BASH-03 'delete an ADR'
 must_block $BASH_HOOK "$(json_cmd 'git rm docs/decisions/ADR-0001-stack.md')"             AURORA-BASH-03 'git rm an ADR'
 must_block $BASH_HOOK "$(json_cmd 'git add .env && git commit -m "config"')"              AURORA-BASH-04 'stage a .env'
@@ -58,6 +59,7 @@ must_block $BASH_HOOK "$(json_cmd "$real_push_after_heredoc")" AURORA-BASH-02 'a
 env_after_heredoc=$'cat > x.md <<EOF\ntext\nEOF\ngit add .env'
 must_block $BASH_HOOK "$(json_cmd "$env_after_heredoc")"       AURORA-BASH-04 'a real .env stage following a heredoc'
 must_block $BASH_HOOK "$(json_cmd 'cd src && dotnet build')"                              AURORA-BASH-05 'dotnet after a cd'
+must_block $BASH_HOOK "$(json_cmd 'for p in a b; do dotnet test $p; done')"                AURORA-BASH-05 'dotnet inside a loop body'
 
 echo "PreToolUse(Bash) — must allow"
 must_allow $BASH_HOOK "$(json_cmd 'git push -u origin task/B-09')"                        'push to a task branch'
@@ -68,6 +70,8 @@ must_allow $BASH_HOOK "$(json_cmd 'git log --oneline -20')"                     
 must_allow $BASH_HOOK "$(json_cmd 'git push -u origin claude/multi-tenant-saas-erp-pv2nap 2>&1 | tail -3')" 'a push whose output is piped'
 must_allow $BASH_HOOK "$(json_cmd 'git push origin task/B-09 && echo done')"              'a push followed by another command'
 must_allow $BASH_HOOK "$(json_cmd 'git push -u origin task/B-09 > /tmp/push.log 2>&1')"   'a push redirected to a file'
+must_allow $BASH_HOOK "$(json_cmd 'git worktree remove /tmp/review-B-04 --force && git push -u origin task/B-09')" 'a --force elsewhere in the same command'
+must_allow $BASH_HOOK "$(json_cmd 'git push -u origin task/B-09 && rm -f /tmp/x.force')" 'the word force after the push'
 
 # A commit message or file body that *describes* a blocked command is not one. Both
 # of these refused a legitimate commit before heredoc bodies were stripped.

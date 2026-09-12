@@ -4,19 +4,45 @@
     Tier 0 - kernel (docs/architecture/modules.md 3).
 
     The ten Country Package extension-point interfaces, CountryPackageManifest and the
-    AccountRole registry. This is the only core assembly a Country Package may reference
-    (ADR-0008 3.1), so its public surface is guarded by an approved-API snapshot test.
+    AccountRole registry. A package may reference this assembly and the two tier-0 assemblies
+    it is expressed in (Aurora.SharedKernel, Aurora.Documents.Canonical) and no other Aurora
+    assembly: the allowlist is PackageAssemblyReferenceRule in Aurora.Countries.Hosting, matched
+    case-insensitively as the loader binds names and checked against the package's reference
+    table from metadata before any of its code runs. Keep this assembly's own dependency surface
+    small - whatever it references, a package can reach.
 
-    Content, and the snapshot test, arrive with task B-12.
+    The version below is the CORE CONTRACT VERSION of ADR-0008 3.1 - not the product version.
+    It is the number a package's coreContractRange is matched against, so it moves only when an
+    extension point changes, under the SemVer rules in that section. CoreContract.Version reads
+    it back from this assembly at runtime, so there is one number here and nowhere else.
   -->
 
   <PropertyGroup>
     <RootNamespace>Aurora.Countries.Contracts</RootNamespace>
+    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Aurora.SharedKernel\Aurora.SharedKernel.csproj" />
     <ProjectReference Include="..\Aurora.Documents.Canonical\Aurora.Documents.Canonical.csproj" />
+  </ItemGroup>
+
+  <!--
+    The approved-API snapshot of ADR-0008 3.1. Every public member must appear in
+    PublicAPI.Shipped.txt or the build fails (RS0016), which is the moment a human decides the
+    SemVer bump. ContractPublicApiTests asserts that file is neither stale nor short, so
+    dropping this analyzer does not silently drop the gate.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.PublicApiAnalyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <AdditionalFiles Include="PublicAPI.Shipped.txt" />
+    <AdditionalFiles Include="PublicAPI.Unshipped.txt" />
   </ItemGroup>
 
 </Project>

@@ -78,3 +78,30 @@ For any task that adds a check, a gate or a property test, add the demonstration
 
 Record the dispatch in `docs/BACKLOG.md` (status) and `docs/ITERATION_LOG.md`. Do not
 dispatch a second agent against the same files.
+
+## 0. Before any of the above — is the file free?
+
+```
+bash scripts/file-claims.sh <paths the task will touch>
+```
+
+Two agents in one file is a merge conflict scheduled for later, and it has already
+cost this project real defects: two architects dispatched at once both numbered their
+ADR **0029** and both created a **§6.2** in `solution-layout.md`, and reconciling it by
+hand corrupted a dozen `ADR-0008 §6.2` references in a third document before it was
+caught and redone.
+
+With no arguments the script lists every file claimed by more than one in-flight
+branch. It collapses a rework branch into the task it reworks — those share nearly
+every file by design and are one task, not two.
+
+**When two tasks need the same file, do one of these, in order of preference:**
+1. **Partition it in the briefs** — name in each brief which sections, which ADR
+   numbers, and which headings are that agent's. `docs/architecture/` and
+   `docs/decisions/` need this every time more than one architect is running.
+2. **Sequence them** — dispatch the second when the first merges. Cheaper than a
+   hand-resolved conflict in a document nobody can diff by eye.
+3. **Merge the first, then rebase the second** — only when the second has barely
+   started.
+
+Never dispatch two agents into the same file and plan to sort it out at merge time.

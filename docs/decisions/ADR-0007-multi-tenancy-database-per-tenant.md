@@ -4,6 +4,7 @@
 - **Deciders:** product owner (isolation model), architect (all mechanisms)
 - **Supersedes:** —
 - **Superseded by:** **in part** by ADR-0027 — §4.1 (the tenant `DbContext` constructor signature) and §7.5 (which access paths the skew check gates). Every other section of this ADR stands. §3.2 (strategy 3 is a constraint, never a resolution source, and a host that maps to no tenant is refused rather than resolved from the claim) and §3.3 (what is checked at circuit creation and at each revalidation) are **made precise** by ADR-0029 §4 — clarified, not changed — **except** §3.2's `403` for a routing violation, which ADR-0029 Amendment 1 (M-1) changes to a `404` identical to the unknown-host response, because the two status codes together enumerated the customer list. ADR-0029 Amendment 2 (A2.5) also makes §3.3 explicit: the circuit pins the **`TenantId`**, and a `TenantScope` is opened per unit of work and disposed with it — which is what §3.2's "once per unit of work" and §10.4's stale-scope trap already require.
+- **Amended by:** **ADR-0032 (2026-09-11)** — §4.1 and §4.2 state the guarantee in prose; ADR-0032 states the boundary a fitness rule can bind to (which DI registrations are banned, whether a member *returning* a tenant `DbContext` is a violation, how the catalog context is identified, and that allow-lists match exact assembly names). **No decision in this ADR is reversed.** The amendment notes below mark the two sections affected.
 - **Related:** ADR-0003 (EF Core), ADR-0004 (PostgreSQL), ADR-0005 (Blazor Server), ADR-0008 (Country Packages), ADR-0018 (audit, retention, erasure)
 
 > This is the load-bearing ADR of the project. Tenancy is the one decision that cannot be retrofitted: every module's data access, every background job, every test and every operational procedure is shaped by it. Read §3, §4 and §10 before writing any data access code.
@@ -117,6 +118,8 @@ This is the **only** place that knows how a tenant maps to physical storage. It 
 
 ### 4.1 Layer 1 — the type system (compile time)
 
+> **Amended by ADR-0032 (2026-09-11) §4.2.** "The only public way to obtain one" is now bounded mechanically as well as by design: outside the assemblies that own a tenant `DbContext` nothing may **name** it (rule T16); no externally reachable member anywhere may **return** or expose one, including through a `ref`/`out` parameter (T17); and only `Aurora.Platform.Tenancy` may **construct** one (T18). `ITenantDbContextFactory<TContext>` needs no exemption from any of the three — it returns a type parameter, not a context type, so the rules cannot match it. The constructor rule in this section is unchanged (and its signature is ADR-0027 §1's).
+
 > **Superseded in part by ADR-0027 §1.** The constructor's second parameter is `TenantAccess`, the abstract base of `TenantScope` (application path) and `TenantDatabaseHandle` (DDL path). The guarantee below is unchanged: neither proof type is constructible outside `Aurora.Platform.Tenancy`.
 
 Every tenant `DbContext` has exactly one constructor, and it is **internal**:
@@ -143,6 +146,8 @@ public interface ITenantDbContextFactory<TContext> where TContext : DbContext
 `scope` is a non-nullable required parameter. There is no overload without it, no `Current`-reading convenience method, and no `CreateAsync()`. **You cannot write the call without first holding a `TenantScope`, and §3.4 means you cannot manufacture one.** Nullable reference types are enabled solution-wide with `TreatWarningsAsErrors` (ADR-0002), so passing `null!` is a compile error that a reviewer will see as a deliberate act.
 
 ### 4.2 Layer 2 — the container
+
+> **Amended by ADR-0032 (2026-09-11) §4.1.** "No tenant `DbContext` is ever registered" is read as: **every DI registration naming a tenant `DbContext` is banned, whatever the method** — `AddScoped<SalesDbContext>()` and a generic helper are registrations exactly as `AddDbContext<SalesDbContext>` is. **There is no sanctioned registration helper**; `AddTenantDbContext<T>()` must not be written, and ADR-0032 §4.1.3 states what a module writes instead. The fitness test described in the second bullet below is **amended in its scope** by ADR-0032 §5 — amended, not superseded: the decision stands and the mechanism is re-keyed, onto the call site's assembly and the container surface rather than the member name, because a rule that keys on a method name is defeated by renaming one.
 
 - **No tenant `DbContext` is ever registered in the DI container.** No `AddDbContext<SalesDbContext>`, no `AddDbContextFactory<SalesDbContext>`, no `AddDbContextPool`. `IServiceProvider.GetRequiredService<SalesDbContext>()` throws, because nothing registered it. Only `CatalogDbContext` is registered conventionally (ADR-0003 rule 3).
 - An **architecture fitness test** asserts, across the whole solution: no call to `AddDbContext*<T>` where `T` is a tenant context; no tenant context type has a public or protected constructor; no type outside `Aurora.Platform.Tenancy` implements `ITenantDbContextFactory<>`.

@@ -120,3 +120,51 @@ written.
 Concurrency, restated: **up to six agents, of which at most four may build.** Reviews and
 developer tasks count against the four. Designers, architects, project-managers and
 researchers do not.
+
+## A finding raised twice and left is itself the finding
+
+**2026-09-11, from B-04's second review.** The first review rejected B-04 for a `.csproj`
+comment describing a fixture directory that did not exist (M-1), and separately listed as
+**minor n-6** the residue of the same idea: a filter excluding any path segment named
+`Fixtures/`. The author fixed M-1 and left n-6, exactly as the tiering allows.
+
+n-6 was the half with teeth. A production `.csproj` under **any** directory named
+`Fixtures/` vanished from the scanned population entirely — invisible not just to the
+layering rules but to all six tenancy rules, the floating-point rule and the clock rule,
+while the suite stayed green at 42/42. The rule set that is currently the only automated
+proof of tenant isolation had a hole you could drive a module through, and it was written
+down in the first review as a nice-to-have.
+
+The rule this buys: **when the same idea appears in a review as both a major and a minor,
+the minor is not independent.** Fixing the stated instance and deferring the mechanism
+leaves the mechanism. Before accepting a rework, check every deferred minor that shares a
+mechanism with an accepted major, and promote it rather than carrying it.
+
+More generally, a minor's tier is a claim about blast radius, and that claim is worth
+re-testing when the code around it changes. A minor deferred twice should be either fixed
+or written into the backlog with an id — never carried a third time in a review file where
+it reads as acknowledged and handled.
+
+## Security-review an ADR before dispatching the rows that depend on it
+
+**2026-09-11.** ADR-0029 specified sign-in, the `tid` claim and permission evaluation, and nine
+bootstrap rows were written from it. Before dispatching any of them it went to a security
+reviewer as a **design** review — no code existed. The reviewer returned **two blockers and
+nine high findings**, and named six of the nine rows as not dispatchable as written.
+
+Both blockers were cross-tenant, and neither was a mechanism the architect got wrong. They were
+things **no document owned**: a cache key specified in a different ADR with no tenant in it,
+which let the one legitimate mint site issue a claim for someone else's tenant; and find-or-create
+on a platform-wide user record, which made invitation redemption an account takeover of an
+existing customer in every tenant they belonged to.
+
+Had those nine rows been dispatched first, the blockers would have been found — if at all — by
+nine separate reviewers looking at nine separate implementations of a design that was already
+wrong, after nine implementations had been written. The whole review cost one agent and under
+fifteen minutes.
+
+The rule: **when an ADR gates more than about three rows, and touches tenancy, money, auth or
+anything a Country Package can influence, review the ADR before dispatching any of them.** Brief
+it as a design review and say so — the reviewer's job is to attack the decisions, not to check
+the prose. Ask specifically what it attacked and could *not* break, because that list is what the
+architect must not redesign while fixing the rest.

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The Country Package host (docs/architecture/solution-layout.md 1, ADR-0008 3.3, 9).
+
+    Discovery, manifest reading, signature verification, the core-contract compatibility gate and
+    the collectible load context. Everything here runs BEFORE a package's code does - the manifest
+    and the referenced-assembly check are read with MetadataLoadContext, which loads metadata and
+    never executes anything - so a package that is incompatible, unsigned or reaching for an
+    assembly it may not touch is refused without being given a thread.
+
+    Two dependencies, both approved in docs/architecture/dependencies.md 2.1:
+      System.Reflection.MetadataLoadContext - reading a manifest without running the package.
+      NuGet.Versioning                      - parsing and comparing coreContractRange.
+
+    Neither is visible to a package: a package references Aurora.Countries.Contracts and nothing
+    else (ADR-0008 3.1), and this assembly is not part of that surface.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Countries.Hosting</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Aurora.Countries.Contracts\Aurora.Countries.Contracts.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Reflection.MetadataLoadContext" />
+    <PackageReference Include="NuGet.Versioning" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Aurora.Countries.Hosting.UnitTests" />
+  </ItemGroup>
+
+</Project>

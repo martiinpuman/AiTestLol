@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title id="page-title">Sign in — Meridian Distribution · Aurora ERP</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  /* Page-specific styles only — everything reads tokens.css custom properties,
+     nothing here is a raw value that should have been a token (see tokens.md). */
+  .skip-link {
+    position: absolute; left: -9999px; top: 0;
+    background: var(--color-surface); color: var(--color-text);
+    padding: 8px 14px; border-radius: var(--radius-sm); border: 2px solid var(--color-border-focus);
+    z-index: 200; font-size: 13px; text-decoration: none;
+  }
+  .skip-link:focus { left: var(--space-3); top: var(--space-3); }
+
+  /* Illustrative-only mock of browser chrome, so the "tenant resolved from
+     the hostname, never typed by the user" mechanism (ADR-0007 §3.2 strategy
+     1) is visible without asking the reviewer to imagine an address bar.
+     aria-hidden: a screen reader user gets the real page heading instead,
+     which already states which tenant they are signing in to. */
+  .browser-chrome-mock {
+    display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+    background: var(--color-surface-sunken); border-bottom: 1px solid var(--color-border);
+    font-size: 12px; color: var(--color-text-muted);
+  }
+  .browser-chrome-mock .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--color-border-strong); }
+  .browser-chrome-mock .url-bar {
+    margin-left: 10px; background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-full); padding: 3px 12px; font-family: var(--font-family-mono);
+  }
+  .chrome-note { text-align: center; font-size: 11px; color: var(--color-text-subtle); padding: 4px 0 0; margin: 0; }
+
+  .auth-page {
+    min-height: calc(100vh - 74px); display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: var(--space-4); padding: var(--space-6) var(--space-4);
+    background: var(--color-canvas);
+  }
+  .auth-topline { width: 100%; max-width: 400px; display: flex; justify-content: flex-end; }
+  .auth-card {
+    width: 100%; max-width: 400px; background: var(--color-surface); border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg); box-shadow: var(--elevation-2); padding: var(--space-6);
+    display: flex; flex-direction: column; gap: var(--space-4);
+  }
+  .auth-card .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 15px; }
+  .auth-card h1 { font-size: var(--font-size-heading-md); font-weight: 600; }
+  .lang-field { align-self: flex-end; width: 168px; }
+  .lang-field label { font-size: 11px; }
+  .field-row-split { display: flex; justify-content: space-between; align-items: baseline; }
+  .forgot-link { font-size: 12px; text-decoration: none; }
+  .auth-banner {
+    border-radius: var(--radius-sm); padding: var(--space-3); font-size: 12px;
+    display: flex; gap: 8px; align-items: flex-start; line-height: 1.4;
+  }
+  .auth-banner:focus-visible { outline: 2px solid var(--color-border-focus); outline-offset: 2px; }
+  .auth-banner.danger { background: var(--color-danger-muted); color: var(--color-danger); border: 1px solid var(--color-danger); }
+  .auth-banner.warning { background: var(--color-warning-muted); color: var(--color-warning); border: 1px solid var(--color-warning); }
+  .footer-help { font-size: 12px; text-align: center; }
+  .static-value { font-size: var(--font-size-body); padding: 4px 0; color: var(--color-text); }
+  .reauth-unsaved {
+    background: var(--color-warning-muted); color: var(--color-warning); border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3); font-size: 12px; line-height: 1.4;
+  }
+  .demo-controls .group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-subtle); margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<a class="skip-link" href="#email" data-i18n="signin.skipLink">Skip to sign-in form</a>
+
+<!-- Illustrative browser chrome — NOT part of the app. See page-specific styles above. -->
+<div class="browser-chrome-mock" aria-hidden="true">
+  <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+  <span class="url-bar">🔒 meridian.aurora.example/sign-in</span>
+</div>
+<p class="chrome-note" aria-hidden="true">
+  ↑ illustrative browser chrome, not part of the product — it shows the tenant is resolved from this
+  hostname (ADR-0007 §3.2 strategy 1), never typed by the user. See sign-in spec, "Tenant resolution."
+</p>
+
+<div class="auth-page">
+  <div class="auth-topline">
+    <div class="theme-toggle" aria-label="Theme">
+      <button data-mode="light" onclick="setTheme('light')">Light</button>
+      <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+      <button data-mode="system" onclick="setTheme('system')">System</button>
+    </div>
+  </div>
+
+  <!-- ============ NORMAL SIGN-IN CARD (default + invalid + lockout states) ============ -->
+  <div class="auth-card" id="signin-normal">
+    <div class="brand"><span class="mark" style="width:22px;height:22px;border-radius:var(--radius-sm);background:var(--color-accent-solid);color:var(--color-text-on-accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;">A</span> Aurora ERP</div>
+
+    <!-- Real, in-product control: this tenant has installed a Country Package
+         that contributes an additional locale (sv-SE), so both are legitimately
+         offered here per app-shell.md's rule (base English + installed-package
+         locales). See spec, "Locale and formatting." -->
+    <div class="field lang-field">
+      <label for="lang-select" data-i18n="signin.languageLabel">Language</label>
+      <select id="lang-select" class="input locale-select" aria-label="Language" onchange="setLocale(this.value)">
+        <option value="en">English</option>
+        <option value="sv-SE">Svenska</option>
+      </select>
+    </div>
+
+    <h1 data-i18n="signin.heading" data-i18n-vars='{"tenant":"Meridian Distribution"}'>Sign in to Meridian Distribution</h1>
+    <p class="muted" data-i18n="signin.subhead">Enter your Aurora ERP credentials.</p>
+
+    <!-- Deliberately NOT field-specific: components.md §9 addition, "non-field-specific
+         error" — a single banner, never "which field was wrong," so the response cannot
+         be used to enumerate whether an account exists (see spec, "Anti-enumeration"). -->
+    <div class="auth-banner danger" id="error-banner" role="alert" hidden></div>
+
+    <form id="signin-form" onsubmit="return demoSubmit(event)" novalidate>
+      <div class="field" style="margin-bottom:var(--space-3);">
+        <label for="email" data-i18n="signin.emailLabel">Email</label>
+        <input class="input" type="email" id="email" name="email" autocomplete="username" required
+               data-i18n-placeholder="signin.emailPlaceholder" value="alex@meridian.example">
+      </div>
+      <div class="field" style="margin-bottom:var(--space-4);">
+        <div class="field-row-split">
+          <label for="password" data-i18n="signin.passwordLabel">Password</label>
+          <a href="#" class="forgot-link" data-i18n="signin.forgotPassword" onclick="return false;">Forgot password?</a>
+        </div>
+        <input class="input" type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn btn-primary" type="submit" id="submit-btn" style="width:100%;height:36px;">
+        <span data-i18n="signin.submit">Sign in</span>
+      </button>
+    </form>
+
+    <p class="footer-help muted" data-i18n="signin.footerHelp">Trouble signing in? Contact your administrator.</p>
+  </div>
+
+  <!-- ============ UNKNOWN-HOST CARD (host does not resolve to any tenant) ============ -->
+  <!-- No language picker here: no tenant is resolved, so there is no locale set to
+       offer beyond the base English error copy (see spec, "Unknown address"). -->
+  <div class="auth-card" id="signin-unknown-host" hidden>
+    <div class="brand"><span class="mark" style="width:22px;height:22px;border-radius:var(--radius-sm);background:var(--color-accent-solid);color:var(--color-text-on-accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;">A</span> Aurora ERP</div>
+    <div class="empty-state" style="padding: var(--space-4) 0;">
+      <div class="glyph">🔍</div>
+      <h1 style="font-size:var(--font-size-heading-md);" data-i18n="signin.unknownHostHeading">We couldn't find an Aurora ERP account at this address.</h1>
+      <p data-i18n="signin.unknownHostBody">Check the web address your administrator gave you, or contact them if you believe this is a mistake.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============ RE-AUTHENTICATION MODAL (revalidation failed mid-session) ============ -->
+<!-- data-modal-blocking="true": opts out of the global Escape-to-close handler
+     (app.js) per components.md §14 — this is a "must resolve before continuing"
+     dialog, not one merely collecting input the user can walk away from. -->
+<div class="modal-overlay" id="reauth-modal" data-modal-blocking="true" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="reauth-heading">
+    <h2 id="reauth-heading" data-i18n="signin.reauthHeading">Sign in again to continue</h2>
+    <p data-i18n="signin.reauthBody">Your session ended for security reasons. Sign in again — you'll return to exactly where you left off.</p>
+    <p class="reauth-unsaved" id="reauth-unsaved-note" hidden
+       data-i18n="signin.reauthUnsavedNote" data-i18n-vars='{"screen":"Sales Order SO-2041"}'>
+      You have unsaved changes on Sales Order SO-2041. They may not be recoverable after you sign in again.
+    </p>
+    <div class="field">
+      <label data-i18n="signin.reauthEmailLabel">Signed in as</label>
+      <div class="static-value">alex@meridian.example</div>
+    </div>
+    <div class="field">
+      <label for="reauth-password" data-i18n="signin.reauthPasswordLabel">Password</label>
+      <input class="input" type="password" id="reauth-password">
+    </div>
+    <div class="actions" style="justify-content:space-between;align-items:center;">
+      <a href="#" class="forgot-link" onclick="signOutInstead(event)">Not you? Sign in as a different user</a>
+      <button class="btn btn-primary" onclick="completeReauth()"><span data-i18n="signin.reauthContinue">Continue</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="demo-controls">
+  <div class="title" data-i18n="signin.demoPanelTitle">Prototype controls</div>
+  <button class="btn btn-secondary btn-sm" onclick="showState('default')" data-i18n="signin.demoDefault">Default</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('invalid')" data-i18n="signin.demoInvalid">Invalid credentials</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('lockout')" data-i18n="signin.demoLockout">Locked out</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('unknown-host')" data-i18n="signin.demoUnknownHost">Unknown address</button>
+  <div class="group-label" data-i18n="signin.demoReauth">Mid-session re-auth</div>
+  <button class="btn btn-secondary btn-sm" onclick="openReauthDemo(false)">— clean</button>
+  <button class="btn btn-secondary btn-sm" onclick="openReauthDemo(true)">— with unsaved work</button>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+
+<div class="toast-stack"></div>
+
+<script src="i18n.js"></script>
+<script src="app.js"></script>
+<script>
+  // ---------------------------------------------------------------------
+  // Demo-only state machine. In the real app each of these is a distinct
+  // server response to the same POST /sign-in, not a client-side branch —
+  // see sign-in.html's spec (docs/design/screens/SPEC-001-sign-in.md) for
+  // exactly which HTTP/ADR-0009 behaviour each one stands in for.
+  // ---------------------------------------------------------------------
+  var currentAuthState = "default";
+
+  function showState(state) {
+    currentAuthState = state;
+    document.getElementById("reauth-modal").setAttribute("hidden", "");
+    renderAuthState();
+  }
+
+  function renderAuthState() {
+    var normal = document.getElementById("signin-normal");
+    var unknown = document.getElementById("signin-unknown-host");
+    normal.hidden = (currentAuthState === "unknown-host");
+    unknown.hidden = (currentAuthState !== "unknown-host");
+    resetSubmitButton();
+
+    var banner = document.getElementById("error-banner");
+    if (currentAuthState === "invalid") {
+      banner.hidden = false;
+      banner.className = "auth-banner danger";
+      banner.textContent = t("signin.errorInvalid");
+      markFieldsInvalid(true);
+      focusBanner();
+    } else if (currentAuthState === "lockout") {
+      banner.hidden = false;
+      banner.className = "auth-banner warning";
+      banner.textContent = t("signin.errorLockout", { minutes: formatCount(12) });
+      markFieldsInvalid(false);
+      focusBanner();
+    } else {
+      banner.hidden = true;
+      markFieldsInvalid(false);
+    }
+  }
+
+  // i18n.js calls window.onLocaleApplied() after every locale switch, if
+  // defined, so a currently-visible demo error re-renders in the new
+  // language instead of freezing in whichever locale was active when it
+  // first appeared.
+  function onLocaleApplied() { renderAuthState(); }
+
+  function markFieldsInvalid(invalid) {
+    document.getElementById("email").classList.toggle("has-error", invalid);
+    document.getElementById("password").classList.toggle("has-error", invalid);
+  }
+
+  function focusBanner() {
+    var banner = document.getElementById("error-banner");
+    banner.setAttribute("tabindex", "-1");
+    banner.focus();
+  }
+
+  function resetSubmitButton() {
+    var btn = document.getElementById("submit-btn");
+    btn.disabled = false;
+    btn.innerHTML = '<span data-i18n="signin.submit">' + t("signin.submit") + "</span>";
+  }
+
+  // The ONE path a reviewer can reach without the demo panel: typing
+  // anything and pressing "Sign in" always resolves to the generic
+  // invalid-credential response after a simulated round trip — because per
+  // ADR-0009/OWASP ASVS L2, that response must never depend on whether the
+  // account exists, so there is nothing else it could realistically show.
+  function demoSubmit(e) {
+    e.preventDefault();
+    var btn = document.getElementById("submit-btn");
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner" aria-hidden="true"></span><span class="visually-hidden">' + t("signin.submitting") + "</span>";
+    document.getElementById("error-banner").hidden = true;
+    setTimeout(function () { showState("invalid"); }, 900);
+    return false;
+  }
+
+  function openReauthDemo(withUnsaved) {
+    document.getElementById("reauth-modal").removeAttribute("hidden");
+    document.getElementById("reauth-unsaved-note").hidden = !withUnsaved;
+    document.getElementById("reauth-password").focus();
+  }
+
+  function completeReauth() {
+    document.getElementById("reauth-modal").setAttribute("hidden", "");
+    showToast("success", "Signed in again. You're back on Sales Order SO-2041.");
+  }
+
+  function signOutInstead(e) {
+    e.preventDefault();
+    document.getElementById("reauth-modal").setAttribute("hidden", "");
+    showToast("danger", "Demo only: in production this signs you out fully and returns you to this plain sign-in screen — losing your place, unlike Continue.");
+  }
+</script>
+</body>
+</html>

@@ -6,6 +6,12 @@
 #
 # `target` defaults to Aurora.sln. Exit code is dotnet's.
 #
+# Run `dotnet build Aurora.sln` first when you care about the architecture fitness
+# tests: `dotnet test` builds only projects the test projects reference, so
+# Aurora.Countries.Contracts, Aurora.Documents.Canonical and Aurora.Worker are not
+# built by a bare test run and the rules' population guard fires. verify.sh builds in
+# stage 3, so the gate is unaffected.
+#
 # Why this exists: a single implementation task cost 434 000 tokens, and the largest
 # single contributor was raw `dotnet build` / `dotnet test` output echoed back into an
 # agent's context dozens of times. The information in it that anyone acts on is the
@@ -27,9 +33,12 @@ target="${1:-Aurora.sln}"; [[ $# -gt 0 ]] && shift
 out=$(mktemp -d); trap 'rm -rf "$out"' EXIT
 raw="$out/dotnet.log"
 
+# No LogFileName: with one, every test assembly in a solution writes to the same file
+# and the last one wins, so a green 315-test run reported "TOTAL 0 executed". Letting
+# each project name its own .trx is what verify.sh already does.
 dotnet test "$target" \
     --nologo \
-    --logger "trx;LogFileName=results.trx" \
+    --logger "trx" \
     --results-directory "$out" \
     -v quiet \
     "$@" >"$raw" 2>&1
@@ -59,6 +68,7 @@ files = [a for a in sys.argv[1:] if a.endswith('.trx')]
 NS = '{http://microsoft.com/schemas/VisualStudio/TeamTest/2010}'
 total = OrderedDict(executed=0, passed=0, failed=0, skipped=0)
 failures = []
+empty = 0
 
 for f in files:
     try:
@@ -79,7 +89,13 @@ for f in files:
         fl = int(c.get('failed', 0)); sk = int(c.get('total', 0)) - ex
         total['executed'] += ex; total['passed'] += ps
         total['failed'] += fl; total['skipped'] += max(sk, 0)
-        print(f"  {name:<48} {ex:>5} executed  {ps:>5} passed  {fl:>4} failed")
+        if name == 'unknown':
+            # A .trx carries the assembly name only inside a UnitTest element, so an
+            # assembly that executed nothing cannot be named from its own results.
+            # Say that, rather than printing a row labelled "unknown".
+            empty += 1
+        else:
+            print(f"  {name:<48} {ex:>5} executed  {ps:>5} passed  {fl:>4} failed")
     for r in root.iter(f'{NS}UnitTestResult'):
         if r.get('outcome') == 'Failed':
             msg = r.find(f'{NS}Output/{NS}ErrorInfo/{NS}Message')
@@ -89,6 +105,9 @@ for f in files:
                              (stack.text or '').strip() if stack is not None else ''))
 
 print()
+if empty:
+    print(f"  {empty} assembly/assemblies executed no tests (a project with none yet, "
+          f"or one that failed to start)")
 print(f"TOTAL {total['executed']} executed, {total['passed']} passed, "
       f"{total['failed']} failed, {total['skipped']} not run "
       f"({len(files)} assembly result file(s))")

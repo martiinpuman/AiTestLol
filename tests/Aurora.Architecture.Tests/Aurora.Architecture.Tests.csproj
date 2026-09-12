@@ -4,10 +4,27 @@
     Architecture fitness tests (docs/architecture/solution-layout.md 1, testing-strategy.md 5).
 
     No database, no container, fast: verify.sh runs these as their own stage (7) so a layering
-    breach is reported as a layering breach rather than buried in a module's test output.
+    breach is reported as a layering breach rather than buried in a module's test output. Until
+    B-11 implements stage 7 they run inside stage 6, which is why every test class here carries
+    [Trait("Category", "Architecture")] - stage 7 will select on it, and stage 6's
+    Category!=Integration&Category!=Ui filter already includes it.
 
-    The rule set, its deliberately-violating fixtures and the TngTech.ArchUnitNET reference
-    arrive with task B-04.
+    Read README.md in this folder first: it lists every rule, what its mechanism actually
+    inspects, and which rules are inert until the types they govern exist.
+
+    The rules read compiled assemblies with System.Reflection.Metadata (in-box) rather than
+    reflection or ArchUnitNET. ADR-0020 chose ArchUnitNET for architecture tests and noted that
+    "source-level rules are Roslyn tests, because reflection cannot see them"; docs/reviews/B-03.md
+    m-1 is the proof - a rule reflecting over member signatures cannot see a `double` local or a
+    `(double)` cast, which is exactly the violation solution-layout.md 6 row B-04 requires this
+    rule set to catch. IL is where that violation is visible. README.md 5 records the deviation.
+
+    The EntityFrameworkCore reference and the ASP.NET framework reference exist for ONE reason:
+    the deliberately-violating fixtures in Fixtures/ derive from the real DbContext, use the real
+    IHttpContextAccessor, and implement the real IHostedService / derive from the real
+    BackgroundService, so the tenancy rules are proven to fire against the framework types they
+    name rather than against look-alikes. FixtureFidelityTests asserts exactly that, so this
+    comment is checked rather than trusted. No rule and no production code depends on either.
   -->
 
   <PropertyGroup>
@@ -20,6 +37,11 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Shouldly" />
     <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
 </Project>
