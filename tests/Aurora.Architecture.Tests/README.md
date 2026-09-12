@@ -26,7 +26,7 @@ the fixture tests red instead of passing quietly.
 | **L1-L5** | Every project reference is one `solution-layout.md` §2 permits | The `ProjectReference` elements each `.csproj` under `src/` declares, classified by the naming convention of `solution-layout.md` §1. Direct references only — a host reaching Infrastructure *through* `Aurora.Composition` is the design | Project files |
 | **M1** | Every cross-module reference is in the `modules.md` §6 matrix | Every declared `ProjectReference` between two different `Aurora.Modules.*` modules, against the matrix held as data in `ModuleMatrix`. A module with no row may reference no other module | Project files |
 | **MIG1** | Every migration declares `Expand`, `Contract` or `DataOnly` with a reason; only a `Contract` names the `Expand` it contracts, and that Expand exists (ADR-0007 §7.2 rule 1) | The `[MigrationSafety]` attribute, read back by reflection as the real type, on every non-abstract production type whose base chain reaches `Microsoft.EntityFrameworkCore.Migrations.Migration`; the `Contracts` link resolved against the population by migration id; duplicate ids | Reflection over loaded migration assemblies |
-| **MIG2** | Destructive SQL only in a `Contract`; a `DataOnly` migration is plain data statements; nothing the scanner cannot read (ADR-0007 §7.2 rule 2) | The SQL **Npgsql's own generator emits from each migration's `UpOperations`** against its target model - `DropColumn(…)` included, which has no string to scan - every command, every statement, every dollar-quoted body, and every string literal standing where PostgreSQL reads a literal as code (`DO '…'`, `CREATE FUNCTION … AS '…'`), through a tokenizer that follows the PostgreSQL lexer. See §7 | Generated SQL |
+| **MIG2** | Destructive SQL only in a `Contract`; a `DataOnly` migration is plain data statements; nothing the scanner cannot read (ADR-0007 §7.2 rule 2) | The SQL **Npgsql's own generator emits from each migration's `UpOperations`** against its target model - `DropColumn(…)` included, which has no string to scan - every command, every statement, every dollar-quoted body, and every string literal standing where PostgreSQL reads a literal as code (`DO '…'`, `CREATE FUNCTION … AS '…'`, adjacent constants joined as PostgreSQL joins them), through a tokenizer that follows the PostgreSQL lexer. See §7 | Generated SQL |
 
 **L1's scope is `Aurora.SharedKernel` plus every `*.Domain`, and not the other two tier-0
 assemblies.** That is exactly the scope `testing-strategy.md` §5.1 names. `Aurora.Documents.Canonical`
@@ -56,7 +56,7 @@ both trusted. The difference is written down in `RuleInventoryTests` and **check
 | T1 | **Inert** | No tenant `DbContext` exists in production yet. B-05 brings the catalog context (exempt as the exact pair); B-06 brings the first tenant context |
 | T2 | **Live** | `Aurora.Platform.Tenancy` exists since B-05, with the one permitted `AddDbContext` call site: the catalog registration. T2 examines it on every run, floor 1 |
 | M1 | **Inert** | Fewer than two business modules exist, so there are no cross-module edges |
-| MIG1, MIG2 | **Live** | Two production migrations exist (B-05's `InitialCatalog`, 31 statements; B-19's `AppendOnlyTrails`, 18); both rules examine both on every run, floor 1 migration in the inventory, and `MigrationRuleTests` holds MIG2 to a floor **per migration** (30 and 10, the round-down of each measurement) so that one migration generating nothing cannot hide behind the other's count |
+| MIG1, MIG2 | **Live** | Two production migrations exist (B-05's `InitialCatalog`, 31 statements; B-19's `AppendOnlyTrails`, 18); both rules examine both on every run, floor 1 migration in the inventory, and `MigrationRuleTests` holds MIG2 to a floor **per migration** - each measured count less a tenth, 28 and 17 - so that one migration generating nothing cannot hide behind the other's count |
 
 `RuleInventoryTests` asserts the absence of each awaited type **by name**. The day B-06 adds one,
 those tests fail with an instruction saying what to change. Inertness expires loudly - T2's did,
@@ -237,9 +237,15 @@ form and reporting `DO 'BEGIN DROP TABLE …; END'` as *clean* (B-1). A literal 
 `DO` (its `LANGUAGE` name excepted) or follows `AS` in a `CREATE [OR REPLACE] FUNCTION|PROCEDURE` is
 now decoded - doubled quotes collapsed, `E'…'` backslash escapes resolved - and read exactly as a
 dollar-quoted body is; `ExpandHidingADropInAQuotedBody` proves it, beside
-`ExpandWithAProceduralLookAlikeInData`, the same text as data, which stays clean. A body in a literal
-the tokenizer does not decode (`U&'…'`, a bit string, an `E'…'` with a numeric escape) is reported
-as **unscannable**. Case, whitespace and newlines between keywords change nothing, because matching
+`ExpandWithAProceduralLookAlikeInData`, the same text as data, which stays clean. **Adjacent
+constants are one constant.** PostgreSQL's lexer joins string constants separated by a newline
+before the grammar sees them, so `DO 'BEGIN DR'⏎'OP TABLE …; END'` is one body; the second review
+(N-2) showed the scanner reading the first literal only and reporting nothing - the seventh
+failure form on the path the B-1 fix had added. A literal body now takes every adjacent literal into
+its run, and the run is decoded and joined before it is read; `ExpandHidingADropInAConcatenatedBody`
+proves it, and the same two literals as `INSERT` data stay clean. A body in a literal the tokenizer
+does not decode (`U&'…'`, a bit string, an `E'…'` with a numeric escape) - anywhere in the run - is
+reported as **unscannable**. Case, whitespace and newlines between keywords change nothing, because matching
 is on tokens. Anything the tokenizer cannot finish - an unterminated literal, identifier, comment
 or dollar quote, a character with no rule - throws, and the migration is reported as
 **unscannable**, never as clean.
@@ -250,12 +256,22 @@ says `CASCADE` (a cascade reaches foreign keys in tables the migration never nam
 widening); `TRUNCATE` of a table; `DELETE FROM` and `MERGE … THEN DELETE`; any `RENAME`;
 `ALTER [COLUMN] … TYPE`; `ALTER [COLUMN] … SET NOT NULL`; `SET SCHEMA`; `ADD [COLUMN] … NOT NULL`
 with neither `DEFAULT` nor `GENERATED`; and the statements that switch an enforced invariant off in
-one step - `DISABLE TRIGGER`, `DISABLE RULE`, `DISABLE ROW LEVEL SECURITY`,
-`NO FORCE ROW LEVEL SECURITY`, `DETACH PARTITION` - because B-19's append-only guards are triggers,
-and one `DISABLE TRIGGER` in a migration removes both. A finding is a violation unless the migration
-is a `Contract`. `SqlScannerTests` pins each shape from both sides: the destructive spelling is
-named, and the look-alike beside it - a trigger on `DELETE OR TRUNCATE`, a `GRANT … DELETE`, an
-`ON DELETE RESTRICT`, a `DROP NOT NULL`, an `ENABLE ALWAYS TRIGGER`, an `ATTACH PARTITION`, a
+one step - `DISABLE TRIGGER`, `DISABLE RULE`, `ENABLE REPLICA TRIGGER`, `ENABLE REPLICA RULE`,
+`DISABLE ROW LEVEL SECURITY`, `NO FORCE ROW LEVEL SECURITY`, `DETACH PARTITION`, and
+`SET session_replication_role` in every spelling (`SET`, `SET LOCAL`, `ALTER ROLE … SET`,
+`set_config(…)`) - because B-19's append-only guards are triggers, one `DISABLE TRIGGER` in a
+migration removes both, and `ENABLE REPLICA` is the same act by another name: a replica-mode
+trigger fires only under `session_replication_role = 'replica'` and never for an ordinary write,
+which is exactly the four `ENABLE ALWAYS` statements B-19 spent to survive replica mode, reversed
+(the second review's N-1, and the same PostgreSQL fact PR #9's review met as `tgenabled = 'R'`).
+Setting the role in the migration's own session suppresses ordinary triggers for the rest of that
+migration's writes. And `CREATE OR REPLACE` of anything: `OR REPLACE` exists to overwrite an
+object that may already be there, and a body replaced is one the scanner cannot compare with the
+one it displaces - B-19's own review named a hollowed-out guard function as a one-statement bypass.
+A finding is a violation unless the migration is a `Contract`. `SqlScannerTests` pins each shape
+from both sides: the destructive spelling is named, and the look-alike beside it - a trigger on
+`DELETE OR TRUNCATE`, a `GRANT … DELETE`, an `ON DELETE RESTRICT`, a `DROP NOT NULL`, an
+`ENABLE ALWAYS TRIGGER`, a `SET search_path`, a plain `CREATE FUNCTION`, an `ATTACH PARTITION`, a
 `DROP CONSTRAINT … RESTRICT`, `DROP TABLE` in a literal or a comment - is let through *and counted*.
 
 **Link 4 - what it refuses to read is reported, not skipped.** Dynamic SQL (`EXECUTE` of anything
@@ -279,6 +295,11 @@ one.
   nothing here refuses one yet.
 - A function *referenced* rather than called - defined, dropped, bound to a trigger, named as a
   column default - is not followed into. The function runs at insert time, not migration time.
+- **Whether a `CREATE OR REPLACE` displaces anything is not known.** The scanner has no catalog to
+  ask, so every `OR REPLACE` needs a `Contract` and a new object is created without it; the
+  replacement body is still read, so a drop inside it is a second finding. Whether a trigger's
+  firing mode and a routine's replacement are Contract-only changes is the architect's question,
+  routed from the second review (N-1).
 - **A bare `DROP CONSTRAINT` is not judged.** Replacing a `CHECK` is a widening with no Expand to
   name, so it must not need a `Contract`; but by name alone the scanner cannot tell a `CHECK` from a
   `PRIMARY KEY`, `UNIQUE` or `EXCLUDE`, whose removal takes an enforced invariant and its backing
@@ -295,15 +316,18 @@ one.
 **The population cannot quietly shrink.** MIG1 and MIG2 examine the migrations `SolutionLayout`
 finds - the same throw-on-missing, throw-on-stale population as every other rule - and
 `RuleInventoryTests` holds both to a floor of 1 migration. `MigrationRuleTests` holds MIG2 to a
-statement floor **per production migration**, each the round-down of a count measured on the
-branch that set it: `InitialCatalog` 31 (floor 30), `AppendOnlyTrails` 18 (floor 10). Per migration
-and not in aggregate, because with two migrations one that generated nothing would hide behind the
-other's count; a migration with no floor fails the test, which prints the live count to write. The
-first review's M-1 found the previous single floor (20) derived from a count (27) measured against
-an earlier scanner inside the same commit, so that the catalog could lose its whole privilege block
-and stay green; the numbers here are re-measured whenever the scanner changes. The fixture
-population is held to its exact count (26), so a fixture that fails to load fails a test instead of
-vanishing from the ones that assert on it.
+statement floor **per production migration**, each a count measured on the branch that set it
+less a tenth: `InitialCatalog` 31 (floor 28), `AppendOnlyTrails` 18 (floor 17). Per migration and
+not in aggregate, because with two migrations one that generated nothing would hide behind the
+other's count; proportional and not verify.sh's nearest-ten, because on a count of 18 the
+nearest-ten floor left both grants and all three indexes outside it (the second review's n-1); a
+migration with no count fails the test, which prints the live count to write. The first review's
+M-1 found the original single floor (20) derived from a count (27) measured against an earlier
+scanner inside the same commit, so that the catalog could lose its whole privilege block and stay
+green; the numbers here are re-measured whenever the scanner changes. The fixture population is
+held to its exact count (31, of which one deliberate pair shares an id for MIG1's duplicate-id
+branch), so a fixture that fails to load fails a test instead of vanishing from the ones that
+assert on it.
 
 **Categories, as the rules hold them.** `Expand`: no destructive finding. `Contract`: destructive
 findings permitted (and counted as permitted, so silence on a compliant Contract is shown to mean

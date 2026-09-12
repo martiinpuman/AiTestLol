@@ -56,8 +56,9 @@ public sealed class RuleInventoryTests
             static () => DomainPurityRule.Check(SolutionLayout.ProductionProjects, SolutionLayout.ProductionAssemblies)),
         (ProjectLayeringRule.Id, ProjectLayeringRule.Name, 3,
             static () => ProjectLayeringRule.Check(SolutionLayout.ProductionProjects)),
-        // Floor 1: the one production migration on the branch that added these rules (B-09,
-        // InitialCatalog). MigrationRuleTests holds the statement count to its own floor.
+        // Floor 1: an inventory floor, not a census - a rule that examined nothing must not report
+        // clean. MigrationRuleTests pins the production population at 2 and holds each migration's
+        // statement count to its own floor.
         (MigrationAnnotationRule.Id, MigrationAnnotationRule.Name, 1,
             static () => MigrationAnnotationRule.Check(MigrationPopulation.Production)),
         (MigrationSafetyRule.Id, MigrationSafetyRule.Name, 1,

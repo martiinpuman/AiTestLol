@@ -63,6 +63,19 @@ public sealed class SqlScannerTests
     [InlineData("ALTER TABLE sales.invoice DISABLE ROW LEVEL SECURITY;", "DISABLE ROW LEVEL SECURITY")]
     [InlineData("ALTER TABLE sales.invoice NO FORCE ROW LEVEL SECURITY;", "NO FORCE ROW LEVEL SECURITY")]
     [InlineData("ALTER TABLE sales.invoice DETACH PARTITION sales.invoice_2024;", "DETACH PARTITION")]
+    [InlineData("ALTER TABLE catalog.operator_audit_event ENABLE REPLICA TRIGGER trg_append_only;", "ENABLE REPLICA TRIGGER")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE REPLICA RULE r_guard;", "ENABLE REPLICA RULE")]
+    [InlineData("SET session_replication_role = 'replica';", "SET session_replication_role")]
+    [InlineData("SET LOCAL session_replication_role TO replica;", "SET session_replication_role")]
+    [InlineData("ALTER ROLE aurora_app SET session_replication_role = 'replica';", "SET session_replication_role")]
+    [InlineData("SELECT set_config('session_replication_role', 'replica', false);", "SET session_replication_role")]
+    [InlineData("CREATE OR REPLACE FUNCTION catalog.refuse_append_only_change() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;", "CREATE OR REPLACE FUNCTION")]
+    [InlineData("CREATE OR REPLACE VIEW sales.v AS SELECT 1;", "CREATE OR REPLACE VIEW")]
+    [InlineData("CREATE OR REPLACE TRIGGER trg BEFORE UPDATE ON sales.invoice FOR EACH ROW EXECUTE FUNCTION sales.f();", "CREATE OR REPLACE TRIGGER")]
+    [InlineData("DO 'BEGIN DR'\n'OP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("DO 'BEGIN '\n'DROP TA'\n'BLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("DO 'BEGIN '\nE'DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("CREATE FUNCTION sales.f() RETURNS void LANGUAGE plpgsql AS 'BEGIN '\n'DROP TABLE sales.invoice; END';", "DROP TABLE")]
     [InlineData("DO 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
     [InlineData("DO LANGUAGE plpgsql 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
     [InlineData("DO 'BEGIN DROP TABLE sales.invoice; END' LANGUAGE plpgsql;", "DROP TABLE")]
@@ -70,7 +83,7 @@ public sealed class SqlScannerTests
     [InlineData("DO 'BEGIN RAISE NOTICE ''quoted''; DROP TABLE sales.invoice; END';", "DROP TABLE")]
     [InlineData("DO E'BEGIN RAISE NOTICE \\'quoted\\'; DROP TABLE sales.invoice; END';", "DROP TABLE")]
     [InlineData("CREATE FUNCTION sales.purge() RETURNS void LANGUAGE sql AS 'DELETE FROM sales.invoice';", "DELETE FROM")]
-    [InlineData("CREATE OR REPLACE PROCEDURE sales.purge() LANGUAGE plpgsql AS 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("CREATE PROCEDURE sales.purge() LANGUAGE plpgsql AS 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
     [InlineData("CREATE FUNCTION sales.purge() RETURNS void AS 'BEGIN DROP TABLE sales.invoice; END' LANGUAGE plpgsql;", "DROP TABLE")]
     public void Names_a_destructive_statement(string sql, string expected)
     {
@@ -146,6 +159,54 @@ public sealed class SqlScannerTests
     }
 
     [Fact]
+    public void A_body_split_across_adjacent_literals_is_read_whole_and_located_as_one_body()
+    {
+        // The second review's N-2: PostgreSQL joins string constants separated by a newline before
+        // the grammar sees them, so the two literals are one DO body. The scanner read the first
+        // half only, and reported nothing.
+        SqlScanReport report = SqlStatementScanner.Scan("DO 'BEGIN DR'\n'OP TABLE sales.invoice; END';");
+
+        SqlStatement inner = report.Statements.Single(static s => s.Findings.Length > 0);
+        inner.Findings.Single().What.ShouldBe("DROP TABLE");
+        inner.Location.ShouldBe("statement 1 › body › statement 1");
+        report.Statements.Count(static s => !s.IsTopLevel).ShouldBe(2, "BEGIN DROP TABLE … and END: one body, two statements");
+    }
+
+    [Fact]
+    public void A_replaced_routine_is_named_and_its_new_body_is_still_read()
+    {
+        // CREATE OR REPLACE is destructive because the displaced body cannot be compared; the
+        // replacement body is read all the same, so a drop inside it is a second finding.
+        SqlScanReport report = SqlStatementScanner.Scan(
+            "CREATE OR REPLACE FUNCTION sales.f() RETURNS void LANGUAGE plpgsql AS $$ BEGIN DROP TABLE sales.invoice; END $$;");
+
+        Destructive(report).ShouldBe(["CREATE OR REPLACE FUNCTION", "DROP TABLE"]);
+    }
+
+    [Theory]
+    [InlineData("DO $b1$ BEGIN DROP TABLE sales.invoice; END $b1$;", "DROP TABLE")]
+    [InlineData("INSERT INTO sales.note (text) VALUES ('$$ DROP TABLE sales.invoice $$');", null)]
+    [InlineData("SELECT \"a;b\" FROM sales.invoice;", null)]
+    [InlineData("SELECT 1 -- ; DROP TABLE sales.invoice\n;", null)]
+    [InlineData("SELECT 1 /* ; DROP TABLE sales.invoice */;", null)]
+    [InlineData("UPDATE sales.invoice SET total = $1 WHERE id = $2;", null)]
+    [InlineData("INSERT INTO sales.note (text) VALUES (U&'d!0061t!+000061' UESCAPE '!');", null)]
+    [InlineData("DO $ab$ BEGIN RAISE NOTICE $a$ hi $a$; DROP TABLE sales.invoice; END $ab$;", "DROP TABLE")]
+    [InlineData("SELECT a$b FROM sales.invoice;", null)]
+    public void The_first_reviews_nine_lexical_attacks_still_hold(string sql, string? destructive)
+    {
+        // Re-run as standing cases after every change to the tokenizer or the decoder (CLAUDE.md's
+        // eighth form): a tag with a digit, $$ as data inside a literal, ; inside a quoted
+        // identifier, ; inside both comment forms, positional parameters, a UESCAPE literal, an
+        // inner tag that is a prefix of the outer, and $ inside an identifier.
+        SqlScanReport report = SqlStatementScanner.Scan(sql);
+
+        report.TopLevelStatements.ShouldBe(1, report.Statements.ToString());
+        Unscannable(report).ShouldBeEmpty();
+        Destructive(report).ShouldBe(destructive is null ? [] : [destructive]);
+    }
+
+    [Fact]
     public void Names_a_TRUNCATE_inside_a_conditional_branch_of_a_body()
     {
         SqlScanReport report = SqlStatementScanner.Scan(
@@ -161,7 +222,11 @@ public sealed class SqlScannerTests
     [InlineData("INSERT INTO sales.note (text) VALUES ('BEGIN DROP TABLE sales.invoice; END');")]
     [InlineData("COMMENT ON TABLE sales.invoice IS 'BEGIN DROP TABLE sales.invoice; END';")]
     [InlineData("CREATE FUNCTION sales.f() RETURNS void LANGUAGE 'sql' AS $$ SELECT 1 $$;")]
-    [InlineData("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_append_only, ENABLE REPLICA TRIGGER trg_other;")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_append_only, ENABLE TRIGGER trg_other, ENABLE ALWAYS RULE r_guard;")]
+    [InlineData("INSERT INTO sales.note (text) VALUES ('a' || 'DROP TABLE sales.invoice');")]
+    [InlineData("INSERT INTO sales.note (text) VALUES ('BEGIN '\n'DROP TABLE sales.invoice; END');")]
+    [InlineData("SET search_path = sales, public;")]
+    [InlineData("CREATE FUNCTION sales.guard_replacement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;")]
     [InlineData("ALTER TABLE sales.invoice ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;")]
     [InlineData("ALTER TABLE sales.invoice ATTACH PARTITION sales.invoice_2025 FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');")]
     [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT uq_invoice_number RESTRICT;")]
@@ -216,6 +281,8 @@ public sealed class SqlScannerTests
     [InlineData("CREATE FUNCTION sales.purge() RETURNS void LANGUAGE plpgsql AS 'BEGIN EXECUTE ''DROP TABLE x''; END';", "EXECUTE")]
     [InlineData("DO U&'BEGIN DROP TABLE sales.invoice; END';", "does not decode")]
     [InlineData("DO E'BEGIN DROP TABLE sales.invoice; \\x41 END';", "does not decode")]
+    [InlineData("DO 'BEGIN '\nU&'DROP TABLE sales.invoice; END';", "does not decode")]
+    [InlineData("SELECT \\ 1;", "unexpected character")]
     [InlineData("DO 'BEGIN SELECT ''never closed; END';", "never closed")]
     [InlineData("INSERT INTO sales.a SELECT b.x FROM sales.b JOIN sales.c ON sales.rebuild(b.id) = c.id;", "calls sales.rebuild(…)")]
     [InlineData("CREATE VIEW sales.v AS SELECT b.x FROM sales.b JOIN sales.c ON sales.rebuild(b.id) = c.id;", "calls sales.rebuild(…)")]

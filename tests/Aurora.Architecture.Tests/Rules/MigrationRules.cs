@@ -19,8 +19,9 @@ namespace Aurora.Architecture.Tests.Rules;
 /// back by reflection as the real attribute type. A missing attribute, a blank reason, a
 /// Contract that names nothing, a Contract that names a migration not in the population or one
 /// that is not an Expand, and an Expand or DataOnly that names anything are each a violation.
-/// Two migrations with one id are both violations, because the release gate (MIG3) links
-/// migrations by id.
+/// Two migrations with one id produce one violation, on the migration that lost the tie for the
+/// id - the release gate (MIG3) links migrations by id, and the survivor is the one it would link
+/// to, so the loser is what has to change.
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> whether the reason is true. That is what MIG2 holds the generated

@@ -83,8 +83,73 @@ internal sealed class ExpandWithAProceduralLookAlikeInData : Migration
 {
     public const string Id = "20990101000024_ExpandWithAProceduralLookAlikeInData";
 
-    protected override void Up(MigrationBuilder migrationBuilder) =>
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
         migrationBuilder.Sql("INSERT INTO sales.note (text) VALUES ('BEGIN DROP TABLE sales.invoice; END');");
+        migrationBuilder.Sql("INSERT INTO sales.note (text) VALUES ('a' || 'DROP TABLE sales.invoice');");
+        migrationBuilder.Sql("INSERT INTO sales.note (text) VALUES ('BEGIN '\n'DROP TABLE sales.invoice; END');");
+    }
+}
+
+/// <summary>The same <c>DROP TABLE</c> split across two adjacent literals, which PostgreSQL joins into one body.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b> The second review's N-2: the first half was read, the second never.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: hides a DROP TABLE across two concatenated literals of a DO body.")]
+internal sealed class ExpandHidingADropInAConcatenatedBody : Migration
+{
+    public const string Id = "20990101000027_ExpandHidingADropInAConcatenatedBody";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("DO 'BEGIN DR'\n'OP TABLE sales.invoice; END';");
+}
+
+/// <summary>An Expand that switches a guard trigger to replica mode, so it never fires for an ordinary write.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b> The second review's N-1: <c>DISABLE</c> by another spelling, and the reverse of B-19's <c>ENABLE ALWAYS</c>.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: disarms an append-only guard with ENABLE REPLICA TRIGGER.")]
+internal sealed class ExpandThatDisarmsAGuardTrigger : Migration
+{
+    public const string Id = "20990101000028_ExpandThatDisarmsAGuardTrigger";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("ALTER TABLE catalog.operator_audit_event ENABLE REPLICA TRIGGER trg_operator_audit_event_append_only;");
+}
+
+/// <summary>A DataOnly migration whose statement head is allowed but which carries a procedural body as a value.</summary>
+/// <remarks>
+/// <b>Deliberately violating fixture (MIG2).</b> The second review's n-3: the body clause of the
+/// DataOnly check had no witness of its own, because the only body fixture also had a <c>DO</c> head.
+/// </remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.DataOnly, "Fixture: an INSERT carrying a dollar-quoted body.")]
+internal sealed class DataOnlyWithABodyUnderAnAllowedHead : Migration
+{
+    public const string Id = "20990101000029_DataOnlyWithABodyUnderAnAllowedHead";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("INSERT INTO sales.note (text) VALUES ($$BEGIN UPDATE sales.invoice SET total = 0; END$$);");
+}
+
+/// <summary>One of two migrations declaring the same id; which of the pair MIG1 names is whichever lost the tie.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG1), with <see cref="DuplicateIdTwinB"/>.</b> The second review's n-2: the duplicate-id branch had no witness.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: one of two migrations sharing an id.")]
+internal sealed class DuplicateIdTwinA : Migration
+{
+    public const string Id = "20990101000099_DuplicateId";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("CREATE TABLE sales.twin_a (id integer NOT NULL);");
+}
+
+/// <summary>The other half of the duplicate-id pair.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG1), with <see cref="DuplicateIdTwinA"/>.</b></remarks>
+[Migration(DuplicateIdTwinA.Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: the other of two migrations sharing an id.")]
+internal sealed class DuplicateIdTwinB : Migration
+{
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("CREATE TABLE sales.twin_b (id integer NOT NULL);");
 }
 
 /// <summary>A Contract that runs dynamic SQL: the one category allowed to be destructive, made unreadable.</summary>
