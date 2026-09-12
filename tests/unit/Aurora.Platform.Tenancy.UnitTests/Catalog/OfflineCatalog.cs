@@ -10,10 +10,13 @@ namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 /// </summary>
 internal static class OfflineCatalog
 {
+    /// <summary>A host that does not exist; a context over it builds its model and can never connect.</summary>
+    public const string ConnectionString = "Host=unused.invalid;Database=unused;Username=unused";
+
     public static CatalogDbContext Open()
     {
         var options = new DbContextOptionsBuilder<CatalogDbContext>();
-        options.UseNpgsql("Host=unused.invalid;Database=unused;Username=unused");
+        options.UseNpgsql(ConnectionString);
         return new CatalogDbContext(options.Options);
     }
 }

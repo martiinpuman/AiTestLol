@@ -51,17 +51,22 @@ readonly FAIL_TAIL_LINES=40
 # report PASS. A stage that measures nothing must not be able to report PASS
 # silently.
 #
-# The standing rule for this number: what the suite actually runs, rounded DOWN
-# to the nearest ten. Not the exact count - an exact count turns every added test
-# into an edit of this file and gets deleted in frustration. The floor is here to
-# catch a whole assembly dropping out of Aurora.sln, a misspelled Category trait
-# or a discovery failure, all of which move the count by tens or to zero. Re-round
-# it whenever a test project joins or leaves Aurora.sln.
-# 764 executed with B-19 (SharedKernel 231, Countries.Contracts 141,
-# Countries.Hosting 91, Platform.Tenancy 166, Architecture 135); 761 before it.
-# Re-rounded at every merge, never inherited: B-04 alone measured 342, B-05 371,
-# B-12 440, B-03.1 761, B-19 764.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-760}"
+# The standing rule for this number: the greatest multiple of ten STRICTLY BELOW
+# what the suite actually runs - 10 * ((executed - 1) / 10) - so there is always
+# slack in both directions. Not the exact count, and not "rounded down" either,
+# which is the exact count whenever the count is itself a multiple of ten: an
+# exact count turns every added test into an edit of this file, and every
+# legitimately deleted test - an inertness guard the day its gap closes - into a
+# red stage 6 on a branch that did nothing wrong. The floor is here to catch a
+# whole assembly dropping out of Aurora.sln, a misspelled Category trait or a
+# discovery failure, all of which move the count by tens or to zero; the smallest
+# assembly is 91, so any assembly dropping out still lands below it. Re-round it
+# whenever a test project joins or leaves Aurora.sln.
+# 840 executed with B-06.1 rework 2, B-19 merged (SharedKernel 231, Countries.Contracts 141,
+# Countries.Hosting 91, Platform.Tenancy 242, Architecture 135); 764 before it.
+# Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
+# B-12 440, B-03.1 761, B-19 764, B-06.1 840.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-830}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
@@ -170,8 +175,8 @@ Options:
 
 Environment:
   AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
-                          it may report PASS (default 310, the suite's count
-                          rounded down to the nearest ten). The count is always
+                          it may report PASS (default 830, the greatest multiple
+                          of ten strictly below the suite's count). The count is always
                           printed in the summary, whatever the floor is. Set it
                           to 0 when running a deliberately narrow --filter.
 

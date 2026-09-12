@@ -38,12 +38,24 @@ namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 public sealed class CatalogContextAccessibilityTests
 {
     /// <summary>
-    /// The one type <c>Aurora.Platform.Tenancy</c> is allowed to export. Everything else a caller
-    /// needs is in <c>Aurora.Platform.Tenancy.Contracts</c> (<c>solution-layout.md</c> §2: the
-    /// public surface of a platform module is its Contracts assembly).
+    /// The types <c>Aurora.Platform.Tenancy</c> is allowed to export: its DI extensions and the
+    /// one enum a host passes to them. Everything else a caller needs is in
+    /// <c>Aurora.Platform.Tenancy.Contracts</c> (<c>solution-layout.md</c> §2: the public surface
+    /// of a platform module is its Contracts assembly).
     /// </summary>
+    /// <remarks>
+    /// <c>TenantPoolProfile</c> is here because the composition root must say which ADR-0007 §5.2
+    /// column a host runs under; it names a choice, not a connection string, and every setting it
+    /// stands for stays internal. The resolver, its records and the catalog reader are not: a
+    /// module that could name <c>TenantConnection</c> could hold a connection string.
+    /// </remarks>
     private static readonly IReadOnlySet<string> PublishedTypes =
-        new HashSet<string>(StringComparer.Ordinal) { "Aurora.Platform.Tenancy.CatalogServiceCollectionExtensions" };
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "Aurora.Platform.Tenancy.CatalogServiceCollectionExtensions",
+            "Aurora.Platform.Tenancy.TenancyServiceCollectionExtensions",
+            "Aurora.Platform.Tenancy.TenantPoolProfile",
+        };
 
     /// <summary>
     /// The one namespace exempt from the rule below, and why. <c>dotnet ef migrations add</c>
@@ -64,9 +76,10 @@ public sealed class CatalogContextAccessibilityTests
         exported.OrderBy(name => name, StringComparer.Ordinal)
             .ShouldBe(
                 PublishedTypes.OrderBy(name => name, StringComparer.Ordinal),
-                "Aurora.Platform.Tenancy exports its DI extension and nothing else; the registry, its "
-                + "entities and CatalogDbContext are internal so that no module can query the tenant "
-                + "registry or build a connection string (ADR-0007 §9.4, modules.md §4).");
+                "Aurora.Platform.Tenancy exports its DI extensions and the host's pool profile and nothing "
+                + "else; the registry, its entities, CatalogDbContext and the connection resolver are internal "
+                + "so that no module can query the tenant registry or build a connection string "
+                + "(ADR-0007 §9.4, modules.md §4).");
     }
 
     [Fact]
