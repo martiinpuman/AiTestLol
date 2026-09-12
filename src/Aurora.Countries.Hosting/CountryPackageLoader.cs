@@ -15,13 +15,23 @@ namespace Aurora.Countries.Hosting;
 /// which check said no (ADR-0008 §5.1 steps 2 and 3, §9).
 /// </summary>
 /// <remarks>
-/// The order is the point. Metadata, signature and compatibility are all settled while the package
-/// is still an inert file; only then is a load context created. A package that fails any of them has
-/// never executed a line, so there is nothing to undo.
+/// <para>
+/// The order is the point. Metadata, signature, the admission floor and compatibility are all
+/// settled while the package is still an inert file; only then is a load context created. A package
+/// that fails any of them has never executed a line, so there is nothing to undo.
+/// <c>PackageAdmissionFloorTests</c> holds <see cref="Load"/> to that by observing the hostile
+/// fixture's module initialiser unset after a refusal (ADR-0033 §5.6 D1).
+/// </para>
+/// <para>
+/// <b>What the floor is not.</b> It decides what executes; it does not confine what an admitted
+/// package can do. A loaded package runs with the full permissions of the process and can reach
+/// any tenant this process can (ADR-0033 §5.1, §5.4). Nothing in this class claims otherwise.
+/// </para>
 /// </remarks>
 public sealed class CountryPackageLoader
 {
     private readonly PackageSignatureVerifier _verifier;
+    private readonly PackageTrustLevel _admissionFloor;
     private readonly string _coreContractVersion;
 
     /// <summary>A loader over <paramref name="options"/>, against the running core contract.</summary>
@@ -45,6 +55,7 @@ public sealed class CountryPackageLoader
         ArgumentException.ThrowIfNullOrWhiteSpace(coreContractVersion);
 
         _verifier = new PackageSignatureVerifier(options);
+        _admissionFloor = options.AdmissionFloor;
         _coreContractVersion = coreContractVersion;
     }
 
@@ -82,14 +93,19 @@ public sealed class CountryPackageLoader
     }
 
     /// <summary>
-    /// Inspects the package, checks it against the core contract version, and loads it into its own
-    /// collectible load context.
+    /// Inspects the package, holds it to this host's admission floor, checks it against the core
+    /// contract version, and loads it into its own collectible load context.
     /// </summary>
     /// <param name="packageDirectory">The package's directory.</param>
     /// <param name="otherVersionsInCatalogue">
     /// Other versions of the same package the catalogue holds, so an incompatibility can name a
     /// version that would work. Optional; the refusal names both versions either way.
     /// </param>
+    /// <remarks>
+    /// The admission floor is applied here and not in <see cref="Inspect"/>: ADR-0033 §5.2 narrows
+    /// where a trust level takes effect, so a package below the floor is still inspected and listed
+    /// for an operator to see — and is not given a thread.
+    /// </remarks>
     public Result<LoadedCountryPackage> Load(
         string packageDirectory,
         IReadOnlyList<CountryPackageManifest>? otherVersionsInCatalogue = null)
@@ -101,6 +117,17 @@ public sealed class CountryPackageLoader
         }
 
         CountryPackageManifest manifest = inspected.Value.Manifest;
+
+        if (inspected.Value.Trust.Level < _admissionFloor)
+        {
+            return HostingErrors.BelowAdmissionFloor(
+                $"Package '{manifest.Id}' {manifest.Version} is signed by a key that establishes " +
+                $"{inspected.Value.Trust}, and this host routes tenants: it loads only packages whose " +
+                $"signature establishes {_admissionFloor}. A loaded package runs inside the process, " +
+                $"which is the tenancy trust boundary, so it could reach every tenant this host can " +
+                $"(ADR-0033 §5.2). The package was inspected and is listed; it was not loaded, and " +
+                $"none of its code has run.");
+        }
 
         Result compatible = CoreContractGate.Check(
             manifest,

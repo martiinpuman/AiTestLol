@@ -19,13 +19,20 @@ namespace Aurora.Countries.Hosting.UnitTests;
 /// </remarks>
 internal sealed class PackageOnDisk : IDisposable
 {
-    /// <summary>The package assembly built beside these tests, by project reference.</summary>
+    /// <summary>The Testland package assembly built beside these tests, by project reference.</summary>
     internal const string PackageAssemblyFileName = "Aurora.Countries.TestPackage.dll";
 
-    private PackageOnDisk(string root, string versionDirectory)
+    /// <summary>
+    /// The hostile fixture of ADR-0033 §5.6, built beside these tests the same way. Its module
+    /// initialiser records that it ran; <c>PackageAdmissionFloorTests</c> reads that record.
+    /// </summary>
+    internal const string HostileAssemblyFileName = "Aurora.Countries.HostilePackage.dll";
+
+    private PackageOnDisk(string root, string versionDirectory, string assemblyFileName)
     {
         Root = root;
         Directory = versionDirectory;
+        AssemblyFileName = assemblyFileName;
     }
 
     /// <summary>A packages root, of the shape the catalogue scans.</summary>
@@ -34,30 +41,40 @@ internal sealed class PackageOnDisk : IDisposable
     /// <summary>This package's own version directory.</summary>
     internal string Directory { get; }
 
+    /// <summary>The file name of the package assembly inside it.</summary>
+    internal string AssemblyFileName { get; }
+
     /// <summary>The package assembly inside it.</summary>
-    internal string AssemblyPath => Path.Combine(Directory, PackageAssemblyFileName);
+    internal string AssemblyPath => Path.Combine(Directory, AssemblyFileName);
 
     /// <summary>
-    /// Lays the package out under a fresh temporary root as
+    /// Lays the Testland package out under a fresh temporary root as
     /// <c>&lt;root&gt;/&lt;id&gt;/&lt;version&gt;/</c>.
     /// </summary>
-    internal static PackageOnDisk Deploy(string id = "aurora.country.testland", string version = "1.4.0")
+    internal static PackageOnDisk Deploy(string id = "aurora.country.testland", string version = "1.4.0") =>
+        Deploy(PackageAssemblyFileName, id, version);
+
+    /// <summary>Lays the hostile fixture package out the same way.</summary>
+    internal static PackageOnDisk DeployHostile() =>
+        Deploy(HostileAssemblyFileName, "aurora.country.hostile", "1.0.0");
+
+    private static PackageOnDisk Deploy(string assemblyFileName, string id, string version)
     {
         string root = Path.Combine(Path.GetTempPath(), "aurora-packages-" + Guid.NewGuid().ToString("N"));
         string versionDirectory = Path.Combine(root, id, version);
         System.IO.Directory.CreateDirectory(versionDirectory);
 
-        string source = Path.Combine(AppContext.BaseDirectory, PackageAssemblyFileName);
+        string source = Path.Combine(AppContext.BaseDirectory, assemblyFileName);
         if (!File.Exists(source))
         {
             throw new InvalidOperationException(
-                $"'{PackageAssemblyFileName}' is not beside the tests. It arrives by project " +
-                $"reference from tests/fixtures/Aurora.Countries.TestPackage.");
+                $"'{assemblyFileName}' is not beside the tests. It arrives by project reference " +
+                $"from its project under tests/fixtures/.");
         }
 
-        File.Copy(source, Path.Combine(versionDirectory, PackageAssemblyFileName));
+        File.Copy(source, Path.Combine(versionDirectory, assemblyFileName));
 
-        return new PackageOnDisk(root, versionDirectory);
+        return new PackageOnDisk(root, versionDirectory, assemblyFileName);
     }
 
     /// <summary>Signs the package with <paramref name="key"/>, as the release pipeline would.</summary>
