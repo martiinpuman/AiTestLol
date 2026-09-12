@@ -56,7 +56,11 @@ public sealed class CompanyScopeConstructionTests
     [Fact]
     public void Of_refuses_an_id_nobody_assigned()
     {
-        Should.Throw<ArgumentException>(() => CompanyScope.Of([default]));
+        ArgumentException refused = Should.Throw<ArgumentException>(() => CompanyScope.Of([default]));
+
+        // For the right reason: refused because the id is unassigned, not because dropping it
+        // left nothing. The two are different bugs and the message tells a caller which.
+        refused.Message.ShouldContain("unassigned");
     }
 
     [Fact]
@@ -65,7 +69,10 @@ public sealed class CompanyScopeConstructionTests
         // Two copies of the default id deduplicate to one, and dropping that one would leave
         // nothing: the path an implementation that strips defaults before checking for emptiness,
         // or deduplicates before checking for defaults, would take straight to WHERE 1=1.
-        Should.Throw<ArgumentException>(() => CompanyScope.Of([default, default]));
+        ArgumentException refused = Should.Throw<ArgumentException>(
+            () => CompanyScope.Of([default, default]));
+
+        refused.Message.ShouldContain("unassigned");
     }
 
     [Fact]
