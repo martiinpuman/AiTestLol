@@ -33,6 +33,11 @@ internal sealed class DatabaseClusterConfiguration : IEntityTypeConfiguration<Da
                 $"admin_secret_ref !~ '{CredentialShapedPattern}' " +
                 $"AND migrator_secret_ref !~ '{CredentialShapedPattern}' " +
                 $"AND app_secret_ref !~ '{CredentialShapedPattern}'");
+
+            // A host name is case-insensitive, so two spellings of one host would be two rows on one
+            // endpoint that ux_database_cluster_host_port below could not tell apart (ADR-0034 3.2;
+            // PR #18 M-1/M-2). The same rule tenant_host keeps, for the same reason.
+            table.HasCheckConstraint("ck_database_cluster_host_lower_case", "host = lower(host)");
         });
 
         builder.HasKey(cluster => cluster.Id).HasName("pk_database_cluster");

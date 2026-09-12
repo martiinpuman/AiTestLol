@@ -17,8 +17,9 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// <summary>
 /// The <c>ClusterEndpointUniqueness</c> migration applied to a catalog that already exists at the
 /// state before it (ADR-0034 §5.1, expand/contract honesty): against two cluster rows on one
-/// endpoint it fails loudly, names the duplicate and applies nothing; against rows on distinct
-/// endpoints it applies, keeps every row and re-runs as a no-op.
+/// endpoint it fails loudly, names the duplicate and applies nothing; against a host in any
+/// spelling but lower case it fails loudly, names the constraint and applies nothing; against
+/// rows on distinct, lower-case endpoints it applies, keeps every row and re-runs as a no-op.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -45,7 +46,9 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 public sealed class ClusterEndpointUniquenessMigrationTests
 {
     private const string UniqueViolation = "23505";
+    private const string CheckViolation = "23514";
     private const string IndexName = "ux_database_cluster_host_port";
+    private const string LowerCaseConstraint = "ck_database_cluster_host_lower_case";
 
     private readonly CatalogDatabaseFixture _catalog;
     private readonly ITestOutputHelper _output;
@@ -85,6 +88,31 @@ public sealed class ClusterEndpointUniquenessMigrationTests
     }
 
     [Fact]
+    public async Task Against_a_catalog_already_holding_a_host_in_another_case_the_migration_fails_naming_the_constraint_and_applies_nothing()
+    {
+        // Before this migration nothing refused the spelling, so a fleet could hold one. The
+        // migration is one transaction, index first and then the check: the check fails, and the
+        // index that had just been created goes with it - which is the proof that nothing of a
+        // failed migration survives, not only the statement that failed.
+        await using ScratchCatalog scratch = await ScratchCatalog.CreateAsync(_catalog);
+        await scratch.MigrateToTheStateBeforeAsync<ClusterEndpointUniqueness>();
+        const string mixedCase = "PG-Mixed.Internal";
+        await scratch.InsertClusterRowAsync(mixedCase, 5432);
+
+        PostgresException refused = await Should.ThrowAsync<PostgresException>(scratch.MigrateToLatestAsync);
+
+        _output.WriteLine($"{refused.SqlState}: {refused.MessageText}");
+        refused.SqlState.ShouldBe(CheckViolation);
+        refused.ConstraintName.ShouldBe(LowerCaseConstraint);
+        refused.TableName.ShouldBe("database_cluster");
+
+        (await scratch.PendingMigrationsAsync()).ShouldContain(id => id.EndsWith("_" + nameof(ClusterEndpointUniqueness), StringComparison.Ordinal));
+        (await scratch.CheckConstraintDefinitionAsync(LowerCaseConstraint)).ShouldBeNull("no constraint survives the failed transaction");
+        (await scratch.IndexDefinitionAsync(IndexName)).ShouldBeNull("the index created earlier in the same transaction does not survive it either");
+        (await scratch.ClusterHostsAsync()).ShouldBe([mixedCase], "the row is left as it was for an operator to resolve; nothing is re-spelled silently");
+    }
+
+    [Fact]
     public async Task Against_a_catalog_whose_cluster_rows_are_on_distinct_endpoints_the_migration_applies_keeps_every_row_and_re_runs_as_a_no_op()
     {
         // Three rows that the index must admit: one host on two ports, and a second host on the
@@ -100,8 +128,10 @@ public sealed class ClusterEndpointUniquenessMigrationTests
         await scratch.MigrateToLatestAsync();
 
         string? definition = await scratch.IndexDefinitionAsync(IndexName);
-        _output.WriteLine($"cluster rows before: {rowsBefore}, after: {await scratch.ClusterRowCountAsync()}; index: {definition}");
+        string? check = await scratch.CheckConstraintDefinitionAsync(LowerCaseConstraint);
+        _output.WriteLine($"cluster rows before: {rowsBefore}, after: {await scratch.ClusterRowCountAsync()}; index: {definition}; check: {check}");
         definition.ShouldBe($"CREATE UNIQUE INDEX {IndexName} ON catalog.database_cluster USING btree (host, port)");
+        check.ShouldBe("CHECK (((host)::text = lower((host)::text)))");
         (await scratch.ClusterRowCountAsync()).ShouldBe(rowsBefore, "an expand-only migration removes nothing");
         (await scratch.PendingMigrationsAsync()).ShouldBeEmpty();
 
@@ -204,6 +234,31 @@ public sealed class ClusterEndpointUniquenessMigrationTests
             await using NpgsqlConnection owner = await OpenAsync();
             await using var command = new NpgsqlCommand("SELECT count(*) FROM catalog.database_cluster", owner);
             return (int)(long)(await command.ExecuteScalarAsync())!;
+        }
+
+        /// <summary>Every cluster host the catalog holds, as stored.</summary>
+        public async Task<List<string>> ClusterHostsAsync()
+        {
+            await using NpgsqlConnection owner = await OpenAsync();
+            await using var command = new NpgsqlCommand("SELECT host FROM catalog.database_cluster ORDER BY host", owner);
+            await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+            List<string> hosts = [];
+            while (await reader.ReadAsync())
+            {
+                hosts.Add(reader.GetString(0));
+            }
+
+            return hosts;
+        }
+
+        /// <summary>The check constraint as PostgreSQL renders it, or <see langword="null"/> when there is none by that name.</summary>
+        public async Task<string?> CheckConstraintDefinitionAsync(string constraint)
+        {
+            await using NpgsqlConnection owner = await OpenAsync();
+            await using var command = new NpgsqlCommand(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = @constraint AND contype = 'c'", owner);
+            command.Parameters.AddWithValue("constraint", constraint);
+            return (string?)await command.ExecuteScalarAsync();
         }
 
         /// <summary>The index as PostgreSQL renders it, or <see langword="null"/> when there is none by that name.</summary>

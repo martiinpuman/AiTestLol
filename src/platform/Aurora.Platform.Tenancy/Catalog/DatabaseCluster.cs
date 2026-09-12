@@ -23,6 +23,14 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// referenced from the cluster's row like the other two; the omission is reported as an ADR gap
 /// in the B-05 summary rather than reproduced.
 /// </para>
+/// <para>
+/// <b>The host is stored in canonical lower case and the row refuses any other spelling</b>, as
+/// <see cref="TenantHost"/> does, and <c>ck_database_cluster_host_lower_case</c> repeats the rule
+/// in the database. A host name is case-insensitive, so two spellings of one host would be two
+/// rows on one endpoint that <c>ux_database_cluster_host_port</c> could not tell apart
+/// (ADR-0034 §3.2, the aliasing it cannot cover; PR #18 M-1/M-2). An IP literal beside a host
+/// name is the half no spelling rule closes.
+/// </para>
 /// </remarks>
 internal sealed class DatabaseCluster
 {
@@ -62,8 +70,8 @@ internal sealed class DatabaseCluster
 
     /// <summary>Registers a cluster as accepting tenants.</summary>
     /// <exception cref="ArgumentException">
-    /// An identifier is unassigned, <paramref name="host"/> or <paramref name="maintenanceDatabase"/>
-    /// is malformed, or a secret reference is unassigned.
+    /// An identifier is unassigned, <paramref name="host"/> is malformed or not in lower case,
+    /// <paramref name="maintenanceDatabase"/> is malformed, or a secret reference is unassigned.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="port"/> is not a TCP port or <paramref name="maxTenants"/> is not positive.
@@ -93,8 +101,8 @@ internal sealed class DatabaseCluster
         if (!IsWellFormedHost(host))
         {
             throw new ArgumentException(
-                $"'{host}' is not a host name or address: expected 1 to {MaxHostLength} characters " +
-                "with no whitespace, no port suffix and no scheme.",
+                $"'{host}' is not a host name or address the registry accepts: expected 1 to {MaxHostLength} " +
+                "characters in lower case, with no whitespace, no port suffix and no scheme.",
                 nameof(host));
         }
 
@@ -142,7 +150,8 @@ internal sealed class DatabaseCluster
 
         foreach (char character in host)
         {
-            if (char.IsWhiteSpace(character) || char.IsControl(character) || character is '/' or ':' or '=' or ';')
+            if (char.IsWhiteSpace(character) || char.IsControl(character) || char.IsAsciiLetterUpper(character)
+                || character is '/' or ':' or '=' or ';')
             {
                 return false;
             }

@@ -296,6 +296,21 @@ public sealed class CatalogConstraintTests
             ("existing", cluster.Id.Value));
     }
 
+    [Fact]
+    public async Task A_cluster_host_in_any_spelling_but_lower_case_is_refused()
+    {
+        // A host name is case-insensitive, so two spellings of one host would be two cluster rows
+        // on one endpoint that ux_database_cluster_host_port cannot tell apart (ADR-0034 §3.2;
+        // PR #18 M-1/M-2). The entity refuses the spelling; this is the database refusing it too.
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
+            "VALUES (@id, 'nz', 'PG.Internal', 5432, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')",
+            ("id", Unique.ClusterId().Value)));
+
+        refused.SqlState.ShouldBe(CheckViolation);
+        refused.ConstraintName.ShouldBe("ck_database_cluster_host_lower_case");
+    }
+
     /// <summary>The cluster and the tenant, if any, as the owner: the request path reads both and creates neither.</summary>
     private Task SaveAsync(DatabaseCluster cluster, Tenant? tenant = null) =>
         _catalog.SeedAsync(owner =>

@@ -67,6 +67,7 @@ public sealed class CatalogModelTests
 
         endpoint.IsUnique.ShouldBeTrue();
         endpoint.Properties.Select(property => property.GetColumnName()).ShouldBe(["host", "port"]);
+        cluster.GetCheckConstraints().Single(check => check.Name == "ck_database_cluster_host_lower_case").Sql.ShouldBe("host = lower(host)");
     }
 
     [Fact]

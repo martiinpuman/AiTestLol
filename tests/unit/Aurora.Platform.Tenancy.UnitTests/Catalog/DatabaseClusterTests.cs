@@ -50,6 +50,18 @@ public sealed class DatabaseClusterTests
     }
 
     [Theory]
+    [InlineData("PG-1.internal")]
+    [InlineData("pg-1.INTERNAL")]
+    [InlineData("LOCALHOST")]
+    public void A_host_in_any_spelling_but_lower_case_is_refused(string host)
+    {
+        // A host name is case-insensitive, so two spellings of one host would be two cluster rows
+        // on one endpoint that ux_database_cluster_host_port could not tell apart (ADR-0034 §3.2).
+        // The row keeps the canonical spelling, as TenantHost does; the database repeats the rule.
+        Should.Throw<ArgumentException>(() => new ACluster().WithHost(host).Build());
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("Postgres")]
     [InlineData("my db")]
