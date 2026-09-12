@@ -39,7 +39,21 @@ While this record was being written, B-09 decided the strict reading rather than
 
 Two limbs follow from it, and keeping them apart is what makes the rule usable — they behave oppositely on widening.
 
-**Limb A — removal.** The statement takes an object, a column, a row or data away. It is **visible**: something that was in the catalog is no longer there, and anyone who looks sees the absence. Limb A is destructive when it **narrows what the schema offers** — dropping a column, a table, a key, an index, or data a reader depends on. It is **not** destructive when it merely **widens what the schema permits**: `DROP NOT NULL`, `DROP DEFAULT`, dropping a `CHECK`, widening a `varchar`. Nothing that used to succeed starts failing, and no stored row becomes invalid.
+**Limb A — removal.** The statement takes an object, a column, a row or data away. It is **visible**: something that was in the catalog is no longer there, and anyone who looks sees the absence. Limb A is destructive when it **narrows what the schema offers** — dropping a column, a table, a key, an index, or data a reader depends on. It is **not** destructive when it widens what the schema permits **and no writer depended on the thing removed**: `DROP NOT NULL`, dropping a `CHECK`, widening a `varchar`. No stored row becomes invalid.
+
+**That second condition is not decoration, and the first draft of this record got it wrong by omitting it.** `DROP DEFAULT` was written here as an example of a safe widening. It is not one, and the counter-example was executed on `postgres:17-alpine`:
+
+```
+create table t(id int primary key, n int not null default 7);
+insert into t(id) values (1);                    -- INSERT 0 1
+alter table t alter column n drop default;       -- ALTER TABLE
+insert into t(id) values (2);
+-- ERROR:  null value in column "n" of relation "t" violates not-null constraint  (23502)
+```
+
+An insert that succeeded before the migration fails after it. Expand migrations deploy **ahead** of the code (ADR-0007 §7.5), so code N−1 is the writer that breaks, on every tenant in the fleet, from a migration a widening-blind MIG2 would pass as an `Expand`. The general form: **a limb-A removal widens the set of permitted *states* and may narrow the set of permitted *statements*.** Those are different sets, and only the first is safe by construction.
+
+**So limb A's widening exception carries a reader-and-writer obligation, discharged in the migration, not deferred to §4.** A migration claiming the exception states in `[MigrationSafety(Reason = …)]` which writers and readers depended on the removed thing and why none of them is version N−1. For `DROP NOT NULL` that is usually trivial and still has to be said; for `DROP DEFAULT` it is almost never dischargeable, because the whole purpose of a default is that writers omit the column. **`DROP DEFAULT` is therefore treated as destructive unless the migration discharges the obligation explicitly** — the opposite of where this record started.
 
 **Limb B — suppression.** The object remains, its name remains, its definition remains, and something *outside* its definition decides it does not take effect. Limb B is **always destructive, with no widening exception**, and the reason is not the size of the change but its **invisibility**: after a limb-B statement the catalog still shows the guard, `information_schema` still shows the guard, a reviewer reading the migration that created it still sees a guard — and it does not fire. B-19 spent four statements closing one limb-B hole; one limb-B statement reopens it and nothing that reads names can tell.
 
@@ -69,7 +83,9 @@ The enumeration lives in **`docs/architecture/postgres-invariant-suppression.md`
 | `ENABLE TRIGGER` (plain) clean | **Relaxed call overturned — it is destructive** | **B.** `ENABLE TRIGGER` sets `O`. From `A` that is a reduction: the trigger stops firing in replica sessions. The scanner does not know the prior state, so it must assume the one where the statement does harm. This is exactly B-19's four statements undone by a word that reads like an enabling |
 | `CREATE OR REPLACE` of anything destructive | **Confirmed, with a different reason** | **B.** See §2.5 |
 | `SET search_path`, plain `CREATE FUNCTION` clean | **Confirmed** | Neither removes nor suppresses. (`search_path` *can* change what an identifier in a function body resolves to — but a function's own `SET search_path` is part of its definition, which `pg_get_functiondef` renders and B-19's runtime check compares) |
-| `DROP NOT NULL`, `DROP DEFAULT`, `ATTACH PARTITION`, `DROP CONSTRAINT … RESTRICT` clean | **Confirmed** | **A, widening.** §2.1. `DROP CONSTRAINT` is refined by §3, not by this row |
+| `DROP NOT NULL`, `ATTACH PARTITION`, `DROP CONSTRAINT … RESTRICT` clean | **Confirmed**, with §2.1's obligation stated in `Reason` | **A, widening.** `DROP CONSTRAINT` is refined by §3, not by this row |
+| `DROP DEFAULT` clean | **Overturned — destructive** unless the migration discharges §2.1's obligation | **A, and not a widening.** Executed: an insert omitting the column succeeds before and fails `23502` after. A default exists so writers can omit the column; removing it narrows the set of permitted statements |
+| `CREATE … IF NOT EXISTS` clean | **Confirmed**, and see §2.5's *proves too much* test | It cannot displace an existing object, so it is neither limb. `CREATE EXTENSION IF NOT EXISTS "btree_gist"` is emitted by Npgsql from `CatalogDbContext.cs:99`'s `HasPostgresExtension` and this repository cannot spell it otherwise |
 
 ### 2.5 `CREATE OR REPLACE` — confirmed, and why the reason matters
 
@@ -81,7 +97,18 @@ The same holds for `CREATE OR REPLACE VIEW` (readers see different rows under an
 
 **On the orchestrator's concern — that this makes a first-time `CREATE OR REPLACE FUNCTION` written out of habit need a `Contract`, and a rule that is worked around is worse than a narrower one.** The concern is right in general and does not apply here, for a reason worth stating so it is not re-litigated:
 
-> **The workaround is deleting two words, and deleting them makes the migration better.** A migration runs exactly once per database, under a session-level advisory lock (ADR-0007 §7.3). `OR REPLACE` buys no idempotence it needs. What it does buy is that the statement's meaning depends on state the migration does not control: written as `CREATE FUNCTION`, a migration that unexpectedly meets an existing object **fails loudly**, which is information. Written as `CREATE OR REPLACE`, it silently overwrites whatever was there. Requiring `OR REPLACE` to be justified is not a tax on a legitimate pattern; it is a rule that converts a state-dependent statement into a state-independent one.
+> **The workaround is deleting two words, and deleting them makes the migration better.** A migration runs exactly once per database, under a session-level advisory lock (ADR-0007 §7.3). `OR REPLACE` buys no idempotence it needs, and written as `CREATE FUNCTION` a migration that unexpectedly meets an existing object **fails loudly**, which is information.
+
+**That paragraph is a statement about the cost, and it is explicitly not the rule.** The first draft of this record went further and argued that `OR REPLACE` is destructive because "the statement's meaning depends on state the migration does not control". **That argument proves too much, and the case that breaks it is in this repository.** `CatalogDbContext.cs:99` calls `HasPostgresExtension("btree_gist")`, from which Npgsql's own generator emits `CREATE EXTENSION IF NOT EXISTS "btree_gist"`. That statement's meaning also depends on uncontrolled state, it is emitted by the provider rather than written by a developer, and **the repository cannot spell it any other way.** A rule derived from the state-dependence argument would condemn a statement nobody can remove, which is how a gate stops being obeyed.
+
+**The rule is limb B, and limb B is about displacement:**
+
+| | Can it displace an existing object? | Verdict |
+|---|---|---|
+| `CREATE OR REPLACE …` | **Yes** — that is its entire purpose | Destructive |
+| `CREATE … IF NOT EXISTS` | **No** — if the object exists it does nothing at all | Neither limb. Clean |
+
+`IF NOT EXISTS` cannot leave an object named-but-changed, so there is nothing for a reader of names to be wrong about. That is the whole of limb B's concern, and it is the test to apply before extending this rule to any other spelling: **ask whether the statement can displace.** If the answer is no, the argument that reaches it is the wrong argument.
 
 **It costs nothing today**: every function this repository creates is already spelled `CREATE FUNCTION` (`20260912020620_AppendOnlyTrails.cs:130`).
 
@@ -96,9 +123,18 @@ Two properties this buys that `CREATE OR REPLACE` does not. The change is **visi
 
 The `ENABLE ALWAYS` in step 2 is not optional and is not decoration: `CREATE TRIGGER` produces `tgenabled = 'O'`, and a guard left at `O` is suppressible by `session_replication_role`. **A migration that creates a guard trigger and does not follow it with `ENABLE ALWAYS` has built a weaker guard than the one it replaced**, and nothing in the destructive set catches that, because nothing was suppressed — the guard was merely born weak. Recorded in §2.3's file as the accompanying positive rule; no mechanism enforces it today.
 
-### 2.7 Two things this decision does not know, in the present tense
+### 2.7 One thing executed since this record was drafted, and one it still does not know
 
-- **Whether `CREATE OR REPLACE TRIGGER` preserves `tgenabled`.** A replacement plausibly writes a fresh `pg_trigger` row, which would default to `'O'` and silently undo an `ENABLE ALWAYS` — the §2.1 rule's exact shape, hidden inside a statement that mentions no firing mode. **I did not verify this**, and the ruling above does not depend on it: `CREATE OR REPLACE TRIGGER` is destructive under §2.5 regardless. Executing it on `postgres:17-alpine` and writing the observed `tgenabled` into §2.3's file is part of the row, because the fact is worth more than the ruling.
+- **`CREATE OR REPLACE TRIGGER` resets `tgenabled` from `'A'` to `'O'` — executed, no longer a guess.** On `postgres:17-alpine`:
+
+  ```
+  create trigger tg before update on g for each row execute function gf();
+  alter table g enable always trigger tg;              -- tgenabled = A
+  create or replace trigger tg before update on g for each row execute function gf();
+  -- tgenabled = O
+  ```
+
+  So `CREATE OR REPLACE TRIGGER` silently undoes an `ENABLE ALWAYS` in a statement that mentions no firing mode, and the guard becomes suppressible by `session_replication_role` again. It is limb B twice over — the definition is displaced *and* the firing mode is reset — and §2.5's ruling now rests on a witness rather than on plausibility. Recorded in §2.3's file as S1.
 - **Whether `aurora_migrator` can set `session_replication_role` at all.** It is a `SUSET` parameter; if the migration role is not superuser and has no `GRANT SET`, the statement fails at runtime, which would be a second and stronger line than the scanner. **Nothing on this project has established which**, no deployment exists, and the scanner rule stands on its own either way. Confirming it belongs to whoever owns role provisioning, and the answer belongs in §2.3's file.
 
 ---
@@ -166,7 +202,7 @@ Three conditions attach to the two allowed shapes, all checkable on tokens the s
 
 **The residual:** even in the two allowed shapes, `ALTER TABLE` takes `ACCESS EXCLUSIVE` for the catalog update. It is brief — no scan, no rewrite, no index rebuild — but it queues behind every open transaction on that table and blocks everything behind it while it waits.
 
-**Widening is safe for the database and is not automatically safe for readers.** ADR-0007 §7.5 has expand migrations deploying *ahead* of the code, so code version N−1 runs against schema N. A column widened from 50 to 100 characters does not break N−1 while nothing writes values longer than 50 — and only version N does. **Nothing enforces that.** The gate reads migrations; it cannot see which release starts producing the wider values. This is a genuine hole in the expand/contract model as ADR-0007 §7.2 states it; it is recorded rather than papered over, and the obligation falls on the author and reviewer of the release that widens: *do not widen and start writing wide in the same release.* Present tense, because no mechanism checks it and none is proposed.
+**Widening is safe for the database and is not automatically safe for readers.** ADR-0007 §7.5 has expand migrations deploying *ahead* of the code, so code version N−1 runs against schema N. A column widened from 50 to 100 characters does not break N−1 while nothing writes values longer than 50 — and only version N does. This is the **same obligation §2.1 attaches to every limb-A widening**, and it is discharged the same way: the migration's `Reason` names the readers and writers that depended on the old bound and why none of them is version N−1, and a reviewer checks it at Full tier. **No mechanism verifies the claim** — the gate reads migrations and cannot see which release starts producing the wider values. The rule stops at a human knowing which readers exist (§8), and the difference between this record's first draft and this one is that the obligation is now *stated in the migration* rather than left as a hole in a consequences section.
 
 ---
 
@@ -277,7 +313,23 @@ ADR-0007 §7.2 rule 4 makes `CREATE INDEX CONCURRENTLY` "mandatory for any index
 
 ---
 
-## 8. Consequences
+## 8. Where each rule in this record stops
+
+Every blocker found in this record's first draft was a sentence claiming more than the mechanism beneath it delivered. This table is the antidote and is meant to be extended rather than summarised in prose.
+
+| Rule | Last link it follows | What is on the other side of that link, unchecked |
+|---|---|---|
+| §2.1 limb A, widening exception | The migration's `Reason`, read by a reviewer at Full tier | **A human knowing which readers and writers exist.** `DROP DEFAULT` is the executed proof that "widens the permitted states" and "breaks no writer" are different claims. No mechanism enumerates a column's writers |
+| §2.1 limb B, suppression | The token stream, plus §2.3's table of catalog columns | **Human knowledge of PostgreSQL.** §2.3's table is incomplete by construction; the audit method is the mitigation |
+| §2.5 `CREATE OR REPLACE` | Whether the statement *can displace* — a property of the spelling, decidable on tokens | Nothing. This one is closed, which is why `IF NOT EXISTS` falls out of it cleanly instead of needing an exemption |
+| §3.2 `DROP CONSTRAINT` | EF's model snapshot for the preceding migration | **The live database.** A constraint created by raw SQL is not in the model, is never attributed, and stays destructive — the loud direction |
+| §3.3 "is this `CHECK` replacement a widening" | The migration's `Reason`, read by a reviewer | **Predicate implication**, which is undecidable and which this project will not approximate |
+| §3.3 `NOT VALID` phase 1 | Nothing schedules phase 2 | **Whether `VALIDATE CONSTRAINT` ever ships.** An unvalidated constraint is a claim the schema makes and does not hold |
+| §4 `varchar` widening allowlist | PostgreSQL's documented binary-coercibility rule, cited | **`numeric`**, deliberately outside the allowlist because its rewrite behaviour was not verified here and money is `numeric` |
+| §5 `SchemaVersion` | `CoreSchemaVersion.Current`, for the tenant population only | **The catalog population**, which has no schema-version constant and no skew gate; and **what was actually deployed**, which nothing on this project can observe |
+| §6 `TransactionalIndexBuild` | The index name, matched against the generated SQL | **`Reason`**, which no machine reads. Whether the table is small is a reviewer's call |
+
+## 9. Consequences
 
 **Positive**
 
@@ -291,14 +343,15 @@ ADR-0007 §7.2 rule 4 makes `CREATE INDEX CONCURRENTLY` "mandatory for any index
 
 - **`ENABLE TRIGGER` becoming destructive is stricter than it looks.** Re-enabling a trigger after legitimate maintenance now needs a `Contract`, and the honest alternative — `ENABLE ALWAYS` — is a *different* firing mode, not the same one. A migration that genuinely wants `O` has to justify it. Accepted: the population of migrations that want `O` on a guard table is, today, empty.
 - **`MigrationPopulation` grows a second generation pass** (per operation, for attribution). More of the scanner's surface depends on EF internals — specifically on per-operation generation producing command texts that appear in the batch output. Where it does not, the command is unattributed and therefore destructive, so the failure is loud; the coupling is still real.
-- **Three of these decisions stop at a human.** Whether a `CHECK` replacement widens (§3.3), whether a transactionally built index is small enough (§6.2), and whether §2.3's table is complete. All three are written at that size rather than dressed as mechanisms.
-- **The widening-versus-readers hole in §4 is left open**, with no mechanism proposed. It is the honest state: the gate reads schema, and the obligation is on code.
+- **Four of these decisions stop at a human**, and §8 names each: whether a limb-A widening breaks a writer (§2.1), whether a `CHECK` replacement widens (§3.3), whether a transactionally built index is small enough (§6.2), and whether §2.3's table is complete. All four are written at that size rather than dressed as mechanisms.
+- **The widening-versus-readers obligation is stated, not mechanised** (§2.1, §4). The gate reads schema and the obligation is on code, so it is discharged in a `Reason` and checked by a reviewer. §8 records that it stops at a human knowing which readers exist.
+- **`DROP DEFAULT` moving to destructive will red a future migration that expected it to be free**, and the migration that wants it must argue for it. That is the intended cost of the correction, and the executed counter-example in §2.1 is why it is not negotiable.
 - **A `NOT VALID` constraint that never gets validated is limb B with a reason**, and nothing schedules phase 2 (§3.3).
 - **`[MigrationSafety]` grows two members** and every existing migration must supply `SchemaVersion`. Three today; the cost only rises.
 
 ---
 
-## 9. Revisit when
+## 10. Revisit when
 
 - **§2.3's file gains a row from an incident rather than from an audit.** That is the signal the audit method is not being run, and the method is the whole value of the file.
 - **A tenant-database migration exists** and `CoreSchemaVersion.Current` moves off `0`. G7 goes live that day and §5.3's first two bullets expire.

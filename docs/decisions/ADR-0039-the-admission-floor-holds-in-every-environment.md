@@ -61,11 +61,13 @@ D3's assertion becomes:
 
 ## 3. Decision 2 — a development key is refused in Production in the same shape as `AllowUnsigned`
 
-> `TrustedPackageKey` gains `DevelopmentOnly` (default `false`). `CountryPackageHostOptions.Create` **refuses to start** when any key with `DevelopmentOnly = true` is configured and `EnvironmentName` is not `Development` — the same shape, the same failure mode and the same reason as the existing `AllowUnsigned` refusal, whose message is already written.
+> `TrustedPackageKey` gains a **required** `KeyScope` — `Release` or `DevelopmentOnly` — with **no default value**. A configured key that does not state its scope is **refused at startup**, naming the key's thumbprint. `CountryPackageHostOptions.Create` additionally refuses to start when any `DevelopmentOnly` key is configured and `EnvironmentName` is not `Development`, in the same shape, with the same failure mode and for the same reason as the existing `AllowUnsigned` refusal.
+
+**Not a `bool` defaulting to `false`.** The first draft of this record wrote `DevelopmentOnly` with a default of `false`, which means **omission fails open**: a development key configured by someone who did not know the flag existed is silently a production-capable trust anchor, and the guard never fires. That is the wrong default for a credential, and it is the wrong default for the same reason this record exists — a control whose absence is indistinguishable from its permissive setting is not a control. Making the scope **required and undefaulted** converts forgetting into a startup failure, which is the only direction that is safe here.
 
 This puts the environment guard on **the credential** rather than on the floor, which is the right place: a floor is not a thing you can accidentally ship, and a key is.
 
-**What it does not do, stated so nobody over-reads it.** It does not stop someone configuring a development key *without* the flag — the flag is a declaration by whoever adds the key, and an undeclared development key is indistinguishable from a release key. The control against that is ADR-0033 §5.3's: adding a trusted key is an **operator action** recorded in `catalog.operator_audit_event`, with the consequence stated next to the button. **That surface does not exist.** The chain here is: a flag in configuration → a startup refusal → and it stops there. It does not reach "only keys somebody vouched for are configured", and nothing today does.
+**What it does not do, stated so nobody over-reads it.** A required scope stops *omission*; it does not stop a **misdeclaration**. Someone who adds a development key and marks it `Release` gets a production-capable anchor and no refusal. The scope is a declaration by whoever adds the key, and nothing verifies it against the key's provenance. The control against that is ADR-0033 §5.3's: adding a trusted key is an **operator action** recorded in `catalog.operator_audit_event`, with the consequence stated next to the button. **That surface does not exist.** The chain here is: a flag in configuration → a startup refusal → and it stops there. It does not reach "only keys somebody vouched for are configured", and nothing today does.
 
 ### 3.1 What the development path actually is
 
@@ -90,18 +92,35 @@ It is not a privilege escalation — ADR-0033 §5.1 is unchanged, and a sibling 
 
 ### 4.2 The decision
 
-> **The embedded manifest gains a `files` member: every file the package ships beside its manifest-bearing assembly, each with its SHA-256.** `CountryPackageLoadContext` resolves an assembly **only** if it is in that list and its hash matches, and admission **refuses a package directory containing any file not in the list**. A closed set, not an allowlist that tolerates extras.
+> **The embedded manifest gains a `files` member: every file in the package directory, recursively, each with its path relative to the directory root and its SHA-256.** Admission **refuses a package directory containing any file not in the list, or any listed file whose hash does not match**. The load context resolves a path **only** if it is inside the package directory **and** in the list. A closed set over the whole tree, not an allowlist of siblings.
+
+**"Beside the manifest-bearing assembly" was the wrong population, and the first draft of this record said exactly that.** The resolution surface `CountryPackageLoadContext` actually has is wider than a flat directory, and D8–D10 as first written would have passed against an implementation that still loads unlisted files:
+
+| Reachable by | Where it reads from | Covered by "beside"? |
+|---|---|---|
+| `Load` → `_resolver.ResolveAssemblyToPath` (`:81-84`) | Anything the package's `.deps.json` names, including `runtimes/<rid>/lib/…` | **No** |
+| `Load` → the flat probe (`:86-87`) | `<dir>/<name>.dll` | Yes |
+| **`LoadUnmanagedDll` → `_resolver.ResolveUnmanagedDllToPath` (`:90-95`)** | **`runtimes/<rid>/native/…` — native code, which no managed check ever sees** | **No** |
+| Satellite assemblies | Culture subdirectories (`<dir>/fr/…`), which ADR-0008's *"additional locales"* extension point requires a package to ship | **No** |
+
+Three consequences follow, and each is load-bearing:
+
+1. **The set is over the directory *tree*, not the directory.** Recursive, with relative paths, so `runtimes/linux-x64/native/libfoo.so` and `fr/Pkg.resources.dll` are members with the same standing as the main assembly.
+2. **`.deps.json` must be in the list.** It is the file that *decides where the resolver looks*; an unlisted or unhashed `.deps.json` can redirect every other resolution, so leaving it out re-opens the whole hole through the one file that controls the rest.
+3. **Resolution is confined to the package directory.** `AssemblyDependencyResolver` can return paths outside it — a NuGet fallback folder, a shared framework location — from a `.deps.json` that names them. A resolved path that escapes the directory root is refused even if its hash would match something, because a hash list cannot describe files the package does not own.
 
 **Why this and not a second signature.** The manifest is already embedded in the signed assembly and its bytes are already inside the signature (ADR-0031 §1). **A hash list placed in the manifest is covered by the existing signature with no new key material, no new signing step and no new trust anchor** — the signature's coverage extends from one file to the whole package for the cost of a manifest member. That is the cheapest available correction and it needs nothing this project does not already have.
 
-**Refusing unlisted files is the load-bearing half.** Verifying the listed ones and ignoring the rest leaves the attack exactly as it was: drop a DLL the manifest does not mention, and the probe still finds it. The set must be closed.
+**Refusing unlisted files is the load-bearing half.** Verifying the listed ones and ignoring the rest leaves the attack exactly as it was: drop a file the manifest does not mention, and the resolver still finds it. The set must be closed, and it must be closed over every path the resolver can reach — which is the correction above.
 
 ### 4.3 What must demonstrate it
 
-- **D8** — the hostile fixture package (ADR-0033 §5.6 D1 already builds one, with a module-initialiser witness) ships a **sibling** assembly with its own initialiser. Admission refuses the package, and **the sibling's witness flag is observed unset**. A refusal that happens after the sibling's initialiser has run is not a refusal — the same assertion shape D1 already uses, applied one file over.
-- **D9** — a package whose sibling is listed but whose bytes were changed after signing is refused, with the mismatch named.
-- **D10** — a package with an extra unlisted file is refused. This is the one that distinguishes a closed set from an allowlist and it is the one most likely to be dropped as pedantic.
-- Each reports **files listed, files verified, files refused.**
+- **D8** — the hostile fixture package (ADR-0033 §5.6 D1 already builds one, with a module-initialiser witness) ships a **managed sibling** assembly with its own initialiser. Admission refuses the package, and **the sibling's witness flag is observed unset**. A refusal that happens after the sibling's initialiser has run is not a refusal — D1's assertion shape, one file over.
+- **D9** — a package whose listed file's bytes were changed after signing is refused, with the mismatch naming the relative path.
+- **D10** — a package with an extra **unlisted** file is refused. This distinguishes a closed set from an allowlist, and it is the one most likely to be dropped as pedantic.
+- **D11 — the subdirectory cases, which are where the first draft of this record was wrong.** Three packages, each refused: one with an unlisted **native** library under `runtimes/<rid>/native/`; one with an unlisted **satellite** assembly under a culture directory; one whose **`.deps.json`** is altered after signing. D11 is the test that would have failed against the first draft's specification while D8–D10 passed, which is why it is named separately rather than folded into D10.
+- **D12** — a `.deps.json` naming a path **outside** the package directory resolves to nothing and the package is refused.
+- Each reports **files listed, files verified, files refused, and paths refused for escaping the directory.**
 
 ### 4.4 What this changes elsewhere
 
@@ -134,7 +153,17 @@ It is not a privilege escalation — ADR-0033 §5.1 is unchanged, and a sibling 
 
 ---
 
-## 6. Consequences
+## 6. Where each rule in this record stops
+
+| Rule | Last link it follows | What is on the other side, unchecked |
+|---|---|---|
+| §2 the floor is unconditional | `CountryPackageHostOptions.Create`, at startup, on `RoutesTenants` | **Whether a host that routes tenants says so.** `RoutesTenants` is a constructor argument with no default (B-21's choice, and the right one); nothing derives it from the fact that a tenant `DbContext` is registered |
+| §3 required `KeyScope` | The declaration on the configured key | **Misdeclaration.** A development key marked `Release` is admitted. Provenance is not verified and cannot be from configuration alone |
+| §3 operator recording of key additions | ADR-0033 §5.3 | **Nothing.** The operator surface that records a key addition does not exist |
+| §4 the closed file set | The manifest's `files` list, inside the existing signature, over the directory tree | **Build ordering** — the manifest must be written after every sibling is built and before the bearing assembly is signed. D11 is the test most likely to catch a break here |
+| §4 resolution confinement | The resolved path being inside the package directory | **What the package does at runtime.** ADR-0033 §5.1 is unchanged: an admitted package can still reach every tenant the process can. This is provenance, not confinement |
+
+## 7. Consequences
 
 **Positive**
 
@@ -147,12 +176,13 @@ It is not a privilege escalation — ADR-0033 §5.1 is unchanged, and a sibling 
 
 - **B-21 merges with no development path, and that is fine only because no host loads packages.** The day one does, either a non-routing host or a signing command must exist first. §3.1 says so in the present tense and this is the sentence to check before wiring package loading into `Aurora.Web`.
 - **`DevelopmentOnly` is a declaration, not a proof.** An undeclared development key is invisible to it. §3's chain stops there and the control beyond it — an operator surface that records key additions — does not exist.
-- **§4 adds a build-ordering constraint** to package packaging, and build ordering is a class of thing that breaks quietly. D10 is the test most likely to be the one that catches it.
+- **§4 adds a build-ordering constraint** to package packaging, and build ordering is a class of thing that breaks quietly. D11 is the test most likely to catch it.
+- **The closed set makes a package's shape part of its signed identity.** Adding a locale, a native dependency or a `.deps.json` entry is now a re-sign, not a file copy. That is the intended cost and it will be felt first by whoever ships the first reference package.
 - **The manifest contract changes before any package ships**, which is the cheapest time and still a change to a versioned public contract.
 
 ---
 
-## 7. Revisit when
+## 8. Revisit when
 
 - **The first host wires Country Package loading.** §3.1's "nothing is blocked today" expires that day, and the non-routing host or the signing command must land first.
 - **A non-tenant-routing host appears.** ADR-0033 §9 already names it as the trigger to re-read §5.2, and it becomes the default package-development target.

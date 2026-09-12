@@ -152,7 +152,17 @@ A one-sentence remarks clause on `TenantRoutingViolationException` saying its me
 
 ---
 
-## 5. Consequences
+## 5. Where each rule in this record stops
+
+| Rule | Last link it follows | What is on the other side, unchecked |
+|---|---|---|
+| §2.1 the pattern in the type | `PackageIdFormat`, the one constant the type, the domain and the check constraint all read | Nothing, by construction — there is one string, so there is nothing to drift |
+| §2.3 the composer refuses | `PackageIdFormat.IsWellFormed` at the sink, on a validated input type | **The quoting routine's behaviour.** `NpgsqlCommandBuilder.QuoteIdentifier` exists in the pinned Npgsql 10.0.3 — the symbol was confirmed present in the assembly — and **its escaping was not verified here**. D4 must assert it |
+| §2.3 the single-composer rule | A fitness rule may assert `"pkg_"` appears in one production file | **Does not exist yet.** Until it does, "one composer" is a convention |
+| §2.5 the catalog chain | `ck_installed_package_id_well_formed` | **Nothing executed it.** D3 is the test that closes this; the constraint is named in no test today |
+| §3.1 the mapper allowlist | — | **Nothing at all.** No problem-details mapper exists in `src/` or `tests/`. §3.1 is a specification |
+
+## 6. Consequences
 
 **Positive**
 
@@ -170,7 +180,7 @@ A one-sentence remarks clause on `TenantRoutingViolationException` saying its me
 
 ---
 
-## 6. Revisit when
+## 7. Revisit when
 
 - **B-13's installer is specified.** §2.6 must be decided before it writes a row, and §2.3's composer is its code. That is also when option 4.1 E — a typed schema key — becomes the obvious shape.
 - **The package id pattern is widened for any reason** — a hyphen, a dot, a non-ASCII letter. §2.3's four clauses were written for that day; re-read them rather than assuming the composer is still safe.
