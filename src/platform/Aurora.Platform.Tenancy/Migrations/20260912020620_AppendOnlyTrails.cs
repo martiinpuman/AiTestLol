@@ -21,7 +21,7 @@ namespace Aurora.Platform.Tenancy.Migrations
             // writes them has landed - and the guard below is nothing the model can express. The
             // model snapshot therefore does not know these tables, which is expected, and is why
             // every assertion about them is made against the migrated database
-            // (CatalogAppendOnlyTests, CatalogPrivilegeTests): the
+            // (CatalogAppendOnlyTests, CatalogAppendOnlyGuardTests, CatalogPrivilegeTests): the
             // B-05 security review (M-1) landed a raw-SQL catalog table with a blanket grant while
             // the model-agreement test and the gate both reported a pass. The columns are derived
             // from the ADRs' prose, not transcribed - CatalogSchemaAllowlist.AppendOnlyColumns
@@ -127,6 +127,35 @@ namespace Aurora.Platform.Tenancy.Migrations
                 END
                 $$;
                 """);
+
+            // One guard per table, in the same migration as the table, enabled ALWAYS (ADR-0028
+            // Amendment 2). CREATE TRIGGER yields an ordinary trigger ('O'), which
+            // session_replication_role = 'replica' suppresses with pg_trigger unchanged; the GUC is
+            // superuser-only on PostgreSQL 17 and one GRANT SET ON PARAMETER away, and ENABLE
+            // ALWAYS costs one statement. What is asserted of the guard is that it refuses, never
+            // that it exists: CatalogAppendOnlyGuardTests executes UPDATE and DELETE as
+            // aurora_migrator inside a transaction it rolls back and requires 42501 and this
+            // function's message from each table, because CREATE OR REPLACE FUNCTION with a body
+            // that returns the row is one statement that leaves every pg_trigger column
+            // byte-identical while the UPDATE lands. The pg_trigger enumeration is kept as the
+            // locator that says which table and why, and it is blind to that fault by construction.
+            //
+            // Neither table is partitioned, so Amendment 2's partition clause - a guard created on
+            // every partition, and the BEFORE TRUNCATE guard that is never cloned to one - does not
+            // arise here, and solution-layout.md section 6.4 item 5 asks for no truncate guard on
+            // these two tables. What that leaves, stated rather than implied: TRUNCATE is held by
+            // aurora_migrator alone (aurora_app truncating either table is 42501 from the privilege
+            // check, and the ACL comparison keeps it so), and as the DDL-path role it can also
+            // truncate, disable or drop this guard - the detection-not-prevention boundary ADR-0028
+            // section 2 draws, whose cover is the chain head recorded in operator_audit_event by
+            // FOLLOWUP-031's job (FOLLOWUP-026).
+            foreach (string table in new[] { "operator_audit_event", "erasure_replay_log" })
+            {
+                migrationBuilder.Sql(
+                    $"CREATE TRIGGER trg_{table}_append_only BEFORE UPDATE OR DELETE ON catalog.{table} " +
+                    "FOR EACH ROW EXECUTE FUNCTION catalog.refuse_append_only_change();");
+                migrationBuilder.Sql($"ALTER TABLE catalog.{table} ENABLE ALWAYS TRIGGER trg_{table}_append_only;");
+            }
         }
 
         /// <inheritdoc />
