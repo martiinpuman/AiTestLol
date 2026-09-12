@@ -387,43 +387,12 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
         public Task<NpgsqlConnection> OpenAsMigratorAsync() => OpenAsync(_catalog.MigratorConnectionString);
 
         /// <summary>
-        /// Drops the database as the container's superuser and verifies that it is gone.
+        /// Drops the database through the fixture - as the container's superuser, verified gone -
+        /// for the reasons <see cref="CatalogDatabaseFixture.DropDatabaseAsync"/> gives: an app
+        /// backend that has not yet exited makes a drop as <c>aurora_admin</c> fail <c>42501</c>,
+        /// and the leaked database fails the isolation suite for a reason unrelated to isolation.
         /// </summary>
-        /// <remarks>
-        /// <para>
-        /// Cleanup, not the privilege model under test. <c>DROP DATABASE ... WITH (FORCE)</c>
-        /// terminates every backend still attached, and PostgreSQL lets a role terminate only its
-        /// own backends, those of roles it is a member of, or any at all with
-        /// <c>pg_signal_backend</c>. The fixture's <c>aurora_admin</c> is a member of
-        /// <c>aurora_migrator</c>, not of <c>aurora_app</c>, and holds no <c>pg_signal_backend</c> -
-        /// so a drop issued as <c>aurora_admin</c> is refused <c>42501</c> whenever a test's app
-        /// session has closed its socket but its backend has not yet exited, the database leaks
-        /// with <c>PUBLIC CONNECT</c> on it, and B-05's <c>CatalogPrivilegeTests</c> finds a database
-        /// the app role may open. Unpooled connections do not close that race; they only keep this
-        /// process from parking an idle connection in the database. Whether the provisioner role
-        /// should hold <c>pg_signal_backend</c> for ADR-0007 §8's own drop is the architect's and
-        /// B-07's question (routed by PR #13's second review), which is why this does not answer it
-        /// by granting the role something here.
-        /// </para>
-        /// <para>
-        /// The drop is verified, not trusted: a cleanup that fails silently is how a leaked
-        /// database reaches the next test's view of the cluster.
-        /// </para>
-        /// </remarks>
-        public async ValueTask DisposeAsync()
-        {
-            await using NpgsqlConnection superuser = await _catalog.OpenSuperuserConnectionAsync();
-            await CatalogDatabaseFixture.ExecuteAsync(superuser, $"DROP DATABASE {Name} WITH (FORCE)");
-
-            await using var remaining = new NpgsqlCommand("select count(*) from pg_database where datname = @name", superuser);
-            remaining.Parameters.AddWithValue("name", Name);
-            if ((long)(await remaining.ExecuteScalarAsync())! != 0)
-            {
-                throw new InvalidOperationException(
-                    $"Tenant database '{Name}' was not dropped; left in place it would leak into every later "
-                    + "test's view of the cluster.");
-            }
-        }
+        public async ValueTask DisposeAsync() => await _catalog.DropDatabaseAsync(Name);
 
         private async Task<NpgsqlConnection> OpenAsync(string roleConnectionString)
         {

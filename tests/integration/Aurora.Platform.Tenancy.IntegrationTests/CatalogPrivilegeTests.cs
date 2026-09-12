@@ -810,7 +810,10 @@ public sealed class CatalogPrivilegeTests
         }
         finally
         {
-            await CatalogDatabaseFixture.ExecuteAsync(admin, $"DROP DATABASE {database} WITH (FORCE)");
+            // Not on the admin connection: an app backend that has not yet exited makes a drop as
+            // aurora_admin fail 42501 and leak the database (PR #13, third review, 87/88). The
+            // fixture drops as the superuser and verifies the database is gone.
+            await _catalog.DropDatabaseAsync(database);
         }
     }
 
