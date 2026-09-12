@@ -7,7 +7,7 @@
   - **ADR-0008 §4** — which describes what a package contributes but never defines the set a `TenantScope` carries. §2 supplies the definition.
   - **ADR-0007 §3.4** — which names `InstalledPackages` in the `TenantScope` sketch and leaves it undefined. Same.
 - **Superseded by:** —
-- **Related:** ADR-0007 §3.4, §9.2, ADR-0008 §4.1, §5.1, §5.3, §6.1, ADR-0027 §1–§3, ADR-0032 §5–§6 (what the tenancy rules bind to; the `SalesSchemaMigrator` worked example), ADR-0033 (what a package can do once loaded), `../architecture/modules.md` §4
+- **Related:** ADR-0007 §3.4, §9.2, ADR-0008 §4.1, §5.1, §5.3, §6.1, ADR-0027 §1–§3, ADR-0032 §4.1.3 (the `SalesSchemaMigrator` worked example) and §5 (the rule summary), ADR-0033 (what a package can do once loaded), `../architecture/modules.md` §4
 - **Raised by:** two reviewers of PR #13 (`task/B-06.1a`), and the project-manager's flag on B-06.1a's backlog row
 
 > Both types were named by an ADR and defined by nobody. A developer had to invent one and skip the other, and flagged both rather than guessing quietly. This record is the answer to each.
@@ -91,12 +91,12 @@ Nothing is lost, because nothing outside that assembly was ever allowed to name 
 It follows from §3.2 that **no type in any `.Contracts` assembly may name `TenantDatabaseHandle`.** That resolves a second contradiction ADR-0027 §1 left:
 
 - ADR-0027 §1 gives the DDL-path factory the signature `ITenantMigrationContextFactory<TContext>.CreateAsync(TenantDatabaseHandle, ct)` and says it is *"consumed only by `IModuleSchemaMigrator` implementations"*.
-- ADR-0032 §6's worked example has `SalesSchemaMigrator : IModuleSchemaMigrator` take `ITenantMigrationContextFactory<SalesDbContext>` in its constructor — a module type, in `Aurora.Modules.Sales.Infrastructure`.
-- A module can only see `.Contracts`. So either the factory is not module-facing (contradicting ADR-0032 §6), or its signature does not name the handle (contradicting ADR-0027 §1). **The conflict is resolved in favour of T6 and of ADR-0032 §6: the signature gives.**
+- ADR-0032 §4.1.3's worked example has `SalesSchemaMigrator : IModuleSchemaMigrator` take `ITenantMigrationContextFactory<SalesDbContext>` in its constructor — a module type, in `Aurora.Modules.Sales.Infrastructure`.
+- A module can only see `.Contracts`. So either the factory is not module-facing (contradicting ADR-0032 §4.1.3), or its signature does not name the handle (contradicting ADR-0027 §1). **The conflict is resolved in favour of T6 and of ADR-0032 §4.1.3: the signature gives.**
 
 > **`ITenantMigrationContextFactory<TContext>` does not name `TenantDatabaseHandle`.** A module's `IModuleSchemaMigrator` never holds a DDL-capable proof. The handle-to-context binding happens inside `Aurora.Platform.Tenancy`, which is the only assembly that can name both.
 
-**The shape I recommend, and its status.** `ITenantSchemaMigrator` (ADR-0027 §3) opens one DI scope per tenant run, registers the run's handle in it — a registration only `Aurora.Platform.Tenancy` can write, because only it can name the type — and resolves the module migrators from that scope, so `TenantMigrationContextFactory<T>` receives the handle by ordinary constructor injection and `CreateAsync(CancellationToken)` is all a migrator ever calls. That keeps ADR-0032 §6's example verbatim and adds no third proof type. **It is a recommendation, not a mechanism that exists**; B-07.2 owns `ITenantMigrationContextFactory<T>` and `ITenantSchemaMigrator` and must name the shape it adopts and prove the invariant above, whichever it picks.
+**The shape I recommend, and its status.** `ITenantSchemaMigrator` (ADR-0027 §3) opens one DI scope per tenant run, registers the run's handle in it — a registration only `Aurora.Platform.Tenancy` can write, because only it can name the type — and resolves the module migrators from that scope, so `TenantMigrationContextFactory<T>` receives the handle by ordinary constructor injection and `CreateAsync(CancellationToken)` is all a migrator ever calls. That keeps ADR-0032 §4.1.3's example verbatim and adds no third proof type. **It is a recommendation, not a mechanism that exists**; B-07.2 owns `ITenantMigrationContextFactory<T>` and `ITenantSchemaMigrator` and must name the shape it adopts and prove the invariant above, whichever it picks.
 
 ### 3.4 Which row owns it: **B-07.1**
 

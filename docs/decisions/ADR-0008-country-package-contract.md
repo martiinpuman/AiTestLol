@@ -95,6 +95,8 @@ Packages live in `./packages/<id>/<version>/` in the deployed image (v1: first-p
 
 ## 4. How a package contributes data — and why it never injects fields into core tables
 
+> **Amended by [ADR-0035](ADR-0035-installed-packages-defined-and-the-ddl-handle-confirmed.md) §2 (2026-09-12).** ADR-0007 §3.4 cites *this section* for the `InstalledPackages` set a `TenantScope` carries, and this section does not define it — it is about what a package contributes to a tenant database. ADR-0035 §2 is the definition, and §2.3 carries a consequence that belongs to **this** ADR: `Entries`/`TryGet` return a package in any state, so capability and slot resolution reads `Active`/`TryGetActive`. Without that split a `Deactivated` package still fills a §6.1 slot and §5.3's deactivation switches nothing off. §2.2 also records why the set carries **text** rather than `PackageId`/`PackageVersion`: tenancy contracts may not reference the package contract (fitness rule L2), and coupling them would put a §3.1 MAJOR bump on tenancy's critical path.
+
 This section exists because of failure class #2. Business Central's documented upgrade failure — a per-tenant extension adds a field to a standard table, a later core update adds an equivalent field, and the upgrade dies with *"the field is already defined in the Base Application"* — is caused by one specific design choice: letting an extension add columns to a table it does not own. We do not allow it.
 
 ### 4.1 The four ownership rules
