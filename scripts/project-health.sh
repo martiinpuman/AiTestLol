@@ -166,11 +166,22 @@ for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', '
         in_flight.add(row)
         started_by[row] = f'{ahead} commit(s) ahead'
 
+def _merged(ref):
+    # A branch already contained in the integration branch is finished, whatever
+    # still points at it. Without this the worktree arm below reported a MERGED
+    # branch as in flight -- task/B-19 merged, its worktree outlived it, and
+    # B-18.1 stayed held on a branch that no longer existed to conflict with.
+    # That is the eighth form on CLAUDE.md's list, in this file: the worktree arm
+    # was added to catch a row with no commits, and nothing re-checked what it did
+    # to a row whose commits had all landed.
+    return subprocess.run(['git', 'merge-base', '--is-ancestor', ref, INTEGRATION],
+                          capture_output=True).returncode == 0
+
 for line in subprocess.run(['git', 'worktree', 'list', '--porcelain'],
                            capture_output=True, text=True).stdout.split('\n'):
     if line.startswith('branch refs/heads/task/'):
         row = line[len('branch refs/heads/task/'):].strip()
-        if row and row not in in_flight:
+        if row and row not in in_flight and not _merged(f'refs/heads/task/{row}'):
             in_flight.add(row)
             started_by[row] = 'a worktree holds it, no commits yet'
 
@@ -218,6 +229,14 @@ def held_by(row):
     return sorted(blockers)
 
 ready = [r for r, (d, st) in rows.items() if st == 'ready' and not unmet(d)]
+
+# A row marked in-progress at dispatch time closes the window between "an agent was
+# told to build this" and "that agent has put something on disk" -- repository state
+# is the only thing this check can read, and a dispatch is not repository state until
+# the agent acts. But an in-progress row with nothing on disk is also what an agent
+# that DIED looks like, and usage limits have killed agents here five times. So report
+# them, and say which of the two it is rather than letting the row go quiet.
+in_progress = sorted(r for r, (d, st) in rows.items() if st == 'in-progress')
 started = sorted(r for r in ready if r in in_flight)
 held = sorted((r, held_by(r)) for r in ready if r not in in_flight and held_by(r))
 dispatchable = sorted(r for r in ready
@@ -227,6 +246,11 @@ broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet
 print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row is started, held or waiting on a predecessor)'}")
 for r in started:
     print(f"  already started: {r} — {started_by.get(r, 'in flight')}")
+for r in in_progress:
+    if r in in_flight:
+        print(f"  {r} in progress — {started_by.get(r, 'in flight')}")
+    else:
+        print(f"  {r} in progress — dispatched, nothing on disk yet; if this persists its agent died")
 for r, b in held:
     if b == ['an explicit HELD marker in its own row']:
         print(f"  {r} held — its row carries an explicit HELD marker")
