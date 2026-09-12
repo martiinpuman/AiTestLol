@@ -12,10 +12,18 @@ namespace Aurora.Platform.Tenancy.Routing;
 /// </summary>
 /// <remarks>
 /// <para>
-/// One class knows the key, the lifetime and the read-through, so that the resolver and the
-/// invalidator cannot disagree about which entry they mean. Registered once per process; the
-/// reader is handed in per call because it is scoped to a unit of work and a singleton must not
-/// capture one.
+/// One class knows the key, the lifetime, the read-through and its postcondition, so that the
+/// resolver and the invalidator cannot disagree about which entry they mean. Registered once per
+/// process; the reader is handed in per call because it is scoped to a unit of work and a
+/// singleton must not capture one.
+/// </para>
+/// <para>
+/// <b>The row returned is the tenant's, or nothing is returned.</b> A row's <c>TenantId</c> is
+/// compared with the id asked for at both places a row can come from: the read-through refuses a
+/// reader's answer before it is stored (a faulted factory caches nothing), and the cached answer is
+/// refused, and dropped, before it is handed out — so a mis-keyed entry, a poisoned backend or a
+/// future reader that answers the wrong row is caught here rather than composed into another
+/// tenant's connection (PR #14 M-1).
 /// </para>
 /// <para>
 /// <b>A tenant that does not exist is never cached.</b> The read-through throws
@@ -61,20 +69,39 @@ internal sealed class TenantRoutingCache
     /// Concurrent misses for one tenant collapse into one read (ADR-0012, stampede protection).
     /// </summary>
     /// <exception cref="TenantNotFoundException">No <c>catalog.tenant</c> row has this id.</exception>
-    public ValueTask<TenantRouting> GetOrReadAsync(TenantId tenantId, ITenantRoutingReader reader, CancellationToken ct)
+    /// <exception cref="TenantRoutingMismatchException">
+    /// The row the reader or the cache answered belongs to another tenant. Nothing is stored for a
+    /// reader's wrong answer; a cached wrong answer is dropped before the exception is thrown.
+    /// </exception>
+    public async ValueTask<TenantRouting> GetOrReadAsync(TenantId tenantId, ITenantRoutingReader reader, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(reader);
 
-        return _cache.GetOrCreateAsync(
+        TenantRouting routing = await _cache.GetOrCreateAsync(
             KeyFor(tenantId),
             (tenantId, reader),
-            static async (state, token) =>
-                await state.reader.ReadAsync(state.tenantId, token) ?? throw new TenantNotFoundException(state.tenantId),
+            static async (state, token) => BelongingTo(
+                state.tenantId,
+                await state.reader.ReadAsync(state.tenantId, token) ?? throw new TenantNotFoundException(state.tenantId)),
             EntryOptions,
             tags: null,
             ct);
+
+        if (routing.TenantId != tenantId.Value)
+        {
+            await InvalidateAsync(tenantId, ct);
+            throw new TenantRoutingMismatchException(tenantId, routing.TenantId, routing.DatabaseName);
+        }
+
+        return routing;
     }
 
     /// <summary>Removes the tenant's entry, so that the next resolve reads the catalog again.</summary>
     public ValueTask InvalidateAsync(TenantId tenantId, CancellationToken ct) => _cache.RemoveAsync(KeyFor(tenantId), ct);
+
+    /// <summary>The read-through's postcondition: a row is stored only when it is the tenant's.</summary>
+    private static TenantRouting BelongingTo(TenantId tenantId, TenantRouting routing) =>
+        routing.TenantId == tenantId.Value
+            ? routing
+            : throw new TenantRoutingMismatchException(tenantId, routing.TenantId, routing.DatabaseName);
 }

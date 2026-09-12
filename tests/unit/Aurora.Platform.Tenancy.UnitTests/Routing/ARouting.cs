@@ -35,6 +35,13 @@ internal sealed class ARouting
         return this;
     }
 
+    /// <summary>A database name that is not the one the key derives; what a restore re-points a tenant at (ADR-0007 §11.2).</summary>
+    public ARouting WithDatabaseName(string databaseName)
+    {
+        _databaseName = databaseName;
+        return this;
+    }
+
     public ARouting InState(TenantState state)
     {
         _state = state;

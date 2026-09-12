@@ -8,23 +8,15 @@ namespace Aurora.Platform.Tenancy.Routing;
 /// </summary>
 /// <param name="ConnectionString">
 /// Complete, including the credential from the secret store and every ADR-0007 §5.2 pool setting.
-/// Hand it to an <c>NpgsqlDataSourceBuilder</c>; never to a log.
+/// It reveals itself only through <see cref="ConnectionSecret.Reveal"/> and renders redacted on
+/// every other path — this record's own printing, JSON and reflection included — so the record
+/// needs no rendering of its own to keep the credential out of a log.
 /// </param>
 /// <param name="ClusterId">The cluster the tenant is placed on.</param>
 /// <param name="DatabaseName">The tenant's database on that cluster.</param>
 /// <param name="ResidencyRegion">The region the tenant's data may live in (ADR-0007 §11.3).</param>
 internal sealed record TenantConnection(
-    string ConnectionString,
+    ConnectionSecret ConnectionString,
     ClusterId ClusterId,
     string DatabaseName,
-    Region ResidencyRegion)
-{
-    /// <summary>
-    /// Names the routing facts and redacts the connection string. A record's generated
-    /// <c>ToString</c> prints every member, and this one's carries a password; a diagnostic that
-    /// interpolated the value would put a credential in a log (ADR-0016).
-    /// </summary>
-    public override string ToString() =>
-        $"{nameof(TenantConnection)} {{ {nameof(ClusterId)} = {ClusterId}, {nameof(DatabaseName)} = {DatabaseName}, "
-        + $"{nameof(ResidencyRegion)} = {ResidencyRegion}, {nameof(ConnectionString)} = <redacted> }}";
-}
+    Region ResidencyRegion);

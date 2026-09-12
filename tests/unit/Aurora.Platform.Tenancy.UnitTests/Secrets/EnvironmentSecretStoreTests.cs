@@ -58,4 +58,30 @@ public sealed class EnvironmentSecretStoreTests
     {
         await Should.ThrowAsync<ArgumentException>(() => _store.ReadAsync(default, default).AsTask());
     }
+
+    [Fact]
+    public async Task A_variable_that_is_set_but_empty_is_reported_as_such_and_not_as_missing()
+    {
+        // PR #14 L-3: refusing an empty credential is right; reporting it as "not set" sends the
+        // operator to printenv, where the line is. The process API cannot create a set-but-empty
+        // variable on demand, so the lookup is injected.
+        var store = new EnvironmentSecretStore(_ => "");
+
+        SecretUnavailableException failed = await Should.ThrowAsync<SecretUnavailableException>(
+            () => store.ReadAsync(SecretReference.Of("env:AURORA_EMPTY"), default).AsTask());
+
+        failed.Message.ShouldContain("'AURORA_EMPTY' is set but empty");
+        failed.Message.ShouldNotContain("is not set");
+    }
+
+    [Fact]
+    public async Task A_variable_that_is_absent_is_reported_as_not_set()
+    {
+        var store = new EnvironmentSecretStore(_ => null);
+
+        SecretUnavailableException failed = await Should.ThrowAsync<SecretUnavailableException>(
+            () => store.ReadAsync(SecretReference.Of("env:AURORA_ABSENT"), default).AsTask());
+
+        failed.Message.ShouldContain("'AURORA_ABSENT' is not set");
+    }
 }

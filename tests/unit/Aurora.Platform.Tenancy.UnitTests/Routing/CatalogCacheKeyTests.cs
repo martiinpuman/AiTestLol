@@ -41,5 +41,28 @@ public sealed class CatalogCacheKeyTests
     public void A_blank_discriminator_is_refused()
     {
         Should.Throw<ArgumentException>(() => CatalogCacheKey.For(CatalogCacheKind.TenantRouting, " "));
+        Should.Throw<ArgumentException>(() => CatalogCacheKey.For(CatalogCacheKind.TenantRouting, ""));
+    }
+
+    [Theory]
+    [InlineData("a:b")]
+    [InlineData("a b")]
+    [InlineData("\u200B")]
+    [InlineData("ab\u200B")]
+    [InlineData("a/b")]
+    public void A_discriminator_outside_the_key_alphabet_is_refused_rather_than_allowed_to_collide(string discriminator)
+    {
+        // PR #14 L-2: the separator is ':', so For(kind, "a:b") and a future For(kind, "a", "b")
+        // would be one key; a zero-width character passes a whitespace check and makes two keys
+        // look alike. Refused at the builder, where every key is made.
+        Should.Throw<ArgumentException>(() => CatalogCacheKey.For(CatalogCacheKind.TenantRouting, discriminator));
+    }
+
+    [Fact]
+    public void A_tenant_id_in_its_text_form_is_inside_the_key_alphabet()
+    {
+        TenantId tenant = TenantId.Create();
+
+        CatalogCacheKey.For(CatalogCacheKind.TenantRouting, tenant.ToString()).ShouldEndWith(tenant.ToString());
     }
 }

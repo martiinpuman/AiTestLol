@@ -151,7 +151,7 @@ public sealed partial class TenantConnectionResolverTests
             connection.DatabaseName.ShouldBe(databaseName);
             connection.ResidencyRegion.ShouldBe(cluster.Region);
 
-            await using var open = new NpgsqlConnection(connection.ConnectionString);
+            await using var open = new NpgsqlConnection(connection.ConnectionString.Reveal());
             await open.OpenAsync();
             await using var command = new NpgsqlCommand(
                 "SELECT current_database(), current_user, current_setting('application_name')", open);

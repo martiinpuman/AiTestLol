@@ -30,18 +30,24 @@ namespace Aurora.Platform.Tenancy.Routing;
 /// <para>
 /// The set of tenants to invalidate is taken <em>before</em> the save, because after it every entry
 /// is <c>Unchanged</c> and nothing records what moved; it is acted on <em>after</em> the save, so
-/// that a save that fails leaves the cache as it was — the row did not change. A synchronous
-/// <c>SaveChanges</c> takes the same path and waits for the removal, which with the L1-only cache
-/// of ADR-0012 completes at once; an L2 backend would make that wait a real one and is the point at
-/// which the synchronous path should go.
+/// that a save that fails leaves the cache as it was — the row did not change. A failed save never
+/// reaches <see cref="SavedChangesAsync"/>, and the next save on the same context <em>replaces</em>
+/// the remembered set before acting on it, so a failed attempt's tenants are never evicted by a
+/// later, unrelated save either; there is nothing to clean up on failure, and no failure hook
+/// exists to give the reader something to look for. A synchronous <c>SaveChanges</c> takes the same
+/// path and waits for the removal, which with the L1-only cache of ADR-0012 completes at once; an
+/// L2 backend would make that wait a real one and is the point at which the synchronous path should
+/// go.
 /// </para>
 /// </remarks>
 internal sealed class TenantRoutingCacheInvalidator : SaveChangesInterceptor
 {
     /// <summary>
     /// The columns of <c>catalog.tenant</c> that reach a resolved connection: the state that
-    /// decides whether the tenant routes at all, and the four the connection string is composed
-    /// from (the key names the pool in <c>pg_stat_activity</c>).
+    /// decides whether the tenant routes at all, and the four the connection is composed from (the
+    /// key names the pool in <c>pg_stat_activity</c>). Held complete by
+    /// <c>TenantRoutingCacheInvalidatorTests</c>: every column of the row is classified as one of
+    /// these, or outside routing, and every fact <c>TenantRouting</c> carries maps to one of these.
     /// </summary>
     public static readonly IReadOnlyList<string> RoutingProperties =
     [
@@ -102,14 +108,6 @@ internal sealed class TenantRoutingCacheInvalidator : SaveChangesInterceptor
         return result;
     }
 
-    public override void SaveChangesFailed(DbContextErrorEventData eventData) => Forget(eventData);
-
-    public override Task SaveChangesFailedAsync(DbContextErrorEventData eventData, CancellationToken cancellationToken = default)
-    {
-        Forget(eventData);
-        return Task.CompletedTask;
-    }
-
     private static bool RoutingChanged(EntityEntry<Tenant> entry) => entry.State switch
     {
         EntityState.Added or EntityState.Deleted => true,
@@ -117,6 +115,7 @@ internal sealed class TenantRoutingCacheInvalidator : SaveChangesInterceptor
         _ => false,
     };
 
+    /// <summary>Replaces whatever an earlier save on this context remembered — a failed attempt's set included.</summary>
     private void Remember(DbContextEventData eventData)
     {
         if (eventData.Context is null)
@@ -125,14 +124,6 @@ internal sealed class TenantRoutingCacheInvalidator : SaveChangesInterceptor
         }
 
         _pending.AddOrUpdate(eventData.Context, TenantsWhoseRoutingChanged(eventData.Context.ChangeTracker));
-    }
-
-    private void Forget(DbContextEventData eventData)
-    {
-        if (eventData.Context is not null)
-        {
-            _pending.Remove(eventData.Context);
-        }
     }
 
     private async ValueTask InvalidateRememberedAsync(DbContextEventData eventData, CancellationToken ct)

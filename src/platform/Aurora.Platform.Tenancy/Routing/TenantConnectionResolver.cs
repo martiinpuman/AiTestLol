@@ -26,6 +26,12 @@ namespace Aurora.Platform.Tenancy.Routing;
 /// through the same <see cref="ITenantRoutingReader"/> and applies its own rules.
 /// </para>
 /// <para>
+/// <b>The row is the tenant's before anything here runs.</b> <see cref="TenantRoutingCache"/>
+/// refuses a row whose <c>TenantId</c> is not the one asked for, from the reader and from the cache
+/// alike, so what reaches the state check below cannot be another tenant's row wearing this
+/// tenant's key (PR #14 M-1).
+/// </para>
+/// <para>
 /// <b>The credential is read on every resolve.</b> The cached row carries the secret's reference;
 /// the store is consulted each time, so a rotated secret takes effect on the next resolve without
 /// touching the cache (ADR-0011: rotation is an overlap window, not a cutover) and no password is
@@ -60,6 +66,7 @@ internal sealed class TenantConnectionResolver : ITenantConnectionResolver
 
     /// <inheritdoc/>
     /// <exception cref="ArgumentException"><paramref name="tenantId"/> is unassigned.</exception>
+    /// <exception cref="TenantRoutingMismatchException">The routing row handed back belongs to another tenant.</exception>
     /// <exception cref="InvalidOperationException">
     /// The catalog row is in a routable state but lacks a routing column, which
     /// <c>ck_tenant_routing_present_unless_deleted</c> should make impossible.
@@ -95,7 +102,7 @@ internal sealed class TenantConnectionResolver : ITenantConnectionResolver
             _pool);
 
         return new TenantConnection(
-            connectionString,
+            new ConnectionSecret(connectionString),
             ClusterId.Parse(routing.Cluster.ClusterId, null),
             routing.DatabaseName,
             Region.Parse(routing.ResidencyRegion, null));

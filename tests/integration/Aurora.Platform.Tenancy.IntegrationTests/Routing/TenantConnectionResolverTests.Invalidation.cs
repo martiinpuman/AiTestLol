@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Contracts;
 using Aurora.Platform.Tenancy.Routing;
+using Aurora.SharedKernel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,7 +15,8 @@ namespace Aurora.Platform.Tenancy.IntegrationTests.Routing;
 
 /// <summary>
 /// The non-negotiable proof of B-06.1: the routing entry is served from the cache, and a tenant
-/// state change makes the next resolve read the catalog again.
+/// state change makes the next resolve read the catalog again. Plus the one shape the catalog does
+/// not yet refuse, kept red on purpose (PR #14 H-1).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -37,6 +39,8 @@ namespace Aurora.Platform.Tenancy.IntegrationTests.Routing;
 /// </remarks>
 public sealed partial class TenantConnectionResolverTests
 {
+    private const string UniqueViolation = "23505";
+
     [Fact]
     public async Task Suspending_a_tenant_invalidates_its_routing_entry_so_the_next_resolve_reads_the_catalog_again()
     {
@@ -104,8 +108,7 @@ public sealed partial class TenantConnectionResolverTests
         {
             // A second tenant with the same key violates ux_tenant_key, so the whole save - the
             // suspend included - is rejected by PostgreSQL and the row does not change.
-            context.Tenants.Add(Catalog.Tenant.Reserve(
-                Aurora.SharedKernel.TenantId.Create(), bed.Tenant.Key, "Duplicate", bed.Cluster, "standard", Unique.Now));
+            context.Tenants.Add(Catalog.Tenant.Reserve(TenantId.Create(), bed.Tenant.Key, "Duplicate", bed.Cluster, "standard", Unique.Now));
             await context.SaveChangesAsync();
         }));
         await bed.ResolveAsync();
@@ -114,24 +117,154 @@ public sealed partial class TenantConnectionResolverTests
         (await bed.CachedRowAsync()).State.ShouldBe(TenantState.Active);
     }
 
+    [Fact]
+    public async Task A_failed_save_leaves_no_pending_eviction_for_the_next_successful_save_on_the_same_context()
+    {
+        // PR #14 L-1. The interceptor remembers a save's tenants before it runs and acts after it
+        // succeeds; a failed save never reaches the acting half, and the next save on the same
+        // context *replaces* what was remembered before acting. So an operator who abandons a failed
+        // suspend and suspends a different tenant on the same context evicts that tenant only. A
+        // keep-first memory would evict the abandoned tenant instead - the fault this pins.
+        await using RoutingTestBed bed = await RoutingTestBed.WithActiveTenantAsync(_catalog);
+        Tenant abandoned = bed.Tenant;
+        Tenant suspended = bed.OtherTenant;
+
+        await bed.ResolveAsync(abandoned.Id);
+        await bed.ResolveAsync(suspended.Id);
+        int bothCached = bed.CatalogStatements.Count;
+
+        await bed.AsOperatorAsync(async catalog =>
+        {
+            Tenant first = await RoutingTestBed.LoadTrackedAsync(catalog, abandoned.Id);
+            first.Suspend(Unique.Now);
+            Tenant duplicate = Catalog.Tenant.Reserve(TenantId.Create(), abandoned.Key, "Duplicate", bed.Cluster, "standard", Unique.Now);
+            catalog.Tenants.Add(duplicate);
+            await Should.ThrowAsync<DbUpdateException>(() => catalog.SaveChangesAsync());
+
+            // The failed attempt is abandoned on the same context: the duplicate detached, the
+            // first tenant's pending suspend discarded. Then the other tenant is suspended.
+            catalog.Entry(duplicate).State = EntityState.Detached;
+            catalog.Entry(first).State = EntityState.Unchanged;
+            Tenant second = await RoutingTestBed.LoadTrackedAsync(catalog, suspended.Id);
+            second.Suspend(Unique.Now);
+            await catalog.SaveChangesAsync();
+        });
+
+        await bed.ResolveAsync(abandoned.Id);
+        int afterAbandoned = bed.CatalogStatements.Count;
+        await bed.ResolveAsync(suspended.Id);
+        int afterSuspended = bed.CatalogStatements.Count;
+
+        _output.WriteLine($"catalog statements: both cached = {bothCached}, after resolving the abandoned tenant = {afterAbandoned}, after resolving the suspended one = {afterSuspended}");
+        bothCached.ShouldBe(2);
+        afterAbandoned.ShouldBe(2, "the tenant whose suspend failed is still served from the cache");
+        afterSuspended.ShouldBe(3, "the tenant whose suspend succeeded was evicted");
+        (await bed.CachedRowAsync(abandoned.Id)).State.ShouldBe(TenantState.Active);
+        (await bed.CachedRowAsync(suspended.Id)).State.ShouldBe(TenantState.Suspended);
+    }
+
+    [Fact]
+    public async Task Two_cluster_rows_on_one_server_cannot_route_two_tenants_to_one_physical_database()
+    {
+        // RED, PENDING THE PHYSICAL-UNIQUENESS DECISION (PR #14 H-1, routed to the architect).
+        //
+        // ux_tenant_cluster_id_database_name is keyed on cluster_id; the identity of a physical
+        // database is (host, port, database_name); and nothing makes database_cluster (host, port)
+        // unique. Two cluster rows for one server - a replica row, a re-registration after a
+        // failover, a Draining row kept beside its replacement - one tenant each, the attacker's
+        // database_name copied from the victim's, and both resolve to one physical database. The
+        // single-cluster shape is refused correctly by the B-05 index; this one walks around it.
+        //
+        // The fix is a CatalogDbContext migration making the physical endpoint the unique axis, and
+        // it is not this branch's: docs/BACKLOG.md keeps the catalog migration chain to one branch
+        // at a time and task/B-19 holds it. This test therefore fails today, with the reviewer's own
+        // output, and goes green the moment the catalog refuses either the second cluster row or the
+        // second tenant on the same physical database - it accepts a 23505 at either insert, so
+        // whichever axis the architect makes unique turns it green. Not skipped: a skipped test
+        // reports nothing. Reachability: aurora_app cannot write either row; this needs the owner.
+        await using RoutingTestBed bed = await RoutingTestBed.WithActiveTenantAsync(_catalog);
+        Tenant victim = bed.Tenant;
+        DatabaseCluster secondRow = bed.AnotherClusterRowForTheSameServer();
+        Tenant attacker = RoutingTestBed.ActiveTenantOn(secondRow);
+
+        try
+        {
+            await bed.SeedAsync(owner =>
+            {
+                owner.DatabaseClusters.Add(secondRow);
+                owner.Tenants.Add(attacker);
+            });
+            await CopyDatabaseNameAsync(from: victim, to: attacker);
+        }
+        catch (Exception refusal) when (UniqueViolationIn(refusal) is { } constraint)
+        {
+            _output.WriteLine($"the catalog refused the second row: {UniqueViolation} on {constraint}");
+            return;
+        }
+
+        string victimEndpoint = PhysicalEndpointOf(await bed.ResolveAsync(victim.Id));
+        string attackerEndpoint = PhysicalEndpointOf(await bed.ResolveAsync(attacker.Id));
+
+        _output.WriteLine($"victim   -> {victimEndpoint}");
+        _output.WriteLine($"attacker -> {attackerEndpoint}");
+        attackerEndpoint.ShouldNotBe(
+            victimEndpoint,
+            "two tenants resolved to one physical database (PR #14 H-1): ux_tenant_cluster_id_database_name is keyed on "
+            + "cluster_id and nothing makes database_cluster (host, port) unique; red until the architect's index lands");
+    }
+
+    /// <summary>The constraint a unique violation names, whether PostgreSQL threw directly or through EF's save.</summary>
+    private static string? UniqueViolationIn(Exception exception) =>
+        (exception as PostgresException ?? exception.InnerException as PostgresException) is { SqlState: UniqueViolation } violation
+            ? violation.ConstraintName
+            : null;
+
+    /// <summary>What the server would be asked to open: host, port and database, read back by Npgsql's own parser.</summary>
+    private static string PhysicalEndpointOf(TenantConnection connection)
+    {
+        var parsed = new NpgsqlConnectionStringBuilder(connection.ConnectionString.Reveal());
+        return $"{parsed.Host}:{parsed.Port}/{parsed.Database}";
+    }
+
+    /// <summary>As the owner, the one principal that may rewrite where a tenant resolves: the attacker's row takes the victim's database name.</summary>
+    private async Task CopyDatabaseNameAsync(Tenant from, Tenant to)
+    {
+        await using NpgsqlConnection owner = await _catalog.OpenMigratorConnectionAsync();
+        await using var command = new NpgsqlCommand("UPDATE catalog.tenant SET database_name = @name WHERE id = @id", owner);
+        command.Parameters.AddWithValue("name", from.DatabaseName!);
+        command.Parameters.AddWithValue("id", to.Id.Value);
+        (await command.ExecuteNonQueryAsync()).ShouldBe(1);
+    }
+
     /// <summary>
     /// Two composition roots over one cache: the request path as <c>aurora_app</c> with a statement
     /// counter on its catalog context, and the operator console as the owner. Both are built with
     /// the production DI extensions; nothing about the resolver, the cache or the invalidator is
-    /// hand-wired.
+    /// hand-wired. Seeds one cluster row for the test container and two active tenants on it.
     /// </summary>
     private sealed class RoutingTestBed : IAsyncDisposable
     {
+        private readonly CatalogDatabaseFixture _catalog;
+        private readonly NpgsqlConnectionStringBuilder _server;
+        private readonly string _secretName;
         private readonly ServiceProvider _cacheOwner;
         private readonly ServiceProvider _requestPath;
         private readonly ServiceProvider _operatorConsole;
-        private readonly string _secretName;
 
-        private RoutingTestBed(CatalogDatabaseFixture catalog, DatabaseCluster cluster, Tenant tenant, string secretName)
+        private RoutingTestBed(
+            CatalogDatabaseFixture catalog,
+            NpgsqlConnectionStringBuilder server,
+            string secretName,
+            DatabaseCluster cluster,
+            Tenant tenant,
+            Tenant otherTenant)
         {
+            _catalog = catalog;
+            _server = server;
+            _secretName = secretName;
             Cluster = cluster;
             Tenant = tenant;
-            _secretName = secretName;
+            OtherTenant = otherTenant;
 
             var shared = new ServiceCollection();
             shared.AddHybridCache();
@@ -155,68 +288,85 @@ public sealed partial class TenantConnectionResolverTests
 
         public Tenant Tenant { get; }
 
+        public Tenant OtherTenant { get; }
+
         public CatalogStatementCounter CatalogStatements { get; } = new();
 
         public static async Task<RoutingTestBed> WithActiveTenantAsync(CatalogDatabaseFixture catalog)
         {
-            var endpoint = new NpgsqlConnectionStringBuilder(catalog.AppConnectionString);
+            var server = new NpgsqlConnectionStringBuilder(catalog.AppConnectionString);
             string secretName = "AURORA_TEST_APP_SECRET_" + Guid.NewGuid().ToString("N");
-            Environment.SetEnvironmentVariable(secretName, endpoint.Password);
+            Environment.SetEnvironmentVariable(secretName, server.Password);
 
-            DatabaseCluster cluster = DatabaseCluster.Register(
-                Unique.ClusterId(),
-                Region.Parse("nz", null),
-                endpoint.Host!,
-                endpoint.Port,
-                CatalogDatabaseFixture.MaintenanceDatabaseName,
-                SecretReference.Of("vault://kv/aurora/test/admin"),
-                SecretReference.Of("vault://kv/aurora/test/migrator"),
-                SecretReference.Of("env:" + secretName),
-                1_000);
-            Tenant tenant = Unique.Tenant(cluster);
-            tenant.Activate(1, Unique.Now);
+            DatabaseCluster cluster = ClusterRowFor(server, secretName);
+            Tenant tenant = ActiveTenantOn(cluster);
+            Tenant otherTenant = ActiveTenantOn(cluster);
             await catalog.SeedAsync(owner =>
             {
                 owner.DatabaseClusters.Add(cluster);
                 owner.Tenants.Add(tenant);
+                owner.Tenants.Add(otherTenant);
             });
 
-            return new RoutingTestBed(catalog, cluster, tenant, secretName);
+            return new RoutingTestBed(catalog, server, secretName, cluster, tenant, otherTenant);
         }
 
+        /// <summary>An active tenant reserved on <paramref name="cluster"/>, not yet seeded.</summary>
+        public static Tenant ActiveTenantOn(DatabaseCluster cluster)
+        {
+            Tenant tenant = Unique.Tenant(cluster);
+            tenant.Activate(1, Unique.Now);
+            return tenant;
+        }
+
+        public static Task<Tenant> LoadTrackedAsync(CatalogDbContext catalog, TenantId tenantId) =>
+            catalog.Tenants.AsTracking().SingleAsync(candidate => candidate.Id == tenantId);
+
+        /// <summary>A second <c>catalog.database_cluster</c> row for the same server: a different id, the same host and port.</summary>
+        public DatabaseCluster AnotherClusterRowForTheSameServer() => ClusterRowFor(_server, _secretName);
+
+        public Task SeedAsync(Action<CatalogDbContext> seed) => _catalog.SeedAsync(seed);
+
         /// <summary>One request: a fresh scope, the resolver from the container, one resolve.</summary>
-        public async Task<TenantConnection> ResolveAsync()
+        public Task<TenantConnection> ResolveAsync() => ResolveAsync(Tenant.Id);
+
+        public async Task<TenantConnection> ResolveAsync(TenantId tenantId)
         {
             await using AsyncServiceScope scope = _requestPath.CreateAsyncScope();
-            return await scope.ServiceProvider.GetRequiredService<ITenantConnectionResolver>().ResolveAsync(Tenant.Id, default);
+            return await scope.ServiceProvider.GetRequiredService<ITenantConnectionResolver>().ResolveAsync(tenantId, default);
         }
 
         /// <summary>What the cache holds for the tenant right now, read through the same cache the request path uses.</summary>
-        public async Task<TenantRouting> CachedRowAsync()
+        public Task<TenantRouting> CachedRowAsync() => CachedRowAsync(Tenant.Id);
+
+        public async Task<TenantRouting> CachedRowAsync(TenantId tenantId)
         {
             await using AsyncServiceScope scope = _requestPath.CreateAsyncScope();
             return await scope.ServiceProvider.GetRequiredService<TenantRoutingCache>()
-                .GetOrReadAsync(Tenant.Id, scope.ServiceProvider.GetRequiredService<ITenantRoutingReader>(), default);
+                .GetOrReadAsync(tenantId, scope.ServiceProvider.GetRequiredService<ITenantRoutingReader>(), default);
         }
 
-        /// <summary>The operator suspends the tenant through the entity and the catalog context the container hands out, saving as <paramref name="save"/> says.</summary>
-        public async Task SuspendThroughTheOperatorConsoleAsync(Func<CatalogDbContext, Task> save)
+        /// <summary>One operator action: a fresh scope over the owner's registration, one catalog context the container hands out.</summary>
+        public async Task AsOperatorAsync(Func<CatalogDbContext, Task> work)
         {
             await using AsyncServiceScope scope = _operatorConsole.CreateAsyncScope();
-            CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-            Tenant tenant = await catalog.Tenants.AsTracking().SingleAsync(candidate => candidate.Id == Tenant.Id);
+            await work(scope.ServiceProvider.GetRequiredService<CatalogDbContext>());
+        }
+
+        /// <summary>The operator suspends the tenant through the entity, saving as <paramref name="save"/> says.</summary>
+        public Task SuspendThroughTheOperatorConsoleAsync(Func<CatalogDbContext, Task> save) => AsOperatorAsync(async catalog =>
+        {
+            Tenant tenant = await LoadTrackedAsync(catalog, Tenant.Id);
             tenant.Suspend(Unique.Now);
             await save(catalog);
-        }
+        });
 
-        public async Task TouchActivityThroughTheOperatorConsoleAsync()
+        public Task TouchActivityThroughTheOperatorConsoleAsync() => AsOperatorAsync(async catalog =>
         {
-            await using AsyncServiceScope scope = _operatorConsole.CreateAsyncScope();
-            CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
-            Tenant tenant = await catalog.Tenants.AsTracking().SingleAsync(candidate => candidate.Id == Tenant.Id);
+            Tenant tenant = await LoadTrackedAsync(catalog, Tenant.Id);
             tenant.RecordActivity(Unique.Now);
             await catalog.SaveChangesAsync();
-        }
+        });
 
         public async ValueTask DisposeAsync()
         {
@@ -225,5 +375,17 @@ public sealed partial class TenantConnectionResolverTests
             await _operatorConsole.DisposeAsync();
             await _cacheOwner.DisposeAsync();
         }
+
+        private static DatabaseCluster ClusterRowFor(NpgsqlConnectionStringBuilder server, string secretName) =>
+            DatabaseCluster.Register(
+                Unique.ClusterId(),
+                Region.Parse("nz", null),
+                server.Host!,
+                server.Port,
+                CatalogDatabaseFixture.MaintenanceDatabaseName,
+                SecretReference.Of("vault://kv/aurora/test/admin"),
+                SecretReference.Of("vault://kv/aurora/test/migrator"),
+                SecretReference.Of("env:" + secretName),
+                1_000);
     }
 }

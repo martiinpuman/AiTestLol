@@ -19,6 +19,26 @@ internal sealed class EnvironmentSecretStore : ISecretStore
 {
     public const string Scheme = "env:";
 
+    private readonly Func<string, string?> _readVariable;
+
+    /// <summary>Reads the process environment.</summary>
+    public EnvironmentSecretStore()
+        : this(Environment.GetEnvironmentVariable)
+    {
+    }
+
+    /// <summary>
+    /// Reads through <paramref name="readVariable"/>, which answers <see langword="null"/> for a
+    /// variable that is not set and <c>""</c> for one that is set to nothing — the two cases a
+    /// diagnostic must keep apart (PR #14 L-3), and which the process environment API cannot
+    /// create on demand for a test.
+    /// </summary>
+    public EnvironmentSecretStore(Func<string, string?> readVariable)
+    {
+        ArgumentNullException.ThrowIfNull(readVariable);
+        _readVariable = readVariable;
+    }
+
     public ValueTask<string> ReadAsync(SecretReference reference, CancellationToken ct)
     {
         if (!reference.IsSpecified)
@@ -33,12 +53,14 @@ internal sealed class EnvironmentSecretStore : ISecretStore
         }
 
         string name = text[Scheme.Length..];
-        string? value = Environment.GetEnvironmentVariable(name);
-        if (string.IsNullOrEmpty(value))
-        {
-            throw new SecretUnavailableException(reference, $"environment variable '{name}' is not set");
-        }
+        string? value = _readVariable(name);
 
-        return ValueTask.FromResult(value);
+        return value switch
+        {
+            null => throw new SecretUnavailableException(reference, $"environment variable '{name}' is not set"),
+            "" => throw new SecretUnavailableException(
+                reference, $"environment variable '{name}' is set but empty; an empty credential is refused"),
+            _ => ValueTask.FromResult(value),
+        };
     }
 }

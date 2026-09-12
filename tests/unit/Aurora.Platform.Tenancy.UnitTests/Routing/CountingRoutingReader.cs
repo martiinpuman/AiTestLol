@@ -29,6 +29,12 @@ internal sealed class CountingRoutingReader : ITenantRoutingReader
         return row;
     }
 
+    /// <summary>
+    /// The catalog answers <paramref name="row"/> when asked for <paramref name="askedFor"/> — what a
+    /// mis-keyed entry or a defective reader would do. For the PR #14 M-1 proof.
+    /// </summary>
+    public void Answering(TenantId askedFor, TenantRouting row) => _rows[askedFor.Value] = row;
+
     public int ReadsOf(TenantRouting row) => ReadsOf(TenantId.From(row.TenantId));
 
     public int ReadsOf(TenantId tenantId) => _reads.TryGetValue(tenantId.Value, out int reads) ? reads : 0;

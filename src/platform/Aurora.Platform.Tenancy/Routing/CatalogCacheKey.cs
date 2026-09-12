@@ -1,4 +1,5 @@
 using System;
+using System.Buffers;
 
 namespace Aurora.Platform.Tenancy.Routing;
 
@@ -24,11 +25,31 @@ internal static class CatalogCacheKey
     /// <summary>ADR-0012 rule 2's marker for a catalog-level entry.</summary>
     public const string Prefix = "c:";
 
+    /// <summary>
+    /// What a discriminator may be made of: letters, digits, <c>.</c>, <c>_</c> and <c>-</c>. No
+    /// separator, so two discriminators can never read as one key; no whitespace or invisible
+    /// character, so two keys can never look alike. A kind keyed by text that needs escaping — a
+    /// tenant key qualifies, a host header does not — is refused here rather than allowed to
+    /// collide (PR #14 L-2).
+    /// </summary>
+    private static readonly SearchValues<char> DiscriminatorAlphabet =
+        SearchValues.Create("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-");
+
     /// <summary><c>c:{kind}:{discriminator}</c>.</summary>
-    /// <exception cref="ArgumentException"><paramref name="discriminator"/> is blank.</exception>
+    /// <exception cref="ArgumentException">
+    /// <paramref name="discriminator"/> is empty or holds a character outside <c>[A-Za-z0-9._-]</c>.
+    /// </exception>
     public static string For(CatalogCacheKind kind, string discriminator)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(discriminator);
+        ArgumentException.ThrowIfNullOrEmpty(discriminator);
+
+        if (discriminator.AsSpan().ContainsAnyExcept(DiscriminatorAlphabet))
+        {
+            throw new ArgumentException(
+                "A catalog cache key discriminator is one or more of [A-Za-z0-9._-]; anything else - a separator, " +
+                "whitespace, an invisible character - would let two keys collide or look alike.",
+                nameof(discriminator));
+        }
 
         return $"{Prefix}{Segment(kind)}:{discriminator}";
     }

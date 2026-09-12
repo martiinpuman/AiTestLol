@@ -42,7 +42,7 @@ public sealed class TenantConnectionResolverTests
         connection.DatabaseName.ShouldBe("aurora_t_acme_trading");
         connection.ResidencyRegion.ShouldBe(Region.Parse("nz", null));
 
-        var parsed = new NpgsqlConnectionStringBuilder(connection.ConnectionString);
+        var parsed = new NpgsqlConnectionStringBuilder(connection.ConnectionString.Reveal());
         parsed.Host.ShouldBe("pg-nz-1.internal");
         parsed.Port.ShouldBe(5432);
         parsed.Database.ShouldBe("aurora_t_acme_trading");
@@ -59,7 +59,7 @@ public sealed class TenantConnectionResolverTests
 
         TenantConnection connection = await harness.ResolveAsync(row);
 
-        var parsed = new NpgsqlConnectionStringBuilder(connection.ConnectionString);
+        var parsed = new NpgsqlConnectionStringBuilder(connection.ConnectionString.Reveal());
         parsed.MaxPoolSize.ShouldBe(5);
         parsed.CommandTimeout.ShouldBe(300);
         parsed.ApplicationName.ShouldBe("aurora-worker:acme-trading");
@@ -226,8 +226,8 @@ public sealed class TenantConnectionResolverTests
         harness.Secrets.Holding(ARouting.DefaultAppSecretRef, "rotated-app-secret");
         TenantConnection after = await harness.ResolveAsync(row);
 
-        new NpgsqlConnectionStringBuilder(before.ConnectionString).Password.ShouldBe("harness-app-secret");
-        new NpgsqlConnectionStringBuilder(after.ConnectionString).Password.ShouldBe("rotated-app-secret");
+        new NpgsqlConnectionStringBuilder(before.ConnectionString.Reveal()).Password.ShouldBe("harness-app-secret");
+        new NpgsqlConnectionStringBuilder(after.ConnectionString.Reveal()).Password.ShouldBe("rotated-app-secret");
         harness.Secrets.Reads.ShouldBe(2, "one secret read per resolve");
         harness.Reader.ReadsOf(row).ShouldBe(1, "the rotation needed no catalog read");
     }
@@ -243,5 +243,46 @@ public sealed class TenantConnectionResolverTests
 
         failed.Message.ShouldContain("env:AURORA_UNSET_FOR_THIS_TEST");
         failed.Message.ShouldNotContain("harness-app-secret");
+    }
+
+    [Fact]
+    public async Task A_reader_that_answers_another_tenants_row_is_refused_and_the_row_is_never_cached()
+    {
+        // PR #14 M-1, as the reviewer executed it: a row belonging to a different tenant was composed
+        // into a credentialed connection to aurora_t_victim_corp under application_name
+        // aurora-web:victim-corp. The cache's read-through now refuses a row whose TenantId is not
+        // the one asked for, before anything is stored or composed.
+        using var harness = new ResolverHarness();
+        TenantRouting victim = new ARouting().WithKey("victim-corp").Build();
+        TenantId attacker = TenantId.Create();
+        harness.Reader.Answering(attacker, victim);
+
+        TenantRoutingMismatchException refused = await Should.ThrowAsync<TenantRoutingMismatchException>(() => harness.ResolveAsync(attacker));
+        await Should.ThrowAsync<TenantRoutingMismatchException>(() => harness.ResolveAsync(attacker));
+
+        refused.Requested.ShouldBe(attacker);
+        refused.Found.ShouldBe(victim.TenantId);
+        refused.DatabaseName.ShouldBe("aurora_t_victim_corp");
+        harness.Reader.ReadsOf(attacker).ShouldBe(2, "a refused row is not cached; each attempt reads through again");
+        harness.Secrets.Reads.ShouldBe(0, "no credential is fetched for a row that is not the tenant's");
+    }
+
+    [Fact]
+    public async Task A_poisoned_cache_entry_is_refused_dropped_and_read_through_again()
+    {
+        // The other place a wrong row can come from: the cache itself - a mis-keyed entry, or an
+        // L2 backend (ADR-0012) handing back what someone else wrote. The victim's key holds the
+        // attacker's row; the resolve refuses it, drops it, and the next resolve reads the catalog.
+        using var harness = new ResolverHarness();
+        TenantRouting victim = harness.Reader.Holding(new ARouting().WithKey("victim-corp").Build());
+        TenantRouting attackerRow = new ARouting().WithKey("attacker-ltd").Build();
+        await harness.HybridCache.SetAsync(TenantRoutingCache.KeyFor(TenantId.From(victim.TenantId)), attackerRow);
+
+        TenantRoutingMismatchException refused = await Should.ThrowAsync<TenantRoutingMismatchException>(() => harness.ResolveAsync(victim));
+        TenantConnection recovered = await harness.ResolveAsync(victim);
+
+        refused.Found.ShouldBe(attackerRow.TenantId);
+        recovered.DatabaseName.ShouldBe("aurora_t_victim_corp");
+        harness.Reader.ReadsOf(victim).ShouldBe(1, "the poisoned entry was dropped, so the next resolve read the catalog once");
     }
 }

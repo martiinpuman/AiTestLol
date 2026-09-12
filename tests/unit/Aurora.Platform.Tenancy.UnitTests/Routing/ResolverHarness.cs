@@ -5,6 +5,7 @@ using Aurora.Platform.Tenancy.Routing;
 using Aurora.Platform.Tenancy.Secrets;
 using Aurora.Platform.Tenancy.UnitTests.Catalog;
 using Aurora.SharedKernel;
+using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Time.Testing;
@@ -50,6 +51,9 @@ internal sealed class ResolverHarness : IDisposable
     public FakeTimeProvider Clock { get; } = new(Start);
 
     public TenantRoutingCache Cache => _provider.GetRequiredService<TenantRoutingCache>();
+
+    /// <summary>The cache underneath, for a test that plants an entry the way a mis-keyed backend would.</summary>
+    public HybridCache HybridCache => _provider.GetRequiredService<HybridCache>();
 
     public Task<TenantConnection> ResolveAsync(TenantRouting row) => ResolveAsync(TenantId.From(row.TenantId));
 

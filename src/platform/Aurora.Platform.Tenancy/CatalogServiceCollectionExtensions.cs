@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,10 +35,22 @@ public static class CatalogServiceCollectionExtensions
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="connectionString"/> is blank.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// A catalog is already registered. A process has one catalog; the routing cache registered
+    /// alongside it is keyed by tenant alone, so a second catalog would have two sources of truth
+    /// sharing one keyspace, whichever context won resolution (PR #14 L-4).
+    /// </exception>
     public static IServiceCollection AddCatalogDatabase(this IServiceCollection services, string connectionString)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        if (services.Any(descriptor => descriptor.ServiceType == typeof(CatalogDbContext)))
+        {
+            throw new InvalidOperationException(
+                "AddCatalogDatabase was already called on this service collection; a process has exactly one " +
+                "catalog, and the routing cache registered with it is keyed by tenant alone (ADR-0007 §9, ADR-0012 §3).");
+        }
 
         services.AddHybridCache();
         services.TryAddSingleton<TenantRoutingCache>();

@@ -81,6 +81,17 @@ public sealed class TenancyRegistrationTests
     }
 
     [Fact]
+    public void A_second_catalog_is_refused_because_the_routing_cache_is_keyed_by_tenant_alone()
+    {
+        // PR #14 L-4: two catalog registrations would share one routing cache keyed by tenant id,
+        // so entries read from one catalog would serve requests routed at the other.
+        var services = new ServiceCollection();
+        services.AddCatalogDatabase(OfflineCatalog.ConnectionString);
+
+        Should.Throw<InvalidOperationException>(() => services.AddCatalogDatabase("Host=another.invalid;Database=unused;Username=unused"));
+    }
+
+    [Fact]
     public void A_profile_outside_the_enum_is_refused_at_registration()
     {
         var services = new ServiceCollection();
