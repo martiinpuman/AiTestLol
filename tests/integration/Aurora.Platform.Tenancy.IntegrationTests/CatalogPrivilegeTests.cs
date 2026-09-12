@@ -148,6 +148,14 @@ public sealed class CatalogPrivilegeTests
         held.ByObject.Count.ShouldBe(CatalogSchemaAllowlist.AppRoleDecisions.Count);
         held.ByObject.Keys.Count(o => o.Kind == CatalogObject.Table).ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
         held.ByObject.Keys.ShouldContain(new CatalogObject(CatalogObject.Schema, "catalog"));
+
+        // solution-layout.md 6.4 item 5 criterion 2, stated on the ACL itself rather than through
+        // the record: each append-only trail reads back as exactly SELECT and INSERT for the role.
+        foreach (string table in CatalogSchemaAllowlist.AppendOnlyTables)
+        {
+            held.ByObject[CatalogObject.TableNamed(table)].Order(StringComparer.Ordinal)
+                .ShouldBe(["INSERT", "SELECT"], Case.Sensitive, $"catalog.{table} is append-only (ADR-0004 rule 5)");
+        }
     }
 
     [Fact]
@@ -159,7 +167,9 @@ public sealed class CatalogPrivilegeTests
         // Every shape a privilege regression takes, inside a transaction that is rolled back: a §9.2
         // table created without recording what the app role may do to it; a privilege the allowlist
         // does not name; a recorded privilege that is no longer granted; a column-level grant, which
-        // has_table_privilege cannot see at all; a privilege this code had never heard of (MAINTAIN
+        // has_table_privilege cannot see at all - on a registry table, and on the append-only
+        // operator trail, which is the exact table and the exact column grant the security
+        // review rewrote a row through; a privilege this code had never heard of (MAINTAIN
         // arrived with PostgreSQL 17, the pinned version); a grant to PUBLIC, which reaches the role
         // without naming it; and a grant the role could pass on. The column grant, MAINTAIN and
         // PUBLIC are the security re-review's H-1: each one left the seven-privilege enumeration
@@ -178,6 +188,7 @@ public sealed class CatalogPrivilegeTests
                      $"GRANT TRUNCATE ON catalog.tenant TO {CatalogDatabaseFixture.AppRole}",
                      $"REVOKE SELECT ON catalog.tenant_host FROM {CatalogDatabaseFixture.AppRole}",
                      $"GRANT UPDATE (display_name) ON catalog.tenant TO {CatalogDatabaseFixture.AppRole}",
+                     $"GRANT UPDATE (detail) ON catalog.operator_audit_event TO {CatalogDatabaseFixture.AppRole}",
                      $"GRANT MAINTAIN ON catalog.subscription TO {CatalogDatabaseFixture.AppRole}",
                      "GRANT SELECT ON catalog.installed_package TO PUBLIC",
                      $"GRANT TRIGGER ON catalog.installed_package TO {CatalogDatabaseFixture.AppRole} WITH GRANT OPTION",
@@ -199,11 +210,12 @@ public sealed class CatalogPrivilegeTests
 
         await transaction.RollbackAsync();
 
-        differences.Count.ShouldBe(12, string.Join(Environment.NewLine, differences));
+        differences.Count.ShouldBe(13, string.Join(Environment.NewLine, differences));
         differences.ShouldContain(d => d.Contains($"catalog.{arrival} exists but", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds TRUNCATE on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("records SELECT on catalog.tenant_host, which aurora_app does not hold", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds UPDATE(display_name) on catalog.tenant, which the allowlist does not record", StringComparison.Ordinal));
+        differences.ShouldContain(d => d.Contains("holds UPDATE(detail) on catalog.operator_audit_event, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds MAINTAIN on catalog.subscription, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds SELECT through PUBLIC on catalog.installed_package, which the allowlist does not record", StringComparison.Ordinal));
         differences.ShouldContain(d => d.Contains("holds TRIGGER WITH GRANT OPTION on catalog.installed_package, which the allowlist does not record", StringComparison.Ordinal));

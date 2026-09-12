@@ -43,10 +43,32 @@ public sealed partial class CatalogPrivilegeAllowlistTests
     [Fact]
     public void Every_catalog_table_has_a_privilege_decision_and_no_decision_names_a_table_that_does_not_exist()
     {
-        IEnumerable<string> tables = CatalogSchemaAllowlist.Columns.Keys.Concat(CatalogSchemaAllowlist.InfrastructureColumns.Keys);
+        IEnumerable<string> tables = CatalogSchemaAllowlist.Columns.Keys
+            .Concat(CatalogSchemaAllowlist.InfrastructureColumns.Keys)
+            .Concat(CatalogSchemaAllowlist.AppendOnlyColumns.Keys);
 
         CatalogSchemaAllowlist.AppRolePrivileges.Keys.OrderBy(name => name, StringComparer.Ordinal)
             .ShouldBe(tables.OrderBy(name => name, StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void An_append_only_table_records_SELECT_and_INSERT_and_nothing_else()
+    {
+        // ADR-0004 rule 5 as a rule over the record, so that widening either trail's grant is
+        // caught in stage 6 before a migration is ever written to match it. The integration probe
+        // then holds the database to this record, and tries the writes as the role.
+        _output.WriteLine(
+            $"Checked {CatalogSchemaAllowlist.AppendOnlyTables.Count} append-only tables: "
+            + $"{string.Join(", ", CatalogSchemaAllowlist.AppendOnlyTables.Order(StringComparer.Ordinal))}.");
+        CatalogSchemaAllowlist.AppendOnlyTables.Count.ShouldBeGreaterThanOrEqualTo(2, "ADR-0007 9.2 names two");
+
+        foreach (string table in CatalogSchemaAllowlist.AppendOnlyTables)
+        {
+            CatalogSchemaAllowlist.AppRolePrivileges[table]
+                .Select(grant => grant.Privilege)
+                .Order(StringComparer.Ordinal)
+                .ShouldBe(["INSERT", "SELECT"], Case.Sensitive, $"catalog.{table} is append-only");
+        }
     }
 
     [Fact]

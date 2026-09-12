@@ -269,6 +269,40 @@ public static class CatalogSchemaAllowlist
         };
 
     /// <summary>
+    /// The catalog's two append-only trails (ADR-0004 rule 5), and every column of each. Created by
+    /// raw SQL in the <c>AppendOnlyTrails</c> migration — the guard trigger they carry is nothing
+    /// the model can express — and mapped by no entity, because no row that writes them has
+    /// landed yet: the provisioning saga (B-07.1, B-07.4) and the erasure path bring their own
+    /// writers. Present in the migrated database, absent from the model, and held by
+    /// <c>CatalogPrivilegeAllowlistTests</c> to <see cref="AppRolePrivileges"/>' append-only rule —
+    /// <c>SELECT, INSERT</c> and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The columns are derived, not transcribed: ADR-0007 §9.2 names <c>operator_audit_event</c>
+    /// as "every operator action, incl. support access" and ADR-0007 §11.5 and ADR-0018 §6 name
+    /// what an erasure record holds — subject reference, tenant, requester, timestamp, fields
+    /// affected, never the erased values — without naming columns. The operator trail follows
+    /// ADR-0018 §1's <c>audit_event</c> shape where it applies to the platform side (ADR-0028 §6):
+    /// no <c>company_id</c>, because the catalog has none; no <c>before</c>/<c>after</c>, because an
+    /// operator action has no entity to diff, so a single <c>detail</c>; no hash chain, because
+    /// none is specified for this table — it is where ADR-0018 §1's daily job <em>records</em> each
+    /// tenant's chain head. <c>reason_code</c> is ADR-0010 rule 8's "reason-coded" support-access
+    /// grant; <c>actor_type</c> is SPEC-001 BR-7's <c>Operator</c> or <c>System</c>.
+    /// </remarks>
+    public static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> AppendOnlyColumns =
+        new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal)
+        {
+            ["operator_audit_event"] = Set(
+                "id", "occurred_at", "tenant_id", "actor_type", "actor_id", "action", "reason_code",
+                "correlation_id", "detail"),
+            ["erasure_replay_log"] = Set(
+                "id", "tenant_id", "subject_ref", "requested_by", "executed_at", "affected", "correlation_id"),
+        };
+
+    /// <summary>The append-only tables by name: <see cref="AppendOnlyColumns"/>' keys.</summary>
+    public static readonly IReadOnlySet<string> AppendOnlyTables = new HashSet<string>(AppendOnlyColumns.Keys, StringComparer.Ordinal);
+
+    /// <summary>
     /// Whole snake_case words that name what a tenant records in their own books. No exception
     /// list exists for these on purpose.
     /// </summary>
@@ -331,10 +365,10 @@ public static class CatalogSchemaAllowlist
     /// (ADR-0004 rule 2, ADR-0007 §4.4). There is deliberately no default. A table created without
     /// a grant of its own is closed to the role (the catalog sets no
     /// <c>ALTER DEFAULT PRIVILEGES</c>), a table without a row here fails
-    /// <c>CatalogPrivilegeTests</c>, and an append-only table — ADR-0004 rule 5;
-    /// <c>operator_audit_event</c> and <c>erasure_replay_log</c> when they arrive — records
-    /// <c>SELECT, INSERT</c> and nothing else. Edited deliberately, in the same commit as the
-    /// migration that grants it.
+    /// <c>CatalogPrivilegeTests</c>, and an append-only table — ADR-0004 rule 5; the two in
+    /// <see cref="AppendOnlyTables"/> — records <c>SELECT, INSERT</c> and nothing else, which
+    /// <c>CatalogPrivilegeAllowlistTests</c> holds the record to. Edited deliberately, in the same
+    /// commit as the migration that grants it.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -408,6 +442,16 @@ public static class CatalogSchemaAllowlist
                 new("INSERT", "the installer's final step (ADR-0008 §5.1 step 9; B-13.2), called from provisioning saga step 7 (B-07.4)"),
                 new("UPDATE", "the installer moving state from Installing to Active or Failed (B-13.2); upgrade, deactivate and purge (ADR-0008 §4.2, §5.3; B-13.3)"),
             ],
+            ["operator_audit_event"] =
+            [
+                new("SELECT", "the operator console reading a tenant's platform-side trail, and surfacing a support-access grant to the tenant it was granted on (ADR-0010 rule 8); the platform-side half of SPEC-001 AC-6 read back (B-07.4)"),
+                new("INSERT", "the provisioning saga recording a failed or retried attempt (B-07.1) and the successful platform-side event (B-07.4; SPEC-001 BR-7); ADR-0010 rule 8's time-boxed, reason-coded support-access grant; ADR-0018 §1's daily job recording each tenant's audit chain head (FOLLOWUP-031). Never UPDATE or DELETE: ADR-0004 rule 5, enforced by the ACL and by the guard trigger in AppendOnlyTrails"),
+            ],
+            ["erasure_replay_log"] =
+            [
+                new("SELECT", "restore-then-replay: re-applying every recorded erasure to a restored tenant database (ADR-0007 §11.5; ADR-0018 §6 point 5)"),
+                new("INSERT", "the erasure path recording an executed erasure - subject reference, tenant, requester, fields affected, never the erased values (ADR-0007 §11.5; ADR-0018 §6 points 5 and 6). Never UPDATE or DELETE: ADR-0004 rule 5, enforced by the ACL and by the guard trigger in AppendOnlyTrails"),
+            ],
             ["__EFMigrationsHistory"] = [],
         };
 
@@ -440,12 +484,14 @@ public static class CatalogSchemaAllowlist
     /// other role reads as <c>EXECUTE through PUBLIC</c> and fails.
     /// </para>
     /// <para>
-    /// So a function a migration adds — ADR-0028 §2 mechanism 3's trigger that raises on the
-    /// append-only tables is the first — is recorded here as <c>[]</c> when it stays closed, which
-    /// a trigger function can: PostgreSQL checks <c>EXECUTE</c> when the trigger is created, not
-    /// when it fires. A function the request path is meant to call is recorded as <c>EXECUTE</c>
-    /// with the caller named, and the migration grants it to <c>aurora_app</c> by name. A type is
-    /// recorded once its migration has revoked <c>PUBLIC</c>'s <c>USAGE</c> and granted the role's.
+    /// So a function a migration adds is recorded here as <c>[]</c> when it stays closed, which a
+    /// trigger function can: PostgreSQL checks <c>EXECUTE</c> when the trigger is created, not
+    /// when it fires. ADR-0028 §2 mechanism 3's guard that raises on the append-only tables,
+    /// <c>refuse_append_only_change()</c>, is the first: it fires for <c>aurora_app</c> and the
+    /// owner alike while <c>aurora_app</c> cannot call it. A function the request path is meant
+    /// to call is recorded as <c>EXECUTE</c> with the caller named, and the migration grants it to
+    /// <c>aurora_app</c> by name. A type is recorded once its migration has revoked
+    /// <c>PUBLIC</c>'s <c>USAGE</c> and granted the role's.
     /// </para>
     /// </remarks>
     public static readonly IReadOnlyDictionary<CatalogObject, IReadOnlyList<AppRoleGrant>> AppRoleObjectPrivileges =
@@ -455,6 +501,7 @@ public static class CatalogSchemaAllowlist
             [
                 new("USAGE", "every request: the schema every catalog table lives in (ADR-0007 §9.1); nothing on the request path creates in it"),
             ],
+            [new("function", "refuse_append_only_change()")] = [],
         };
 
     /// <summary>
