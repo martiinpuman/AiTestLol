@@ -311,6 +311,23 @@ public sealed class CatalogConstraintTests
         refused.ConstraintName.ShouldBe("ck_database_cluster_host_lower_case");
     }
 
+    [Fact]
+    public async Task A_cluster_host_that_is_not_one_host_name_is_refused()
+    {
+        // The fifth takeover shape (PR #18, second review): a multi-host list is accepted by
+        // Npgsql, which opens whichever host answers, so pg-1.internal,pg-2.internal reaches
+        // pg-1.internal's server under a string the index took for another endpoint. The check is
+        // CanonicalHost's grammar, so it binds raw SQL as it binds the entity; a socket directory
+        // and an IPv6 literal are outside the grammar the same way (CatalogHostGrammarTests).
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
+            "VALUES (@id, 'nz', 'pg-1.internal,pg-2.internal', 5432, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')",
+            ("id", Unique.ClusterId().Value)));
+
+        refused.SqlState.ShouldBe(CheckViolation);
+        refused.ConstraintName.ShouldBe("ck_database_cluster_host_well_formed");
+    }
+
     /// <summary>The cluster and the tenant, if any, as the owner: the request path reads both and creates neither.</summary>
     private Task SaveAsync(DatabaseCluster cluster, Tenant? tenant = null) =>
         _catalog.SeedAsync(owner =>

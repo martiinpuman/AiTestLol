@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Aurora.Platform.Tenancy.Catalog;
 using Shouldly;
 using Xunit;
@@ -45,25 +46,33 @@ public sealed class DatabaseClusterTests
     [InlineData("postgres://pg-1.internal")]
     [InlineData("Host=pg-1.internal;Database=x")]
     [InlineData("/var/run/postgresql")]
-    public void A_host_that_is_not_a_bare_host_name_is_refused(string host)
+    [InlineData("pg-1.internal,pg-2.internal")]
+    [InlineData("::1")]
+    [InlineData("[::1]")]
+    public void A_value_that_is_not_one_host_name_or_IPv4_literal_is_refused(string host)
     {
-        // The socket directory is listed on purpose: a Unix-socket path is case-sensitive, the
-        // lower-case rule below would be wrong for it (ADR-0036 §3), and the resolver must never
-        // be handed one from this row.
+        // CanonicalHost is a grammar, not a deny-list: the socket directory and the multi-host
+        // list are the two shapes ADR-0036 §6 names as breaking the endpoint triple, and the IPv6
+        // literal is outside the grammar until the architect decides it is a cluster endpoint.
         Should.Throw<ArgumentException>(() => new ACluster().WithHost(host).Build());
     }
 
     [Theory]
     [InlineData("pg.über.internal")]
-    [InlineData("pg.ÜBER.internal")]
+    [InlineData("pg.Über.internal")]
+    [InlineData("PG-1.internal")]
     [InlineData(".pg-1.internal")]
     [InlineData("pg-1.internal.")]
     [InlineData("pg-1..internal")]
-    public void A_host_with_a_second_spelling_the_database_cannot_see_is_refused(string host)
+    [InlineData("-pg.internal")]
+    [InlineData("pg-.internal")]
+    public void A_host_with_a_second_spelling_the_lower_case_check_cannot_see_is_refused(string host)
     {
-        // Two spellings of one name that ck_database_cluster_host_lower_case does not fold: a
-        // non-ASCII letter, whose lower() depends on the catalog's collation, and a trailing,
-        // leading or doubled dot. An internationalised name is stored in its punycode form.
+        // Two spellings of one name that ck_database_cluster_host_lower_case does not fold, or
+        // folds under one collation and not another: executed on postgres:17-alpine
+        // (CatalogHostGrammarTests), lower('pg.Über.internal') is unchanged under C and folds
+        // under en_US.utf8, so the pair pg.über.internal / pg.Über.internal is storable twice on
+        // one collation and once on the other. An internationalised name is stored as punycode.
         Should.Throw<ArgumentException>(() => new ACluster().WithHost(host).Build());
     }
 
@@ -72,21 +81,23 @@ public sealed class DatabaseClusterTests
     [InlineData("xn--pg-bfa.internal")]
     [InlineData("10.0.0.5")]
     [InlineData("localhost")]
-    public void A_host_name_or_an_IPv4_literal_in_lower_case_ASCII_is_accepted(string host)
+    [InlineData("a")]
+    public void A_host_name_or_an_IPv4_literal_in_canonical_form_is_accepted(string host)
     {
         new ACluster().WithHost(host).Build().Host.ShouldBe(host);
     }
 
-    [Theory]
-    [InlineData("PG-1.internal")]
-    [InlineData("pg-1.INTERNAL")]
-    [InlineData("LOCALHOST")]
-    public void A_host_in_any_spelling_but_lower_case_is_refused(string host)
+    [Fact]
+    public void A_label_may_be_63_characters_and_a_host_253_and_neither_one_more()
     {
-        // A host name is case-insensitive, so two spellings of one host would be two cluster rows
-        // on one endpoint that ux_database_cluster_host_port could not tell apart (ADR-0034 §3.2).
-        // The row keeps the canonical spelling, as TenantHost does; the database repeats the rule.
-        Should.Throw<ArgumentException>(() => new ACluster().WithHost(host).Build());
+        string label63 = new string('a', 63);
+        string host253 = string.Join('.', Enumerable.Repeat(new string('b', 61), 4)) + ".c";
+
+        host253.Length.ShouldBe(253);
+        new ACluster().WithHost(label63 + ".internal").Build().Host.ShouldBe(label63 + ".internal");
+        new ACluster().WithHost(host253).Build().Host.ShouldBe(host253);
+        Should.Throw<ArgumentException>(() => new ACluster().WithHost(new string('a', 64) + ".internal").Build());
+        Should.Throw<ArgumentException>(() => new ACluster().WithHost(host253 + "d").Build());
     }
 
     [Theory]

@@ -124,6 +124,20 @@ public sealed class ResolvedEndpointComparisonTests
     }
 
     [Fact]
+    public void A_multi_host_list_is_not_one_endpoint_and_is_refused_rather_than_projected_to_its_first_host()
+    {
+        // ADR-0036 §6: a multi-host list breaks the triple as a projection. Npgsql opens whichever
+        // host answers, so "pg-1.internal,pg-decoy.internal" reaches pg-1.internal's server under
+        // a string the comparison would take for a different host. The parser refuses it, so the
+        // fleet scan errors on such a row instead of passing over it - the fifth takeover shape
+        // (PR #18, second review) executed with collisions: 0 before this.
+        ArgumentException refused = Should.Throw<ArgumentException>(
+            () => ResolvedEndpoint.Parse(new NpgsqlConnectionStringBuilder(Base) { Host = "pg-1.internal,pg-decoy.internal" }.ConnectionString));
+
+        refused.Message.ShouldContain("multi-host list");
+    }
+
+    [Fact]
     public void The_endpoint_renders_as_host_port_database_and_keeps_the_hosts_spelling()
     {
         ResolvedEndpoint endpoint = ResolvedEndpoint.Parse(new NpgsqlConnectionStringBuilder(Base) { Host = "PG-1.internal" }.ConnectionString);

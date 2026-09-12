@@ -35,9 +35,18 @@ internal sealed class DatabaseClusterConfiguration : IEntityTypeConfiguration<Da
                 $"AND app_secret_ref !~ '{CredentialShapedPattern}'");
 
             // A host name is case-insensitive, so two spellings of one host would be two rows on one
-            // endpoint that ux_database_cluster_host_port below could not tell apart (ADR-0034 3.2;
-            // PR #18 M-1/M-2). The same rule tenant_host keeps, for the same reason.
+            // endpoint that ux_database_cluster_host_port below could not tell apart (ADR-0036 3;
+            // ADR-0034 3.4). The same rule tenant_host keeps, for the same reason.
             table.HasCheckConstraint("ck_database_cluster_host_lower_case", "host = lower(host)");
+
+            // And the host is one host: CanonicalHost's grammar, evaluated here so that every
+            // writer meets it, raw SQL included - the entity's copy binds only callers of Register
+            // (ADR-0036 4.2 chose the constraint as the mechanism). A multi-host list walked past
+            // the index, the lower-case check and the endpoint comparison as a fifth variant of the
+            // takeover shape (PR #18, second review); a socket directory would make the lower-case
+            // check wrong (ADR-0036 6 names both). Alphabetically after the lower-case check, so a
+            // host that breaks both is reported by the constraint ADR-0036 3 names.
+            table.HasCheckConstraint("ck_database_cluster_host_well_formed", CanonicalHost.CheckConstraintSql);
         });
 
         builder.HasKey(cluster => cluster.Id).HasName("pk_database_cluster");

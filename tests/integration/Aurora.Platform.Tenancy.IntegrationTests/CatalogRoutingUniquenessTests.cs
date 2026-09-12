@@ -131,6 +131,9 @@ public sealed class CatalogRoutingUniquenessTests
             await AttemptAsync(
                 "variant 3 in another case: a second cluster row on the victim's cluster's host in upper case and its port, and an Active tenant on it copying its database_name",
                 (owner, attempt) => SecondClusterRowOnTheSameEndpointAsync(owner, attempt, victim, victimCluster, "Active", HostSpelling.UpperCased)),
+            await AttemptAsync(
+                "variant 3 as a multi-host list: a second cluster row whose host is the victim's host followed by a comma and a second name, on its port, and an Active tenant on it copying its database_name",
+                (owner, attempt) => SecondClusterRowOnTheSameEndpointAsync(owner, attempt, victim, victimCluster, "Active", HostSpelling.MultiHostList)),
         ];
 
         Resolution resolution = await ResolveEveryNonDeletedTenantAsync();
@@ -290,7 +293,12 @@ public sealed class CatalogRoutingUniquenessTests
         HostSpelling spelling)
     {
         string secondRow = Unique.ClusterId().Value;
-        string host = spelling == HostSpelling.UpperCased ? "upper(c.host)" : "c.host";
+        string host = spelling switch
+        {
+            HostSpelling.UpperCased => "upper(c.host)",
+            HostSpelling.MultiHostList => "c.host || ',pg-decoy.internal'",
+            _ => "c.host",
+        };
 
         await InsertExactlyOneAsync(
             owner,
@@ -339,6 +347,7 @@ public sealed class CatalogRoutingUniquenessTests
     {
         AsStored,
         UpperCased,
+        MultiHostList,
     }
 
     private sealed record TakeoverAttempt(string Shape, string? RefusedBy);

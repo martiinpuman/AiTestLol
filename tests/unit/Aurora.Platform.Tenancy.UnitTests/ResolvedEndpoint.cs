@@ -56,6 +56,17 @@ public sealed class ResolvedEndpoint : IEquatable<ResolvedEndpoint>
             throw new ArgumentException("A resolved connection string names a host and a database; this one does not.", nameof(connectionString));
         }
 
+        // A multi-host list is not one endpoint and cannot be projected to a triple (ADR-0036 §6):
+        // Npgsql opens whichever of the hosts answers, so a row carrying one is a second name for
+        // a server the comparison would otherwise take for a different one. Refused here, so the
+        // fleet scan errors on such a row rather than passing over it (PR #18, second review).
+        if (parsed.Host.Contains(',', StringComparison.Ordinal))
+        {
+            throw new ArgumentException(
+                $"'{parsed.Host}' is a multi-host list, which is not one endpoint and cannot be compared as one (ADR-0036 §6).",
+                nameof(connectionString));
+        }
+
         return new ResolvedEndpoint(parsed.Host, parsed.Port, parsed.Database);
     }
 

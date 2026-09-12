@@ -98,6 +98,8 @@ namespace Aurora.Platform.Tenancy.Migrations
                         {
                             t.HasCheckConstraint("ck_database_cluster_host_lower_case", "host = lower(host)");
 
+                            t.HasCheckConstraint("ck_database_cluster_host_well_formed", "host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'");
+
                             t.HasCheckConstraint("ck_database_cluster_id_well_formed", "id ~ '^[a-z][a-z0-9]*(-[a-z0-9]+)*$'");
 
                             t.HasCheckConstraint("ck_database_cluster_max_tenants_positive", "max_tenants > 0");

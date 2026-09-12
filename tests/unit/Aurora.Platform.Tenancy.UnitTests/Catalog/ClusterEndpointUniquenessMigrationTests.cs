@@ -15,8 +15,8 @@ namespace Aurora.Platform.Tenancy.UnitTests.Catalog;
 
 /// <summary>
 /// What the <c>ClusterEndpointUniqueness</c> migration emits, read from the SQL EF generates for
-/// it with no database: ADR-0034 §3.1's statement and the lower-case host check beside it, inside
-/// one transaction, and nothing destructive. The gate's stage 6 runs this with Docker stopped. The migration's behaviour
+/// it with no database: ADR-0034 §3.1's statement, the lower-case host check and the host-shape
+/// check beside it, inside one transaction, and nothing destructive. The gate's stage 6 runs this with Docker stopped. The migration's behaviour
 /// against real rows — the loud failure over duplicates, the property it serves — is the
 /// integration project's (<c>ClusterEndpointUniquenessMigrationTests</c>,
 /// <c>CatalogRoutingUniquenessTests</c>), and nothing here stands in for it.
@@ -25,13 +25,14 @@ public sealed partial class ClusterEndpointUniquenessMigrationTests
 {
     private const string Adr0034Section31 = "CREATE UNIQUE INDEX ux_database_cluster_host_port ON catalog.database_cluster (host, port);";
     private const string LowerCaseHost = "ALTER TABLE catalog.database_cluster ADD CONSTRAINT ck_database_cluster_host_lower_case CHECK (host = lower(host));";
+    private static readonly string WellFormedHost = $"ALTER TABLE catalog.database_cluster ADD CONSTRAINT ck_database_cluster_host_well_formed CHECK ({CanonicalHost.CheckConstraintSql});";
 
     private readonly ITestOutputHelper _output;
 
     public ClusterEndpointUniquenessMigrationTests(ITestOutputHelper output) => _output = output;
 
     [Fact]
-    public void The_migration_emits_ADR_0034_3_1s_statement_and_the_lower_case_host_check_inside_one_transaction_and_nothing_destructive()
+    public void The_migration_emits_ADR_0034_3_1s_statement_and_the_two_host_checks_inside_one_transaction_and_nothing_destructive()
     {
         using CatalogDbContext context = OfflineCatalog.Open();
         List<string> ids = context.Database.GetMigrations().ToList();
@@ -49,7 +50,8 @@ public sealed partial class ClusterEndpointUniquenessMigrationTests
         _output.WriteLine($"schema statements: {schemaStatements}; destructive: {destructive}");
         script.ShouldContain(Adr0034Section31);
         script.ShouldContain(LowerCaseHost);
-        schemaStatements.ShouldBe(2, "an expand-only migration that adds one index and one check emits two schema statements");
+        script.ShouldContain(WellFormedHost);
+        schemaStatements.ShouldBe(3, "an expand-only migration that adds one index and two checks emits three schema statements");
         destructive.ShouldBe(0);
         script.ShouldNotContain("CONCURRENTLY", customMessage: "transactional on purpose: a failed CONCURRENTLY leaves an INVALID index behind, a failed transaction leaves nothing");
 
