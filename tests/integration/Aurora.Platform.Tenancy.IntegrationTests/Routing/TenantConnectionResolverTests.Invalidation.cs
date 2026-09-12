@@ -180,12 +180,18 @@ public sealed partial class TenantConnectionResolverTests
         // physical database. The single-cluster shape is refused correctly by the B-05 index; this
         // one walks around it. Reachability: aurora_app cannot write either row; this needs the owner.
         //
-        // The fix is the physical-uniqueness index the architect owns (ADR-0034, routed from PR #14
-        // H-1) - a CatalogDbContext migration this branch must not add while the catalog migration
-        // chain is one branch at a time. When it lands, the catalog refuses one of the two inserts
-        // below with 23505, this test fails, and its message says what to do: delete it and write
-        // the real property - no two non-deleted tenant rows produce the same resolved connection
-        // string, computed by the real resolver over real rows - in its place.
+        // The fix is ADR-0034 §3.1's index, ux_database_cluster_host_port - a CatalogDbContext
+        // migration this branch must not add while the catalog migration chain is one branch at a
+        // time. When it lands, the catalog refuses one of the two inserts below with 23505, this
+        // test fails, and its message says what to do: delete it and write the real property -
+        // no two non-deleted tenant rows produce the same resolved connection string, computed by
+        // the real resolver over real rows (ADR-0034 §3.3) - in its place.
+        //
+        // It will not be the only red that day (PR #14 n-4): RoutingTestBed registers a cluster row
+        // per bed, every bed on this one container's endpoint, so the index reds the five other
+        // tests in this file as well - ADR-0034 §3.2 forbids exactly that fixture shape. Before the
+        // real property can be written, the bed needs one shared cluster row across beds, or a
+        // second container. One planned change, not six surprises.
         await using RoutingTestBed bed = await RoutingTestBed.WithActiveTenantAsync(_catalog);
         Tenant victim = bed.Tenant;
         DatabaseCluster secondRow = bed.AnotherClusterRowForTheSameServer();

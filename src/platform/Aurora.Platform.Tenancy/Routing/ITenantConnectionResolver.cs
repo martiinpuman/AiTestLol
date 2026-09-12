@@ -18,12 +18,15 @@ namespace Aurora.Platform.Tenancy.Routing;
 /// shared-schema escape hatch of ADR-0007 §6 is a change inside this one implementation.
 /// </para>
 /// <para>
-/// ADR-0007 §3.5 places this interface in <c>Aurora.Platform.Tenancy.Contracts</c>. It is
-/// internal to <c>Aurora.Platform.Tenancy</c> for now: its consumers — the data-source cache
-/// (B-06.2), the scope factory (B-06.3) and the DDL-path factory (B-07.1, ADR-0027 §2) — all
-/// live here, and nothing outside this assembly should be able to hold a connection string
-/// (<c>modules.md</c> §4). Promoting it is a one-file move when a consumer outside the assembly
-/// exists.
+/// <b>Internal to <c>Aurora.Platform.Tenancy</c> by decision, not by accident: ADR-0034 §6.</b>
+/// ADR-0007 §3.5 placed this interface and <see cref="TenantConnection"/> in
+/// <c>Aurora.Platform.Tenancy.Contracts</c>; ADR-0034 §6 moves the ADR and keeps the code, because
+/// the connection carries a credential and a type in a <c>.Contracts</c> assembly is nameable by
+/// every module in the solution. <c>internal</c> upholds §3.5's own goal — nothing else learns what
+/// a connection string looks like — by construction rather than by fitness rule. Its consumers —
+/// the data-source cache (B-06.2), the scope factory (B-06.3) and the DDL-path factory (B-07.1,
+/// ADR-0027 §2) — live here; the first consumer outside, <c>Aurora.TestKit</c>'s counting resolver,
+/// gets <c>[InternalsVisibleTo]</c> under ADR-0034 §6.1's three conditions, never promotion.
 /// </para>
 /// </remarks>
 internal interface ITenantConnectionResolver

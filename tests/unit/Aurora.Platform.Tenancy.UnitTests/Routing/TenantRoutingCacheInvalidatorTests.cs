@@ -180,7 +180,11 @@ public sealed class TenantRoutingCacheInvalidatorTests
     public async Task A_change_to_each_watched_column_changes_what_the_resolve_returns(string column)
     {
         // Why the column is watched, shown rather than listed: with everything else equal, a change
-        // to it changes the resolved connection - or, for the gate, whether there is one.
+        // to it changes the resolved TenantConnection - or, for the gate, whether there is one. What
+        // "changes" means differs by column: key and database_name reach the composed string (the
+        // application name and the database); cluster_id and residency_region reach the record's
+        // ClusterId and ResidencyRegion, not the string; only database_name and the gate bind to the
+        // physical route.
         Guid tenantId = Guid.CreateVersion7();
         TenantConnection before = await ResolveAsync(new ARouting().WithTenantId(tenantId).Build());
         TenantRouting changed = Changed(column, new ARouting().WithTenantId(tenantId)).Build();
@@ -210,9 +214,14 @@ public sealed class TenantRoutingCacheInvalidatorTests
         }
     }
 
+    /// <summary>
+    /// One row differing from the default in exactly the named column. <c>WithKey</c> also derives
+    /// the database name, so the key row pins it back (PR #14 n-2): a composer that dropped the
+    /// tenant key from the connection would otherwise pass this row on the database name alone.
+    /// </summary>
     private static ARouting Changed(string column, ARouting routing) => column switch
     {
-        "key" => routing.WithKey("borealis-parts"),
+        "key" => routing.WithKey("borealis-parts").WithDatabaseName("aurora_t_acme_trading"),
         "database_name" => routing.WithDatabaseName("aurora_t_elsewhere"),
         "cluster_id" => routing.OnCluster("nz-2", ARouting.DefaultHost, ARouting.DefaultPort),
         "residency_region" => routing.InRegion("eu-west"),

@@ -366,9 +366,11 @@ Three things a reader will want stated:
   `Two_cluster_rows_on_one_server_still_route_two_tenants_to_one_physical_database`, an inertness
   guard in the pattern of B-04's and B-19's: green while two cluster rows on one server still resolve
   to one physical database (it prints both endpoints), red the day the catalog refuses either insert
-  with `23505` — and its message then says to delete it and write ADR-0034's real property in its
-  place, that no two non-deleted tenant rows produce the same resolved connection string, computed
-  by the real resolver over real rows.
+  with `23505` — and its message then says to delete it and write ADR-0034 §3.3's real property in
+  its place, that no two non-deleted tenant rows produce the same resolved connection string,
+  computed by the real resolver over real rows. That day reds five more tests in the same file,
+  because the test bed registers a cluster row per bed on one endpoint — the fixture shape ADR-0034
+  §3.2 forbids — so the bed needs one shared cluster row, or a second container, first.
 - **What invalidation promises, and what it does not.** The interceptor sees every state change
   written through the entity; a change written around the change tracker (raw SQL, `ExecuteUpdate`)
   is bounded by the entry's 60 s lifetime, as is another instance's copy until an L2 exists
@@ -389,10 +391,13 @@ the orchestrator owns the fold. `AddCatalogDatabase` refuses a second call, as
 is set but empty from one that is not set (L-3); `Forget`, which no observable behaviour depended on,
 is gone, and the property it was meant to protect is proven instead (L-1).
 
-Where the interface lives: ADR-0007 §3.5 places `ITenantConnectionResolver` and `TenantConnection`
-in `Aurora.Platform.Tenancy.Contracts`. They are internal to this assembly for now — B-06.1a owns
-that assembly under the file partition, and every consumer named so far (B-06.2, B-06.3, B-07.1)
-lives here. Promoting them is a one-file move once a consumer outside the assembly exists.
+Where the interface lives: ADR-0007 §3.5 placed `ITenantConnectionResolver` and `TenantConnection`
+in `Aurora.Platform.Tenancy.Contracts`; **ADR-0034 §6 decides they are `internal` to this assembly**
+— the ADR moves, the code stays — because `TenantConnection` carries a credential and a type in a
+`.Contracts` assembly is nameable by every module in the solution, whereas `internal` upholds
+§3.5's own goal by construction. Every consumer named so far (B-06.2, B-06.3, B-07.1) lives here;
+the first consumer outside, `Aurora.TestKit`'s counting resolver (B-18.5, consumed by B-10), gets
+`[InternalsVisibleTo]` under ADR-0034 §6.1's three conditions, never promotion.
 
 ---
 

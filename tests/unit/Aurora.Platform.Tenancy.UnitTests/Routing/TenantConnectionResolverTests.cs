@@ -263,7 +263,10 @@ public sealed class TenantConnectionResolverTests
         refused.Requested.ShouldBe(attacker);
         refused.Found.ShouldBe(victim.TenantId);
         refused.DatabaseName.ShouldBe("aurora_t_victim_corp");
-        harness.Reader.ReadsOf(attacker).ShouldBe(2, "a refused row is not cached; each attempt reads through again");
+        harness.Reader.ReadsOf(attacker).ShouldBe(2, "each attempt reads through again");
+        // The read count alone cannot tell "never stored" from "stored, then dropped by the hand-out
+        // check" (PR #14 n-1); the write count can. A refused read-through stores nothing.
+        harness.CacheWrites.ShouldBe(0, "a read-through refused at the factory stores nothing");
         harness.Secrets.Reads.ShouldBe(0, "no credential is fetched for a row that is not the tenant's");
     }
 
@@ -284,5 +287,6 @@ public sealed class TenantConnectionResolverTests
         refused.Found.ShouldBe(attackerRow.TenantId);
         recovered.DatabaseName.ShouldBe("aurora_t_victim_corp");
         harness.Reader.ReadsOf(victim).ShouldBe(1, "the poisoned entry was dropped, so the next resolve read the catalog once");
+        harness.CacheWrites.ShouldBe(2, "the planted row, and the one legitimate read-through after it was dropped");
     }
 }
