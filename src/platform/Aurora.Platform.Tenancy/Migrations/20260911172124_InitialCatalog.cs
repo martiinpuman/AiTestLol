@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Aurora.Platform.Tenancy.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialCatalog : Migration
+    public sealed partial class InitialCatalog : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

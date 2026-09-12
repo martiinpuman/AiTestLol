@@ -12,7 +12,7 @@ namespace Aurora.Platform.Tenancy.Migrations
     /// writer. The provisioning saga (B-07.1, B-07.4), ADR-0010 rule 8's support-access path and
     /// ADR-0007 §11.5's erasure path write to what this creates.
     /// </summary>
-    public partial class AppendOnlyTrails : Migration
+    public sealed partial class AppendOnlyTrails : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)

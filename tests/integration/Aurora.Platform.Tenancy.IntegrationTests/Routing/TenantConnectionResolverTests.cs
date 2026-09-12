@@ -199,13 +199,11 @@ public sealed partial class TenantConnectionResolverTests
     /// <summary>
     /// Leaves the cluster as it was found: <c>CatalogPrivilegeTests</c> proves <c>aurora_app</c> can
     /// open no database but the catalog by trying every one on the cluster, and a hardened tenant
-    /// database left behind would be one it can open. <c>WITH (FORCE)</c> ends any session still on it.
+    /// database left behind would be one it can open. The fixture drops as the superuser, because
+    /// <c>aurora_admin</c> cannot terminate an app backend that has not yet exited (PR #13, second
+    /// and third reviews), and verifies the database is gone.
     /// </summary>
-    private async Task DropTenantDatabaseAsync(string databaseName)
-    {
-        await using NpgsqlConnection admin = await _catalog.OpenAdminMaintenanceConnectionAsync();
-        await CatalogDatabaseFixture.ExecuteAsync(admin, $"DROP DATABASE IF EXISTS {databaseName} WITH (FORCE)");
-    }
+    private Task DropTenantDatabaseAsync(string databaseName) => _catalog.DropDatabaseAsync(databaseName);
 
     /// <summary>ADR-0007 §11.4: the row is kept as id, key and dates; every routing column is blanked. As the owner, which B-05 made the only principal able to.</summary>
     private async Task TombstoneAsync(TenantId tenant)

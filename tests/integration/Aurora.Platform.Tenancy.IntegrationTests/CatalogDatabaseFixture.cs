@@ -158,6 +158,49 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     /// </summary>
     public Task<NpgsqlConnection> OpenSuperuserConnectionAsync() => OpenAsync(_superuserCatalogConnectionString);
 
+    /// <summary>
+    /// Drops a database a test created, as the container's superuser, and verifies that it is gone.
+    /// Every test that creates a database drops it through here.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Cleanup, not the privilege model under test. <c>DROP DATABASE ... WITH (FORCE)</c> terminates
+    /// every backend still attached, and PostgreSQL lets a role terminate only its own backends,
+    /// those of roles it is a member of, or any at all with <c>pg_signal_backend</c>.
+    /// <c>aurora_admin</c> is a member of <c>aurora_migrator</c>, not of <c>aurora_app</c>, and holds
+    /// no <c>pg_signal_backend</c>, so a drop issued as <c>aurora_admin</c> is refused <c>42501</c>
+    /// whenever a test's app session has closed its socket but its backend has not yet exited - a
+    /// race no test can close from its own side, unpooled or not - and the leaked database, with
+    /// <c>PUBLIC CONNECT</c> on it, fails <c>CatalogPrivilegeTests</c> for a reason unrelated to
+    /// isolation (PR #13: 62/64 on the second review's five runs, 87/88 on the third's, at three
+    /// different drop sites). The superuser is the one principal on the fixture's cluster that can
+    /// always terminate the straggler. Whether the provisioner role should hold
+    /// <c>pg_signal_backend</c> for ADR-0007 §8's own drop is the architect's and B-07's question
+    /// (FOLLOWUP-050), not this fixture's to answer.
+    /// </para>
+    /// <para>
+    /// The drop is verified, not trusted: a cleanup that fails silently is how a leaked database
+    /// reaches the next test's view of the cluster.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The database still exists after the drop.</exception>
+    public async Task DropDatabaseAsync(string database)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(database);
+
+        await using NpgsqlConnection superuser = await OpenSuperuserConnectionAsync();
+        await ExecuteAsync(superuser, $"DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
+
+        await using var remaining = new NpgsqlCommand("select count(*) from pg_database where datname = @name", superuser);
+        remaining.Parameters.AddWithValue("name", database);
+        if ((long)(await remaining.ExecuteScalarAsync())! != 0)
+        {
+            throw new InvalidOperationException(
+                $"Database '{database}' was not dropped; left in place it would leak into every later test's "
+                + "view of the cluster.");
+        }
+    }
+
     internal static CatalogDbContext CreateContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<CatalogDbContext>();

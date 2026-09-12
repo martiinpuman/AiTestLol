@@ -321,6 +321,107 @@ with B-10's `Aurora.TestKit`, then owes:
 
 ---
 
+## What B-06.1a adds: the tenancy kernel types and the identity stamp
+
+[`Aurora.Platform.Tenancy.Contracts`](../Aurora.Platform.Tenancy.Contracts) gains the types every
+consumer of tenancy shares (ADR-0027 §1; ADR-0007 §3.4, §7.1, §7.5):
+
+| Type | What it is |
+|---|---|
+| `TenantAccess` | The abstract proof of tenant identity: internal constructor, `TenantId`, `TenantKey`. Base of `TenantScope` (application path) and, when its row lands, `TenantDatabaseHandle` (DDL path) |
+| `TenantScope : TenantAccess` | Sealed; `ResidencyRegion`, `SchemaVersion`, `Packages`, `Reason`, `IsActive`, `IAsyncDisposable`. **The type surface only** — see below |
+| `TenantAccessReason` | Exactly the six reasons ADR-0007 §3.4 names: `Request`, `Job`, `Outbox`, `Provisioning`, `Migration`, `OperatorSupport` |
+| `SchemaVersion` | A comparable ordinal. Its struct default is *unspecified*, not version 0, and comparing one throws — the §7.5 gate must never compare a version nobody read |
+| `CoreSchemaVersion` | `.Current` and `.MinimumSupported`, both `0` until the first core migration lands (B-07.2 raises `Current` in the same commit); `MinimumSupported <= Current` is asserted here, the two honesty tests are B-08.3's |
+| `InstalledPackages`, `InstalledPackageEntry` | The immutable, one-per-package set the `Packages` property carries. The minimal shape: nothing had defined the type ADR-0007 names. The entry holds its id to exactly the catalog's rule, no stricter — it is on the read path (ADR-0038 §2.1) |
+| `PackageIdFormat` | The one statement of the package-id rule the catalog enforces (`^[a-z][a-z0-9_]*$`, at most 32 characters): the domain writer, the check constraint and `InstalledPackageEntry` all read it, so there is no copy to keep in sync and no migration to touch (ADR-0038 §2.2) |
+| `TenantRoutingViolationException` | What the §4.3 check throws; carries the tenant expected, the tenant found (or none) and the database reached |
+
+**What "only `Aurora.Platform.Tenancy` may construct one" rests on** — named and tested link by link
+in `TenantAccessConstructionTests`: internal-only constructors on both types; `[InternalsVisibleTo]`
+on Contracts granted to this assembly and `Aurora.Platform.Tenancy.UnitTests` only, and on this
+assembly to its two test assemblies only, each asserted as an exact set (a friend of *this* assembly
+could call B-06.3's internal factory without ever needing Contracts' grant); no public member of
+either friend assembly that ships — Contracts and this one, derived transitively from both grant
+lists rather than listed by hand — whose signature *mentions* a `TenantAccess` anywhere (return, any
+parameter, generic arguments and constraints, a delegate parameter's `Invoke`, an event's handler
+type), no interface member a public type of either implements explicitly whose signature does
+(emitted private, reached through the interface — the fourth review's door, followed through
+`GetInterfaceMap`), and no public type of either whose base chain or interfaces mention one, unless
+named by exact key — type,
+member, generic arity and parameter list, so one overload is one entry — as a sanctioned door, a
+proof-taking member, or one of the proof types themselves (`TenantScope : TenantAccess` is the one
+entry today; B-06.3's `ITenantScopeFactory.OpenAsync(...)` and
+`ITenantDbContextFactory<T>.CreateAsync(...)` join the first two lists, `TenantDatabaseHandle` the
+third), each entry required to match exactly one mention; **and no public type of either assembly
+can be derived from outside it** — sealed, static, an interface with no protected member, or a class
+with no public or protected constructor — so a `protected` door has no type to hang on (EF scaffolds
+migrations public and unsealed; the two here are sealed by hand, and a new one fails this check
+until it is). What the scans read: public members, explicit interface implementations reachable
+through a type of the scanned set — declared on it, carried by an interface of the set as a
+default interface member, or inherited from a base outside the set — and, through the derivability
+check, protected members. **These scans read signatures.** A member that does not *name* a proof in
+its signature is invisible to them by construction — `public static object Open()` in this
+assembly, cast back by any caller that can name `TenantScope`, which is every caller, is a door no
+signature scan can detect (ADR-0040 ran fourteen such members through both scans: zero reported).
+The scans narrow the honest surface; they are not a boundary, and the list of routes they miss does
+not converge. Both scans are proven against `ProofDoorProbes` — a fixture of every door shape,
+including the event and callback parameter PR #13's first review walked through a
+direction-inferring scan, the inheriting collections its second review walked through a
+declared-members scan, the protected host its third review walked through a public-members scan,
+the explicit implementation its fourth review walked through both, and the default interface member
+and inherited implementation its fifth review walked through the interface-map walk — with the
+member and type counts printed on every run and the member
+count held to a round-down floor; no parameterless constructor at
+any accessibility, tried through `Activator`, System.Text.Json and `DataContractSerializer`; and,
+for the one route no accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a
+scope that reads as absent on every public property, enumerated by reflection and counted, where a
+property that claims an absent reading must actually be read — a throw from it fails, and
+`NullReferenceException` fails by name — and any property designed to refuse by throwing is named
+with its exception. **What the signature scan cannot see, stated so nobody over-trusts it:** a
+member typed `object`, `dynamic` or a non-generic interface whose value is a proof at runtime; a
+proof inside a serialised form (link 4's territory); and every route reflection or
+`GetUninitializedObject` takes (links 4 and 5). Neither reflection nor `[UnsafeAccessor]` is
+blocked, and neither is claimed to be: accessibility is a compile-time construct that any code in
+the same process can step around, and what `internal` restricts is origination, not naming —
+`TenantScope` is public and any assembly may name, hold and use one — so the set of assemblies
+permitted to load beside this one is the real boundary (ADR-0007 §12.3, ADR-0040 §2.2,
+`ARCH-Q-SCOPE-BOUNDARY`).
+
+**Not built here, on purpose, because the backlog row says so:** the scope factory, and the lease
+that clears `IsActive` and makes a reused scope throw `TenantScopeExpiredException` (ADR-0007 §10.4).
+Both are B-06.3's. Every scope this row can construct is active, and `DisposeAsync` releases nothing,
+because nothing has been leased; the type says so where a reader would otherwise assume the lease
+exists.
+
+### `TenantIdentityStamp` — ADR-0007 §4.3, once
+
+In this assembly, internal: `CreateSql` (schema `platform`; the `only_row` singleton table with its
+check; `SELECT` granted to `aurora_app` and nothing else, so the request-path role can read the stamp
+on every physical connection and can never re-stamp a database as another tenant) and
+`AssertAsync(NpgsqlConnection, TenantId, ct)`. The assertion throws `TenantRoutingViolationException`
+for a stamp naming another tenant **and** for anything it cannot prove — no `platform` schema or
+table (the catalog, the maintenance database, a foreign database), a table the connected role cannot
+read (SQLSTATE `42501`: a database provisioned before the grant, a pre-grant restore, an incident
+`REVOKE`), a table with no row, a table with more than one row (it reads `limit 2`, so "a single
+answer" is the assertion's property and not the table's: `create table if not exists` accepts a
+pre-existing table of another shape as it is), an all-zero id — because "cannot prove it is the right
+tenant" and "is the wrong tenant" call for the same reaction, and that reaction keys on the exception
+type. Only those three SQLSTATEs are translated; a connection fault stays a driver exception rather
+than becoming a routing violation. B-06.2's connection initializer, B-07.1's compensation guard,
+B-07.2's step 4 and B-08.1 call this one method; none re-writes the query (ADR-0027 §2: "three
+hand-written copies is how they drift").
+
+`TenantIdentityStampTests` proves it on real PostgreSQL, the mismatch first: a database *named* for
+tenant B exactly as the provisioner would name it, stamped for A, asserted as B — refused, naming
+both tenants and the database. A check that compared `current_database()` passes that case, which
+is why the identity travels inside the data. Then the matching case for both roles that run the
+check, the unstamped table, the not-a-tenant-database case, a second row refused both ways with the
+count read back, `aurora_app` able to read and refused four write shapes with `42501`, and
+cancellation before any query.
+
+---
+
 ## What B-06.1 adds: the connection resolver
 
 `ITenantConnectionResolver` (ADR-0007 §3.5) — **the only code that builds a tenant connection
@@ -349,11 +450,10 @@ Three things a reader will want stated:
   for the reasons §7.4, §7.5, §4.3 and §11.4 give; `Exporting` is refused on the fail-closed reading
   until the export job (no backlog row yet) says what it needs. The DDL path never comes through the
   resolver (ADR-0027 §2); it reads through the same `ITenantRoutingReader` and applies its own rules.
-- **What is not covered on this branch, stated plainly.** ADR-0007 §4.3's connected-database identity
-  check — `TenantIdentityStamp`, `platform.tenant_identity`, `TenantRoutingViolationException` — is
-  absent from this branch's tree. It exists as a type on `task/B-06.1a` and is wired into a
-  connection nowhere until B-06.2 puts `AssertAsync` in the data source's physical-connection
-  initializer. Until both land, a connection string this resolver composes is opened with no proof
+- **What is not covered here, stated plainly.** ADR-0007 §4.3's connected-database identity
+  check — `TenantIdentityStamp`, `platform.tenant_identity`, `TenantRoutingViolationException` —
+  exists as a type (B-06.1a, the section above) and is wired into a connection nowhere until B-06.2
+  puts `AssertAsync` in the data source's physical-connection initializer. Until both land, a connection string this resolver composes is opened with no proof
   that the database on the other end is the tenant's. And the catalog itself does not yet refuse
   the shape PR #14 H-1 executed: `ux_tenant_cluster_id_database_name` is keyed on `cluster_id`, a
   physical database is `(host, port, database_name)`, and nothing makes `database_cluster (host,
