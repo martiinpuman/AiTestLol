@@ -58,11 +58,11 @@ echo "branches"
 merged_left=0
 while read -r b; do
   [ -z "${b}" ] && continue
-  if [ "$(git rev-parse "${b}")" = "$(git rev-parse "${INTEGRATION}")" ]; then
-    # Tip equal to the integration tip is a branch that has not started, not one whose
-    # work is merged — the same distinction the worktree check already makes, and the
-    # same false positive: this reported a branch created 30 seconds earlier as prunable.
-    say "${b} — branched, no commits yet"
+  if [ "$(git rev-list --count "${INTEGRATION}..${b}")" -eq 0 ] && git worktree list --porcelain | grep -q "^branch refs/heads/${b}$"; then
+    # No commits of its own and a worktree holding it: an agent that has started and
+    # not yet committed. Comparing tips instead was wrong the moment develop moved on,
+    # which it did within the minute — the worktree is the signal that survives.
+    say "${b} — checked out by a worktree, no commits yet"
   elif git merge-base --is-ancestor "${b}" "${INTEGRATION}" 2>/dev/null; then
     fail "${b} is fully merged into ${INTEGRATION} and should be deleted"
     merged_left=$((merged_left + 1))
@@ -97,7 +97,7 @@ while read -r path; do
     # it as one sent the orchestrator after a worktree that was simply starting up.
     # Recent modification is the signal that separates the two.
     say "${path} (${br}) — agent active in the last hour"
-  elif [ "$(git rev-parse "${br}" 2>/dev/null)" = "$(git rev-parse "${INTEGRATION}" 2>/dev/null)" ]; then
+  elif [ "$(git rev-list --count "${INTEGRATION}..${br}" 2>/dev/null || echo 1)" -eq 0 ]; then
     # Tip equal to the integration tip means no commits yet — a branch that has not
     # started, not one whose work is merged. Ancestry alone cannot tell them apart,
     # and calling a freshly dispatched agent's worktree prunable sends the
