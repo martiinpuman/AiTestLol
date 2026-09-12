@@ -135,29 +135,51 @@ public sealed class TrustedPackageKey
 }
 
 /// <summary>
-/// How the host is configured to find and trust Country Packages.
+/// How the host is configured to find and trust Country Packages, and whether it routes tenants.
 /// </summary>
 /// <remarks>
+/// <para>
 /// Built through <see cref="Create"/>, which refuses a configuration that cannot be right — most
 /// importantly, one that allows unsigned packages outside Development. ADR-0008 §9.3 asks for that
 /// to be asserted rather than commented, "because a flag that only a comment prevents from reaching
 /// production will reach production".
+/// </para>
+/// <para>
+/// <see cref="RoutesTenants"/> is the admission floor of ADR-0033 §5.2. A loaded package runs
+/// inside the process, and the process is the tenancy trust boundary (ADR-0033 §5.1): there is no
+/// in-process privilege boundary in .NET against loaded managed code, so a package a tenant-routing
+/// process loads can reach every tenant that process can. The only control is deciding what is
+/// allowed to execute at all, and for a tenant-routing host that is <b>first-party packages
+/// only</b> — where "package" is the manifest-bearing assembly the signature covers; a dependency
+/// it ships beside itself is loaded on the strength of that admission, unsigned (see
+/// <see cref="CountryPackageLoader"/>). This type says which kind of host it is;
+/// <see cref="CountryPackageLoader"/> enforces the floor at load, and <see cref="Create"/> refuses
+/// a configuration that contradicts it.
+/// </para>
 /// </remarks>
 public sealed class CountryPackageHostOptions
 {
     /// <summary>The environment name under which unsigned packages may be allowed, and no other.</summary>
     public const string DevelopmentEnvironmentName = "Development";
 
+    /// <summary>
+    /// The least trust a package's signature must establish before a tenant-routing host loads it
+    /// (ADR-0033 §5.2).
+    /// </summary>
+    public const PackageTrustLevel TenantRoutingAdmissionFloor = PackageTrustLevel.FirstParty;
+
     private CountryPackageHostOptions(
         string packagesDirectory,
         string environmentName,
         bool allowUnsigned,
-        IReadOnlyList<TrustedPackageKey> trustedKeys)
+        IReadOnlyList<TrustedPackageKey> trustedKeys,
+        bool routesTenants)
     {
         PackagesDirectory = packagesDirectory;
         EnvironmentName = environmentName;
         AllowUnsigned = allowUnsigned;
         TrustedKeys = trustedKeys;
+        RoutesTenants = routesTenants;
     }
 
     /// <summary>Where packages are discovered, one directory per package version.</summary>
@@ -172,6 +194,27 @@ public sealed class CountryPackageHostOptions
     /// <summary>The keys the platform trusts, and what each establishes.</summary>
     public IReadOnlyList<TrustedPackageKey> TrustedKeys { get; }
 
+    /// <summary>
+    /// Whether this host can route to tenant databases. When it can, a loaded package is inside the
+    /// tenancy trust boundary, and only a package whose signature establishes
+    /// <see cref="PackageTrustLevel.FirstParty"/> is loaded (ADR-0033 §5.2).
+    /// </summary>
+    public bool RoutesTenants { get; }
+
+    /// <summary>
+    /// The least trust a package's signature must establish before this host loads it, over and
+    /// above the signature rules of ADR-0008 §9.3: <see cref="PackageTrustLevel.FirstParty"/> on a
+    /// host that routes tenants, and no additional floor (<see cref="PackageTrustLevel.Unsigned"/>)
+    /// on one that does not.
+    /// </summary>
+    /// <remarks>
+    /// The floor decides what is <i>loaded</i>. A package below it is still inspected and listed —
+    /// ADR-0033 §5.2 narrows where a <see cref="PackageTrustLevel.Partner"/> key takes effect; it
+    /// does not remove the level.
+    /// </remarks>
+    public PackageTrustLevel AdmissionFloor =>
+        RoutesTenants ? TenantRoutingAdmissionFloor : PackageTrustLevel.Unsigned;
+
     /// <summary>Whether this host is running as Development.</summary>
     public bool IsDevelopment =>
         string.Equals(EnvironmentName, DevelopmentEnvironmentName, StringComparison.OrdinalIgnoreCase);
@@ -179,11 +222,20 @@ public sealed class CountryPackageHostOptions
     /// <summary>
     /// Reads a host configuration, refusing one that would load code it cannot vouch for.
     /// </summary>
+    /// <param name="packagesDirectory">Where packages are discovered.</param>
+    /// <param name="environmentName">The environment the host runs as.</param>
+    /// <param name="allowUnsigned">Whether packages with no valid signature may be loaded.</param>
+    /// <param name="trustedKeys">The keys the platform trusts.</param>
+    /// <param name="routesTenants">
+    /// Whether this host can route to tenant databases. There is no default: a host that does not
+    /// say what it is cannot be given the right floor, and the safe answer differs by host.
+    /// </param>
     public static Result<CountryPackageHostOptions> Create(
         string? packagesDirectory,
         string? environmentName,
         bool allowUnsigned,
-        IReadOnlyList<TrustedPackageKey>? trustedKeys)
+        IReadOnlyList<TrustedPackageKey>? trustedKeys,
+        bool routesTenants)
     {
         if (string.IsNullOrWhiteSpace(packagesDirectory))
         {
@@ -204,6 +256,19 @@ public sealed class CountryPackageHostOptions
             DevelopmentEnvironmentName,
             StringComparison.OrdinalIgnoreCase);
 
+        // Checked before the environment rule, and without regard to it: a tenant-routing host has
+        // no environment in which a package below the floor is outside the tenancy trust boundary.
+        if (routesTenants && allowUnsigned)
+        {
+            return HostingErrors.HostConfiguration(
+                $"Packages:AllowUnsigned is set on a host that routes tenants (environment " +
+                $"'{environmentName}'). A tenant-routing process loads only packages whose " +
+                $"manifest-bearing assembly is signed at {TenantRoutingAdmissionFloor}: a loaded package runs inside the " +
+                $"process, and the process is the tenancy trust boundary, so it can reach every " +
+                $"tenant this host can. The floor is not a setting — the host refuses to start " +
+                $"rather than run with the flag, in Development as anywhere else (ADR-0033 §5.2).");
+        }
+
         if (allowUnsigned && !isDevelopment)
         {
             return HostingErrors.HostConfiguration(
@@ -212,11 +277,19 @@ public sealed class CountryPackageHostOptions
                 $"anywhere else — it refuses to start rather than run with it (ADR-0008 §9.3).");
         }
 
-        if (!allowUnsigned && keys.Count == 0)
+        PackageTrustLevel floor = routesTenants ? TenantRoutingAdmissionFloor : PackageTrustLevel.Unsigned;
+
+        if (!allowUnsigned && !keys.Any(key => key.Level >= floor))
         {
             return HostingErrors.HostConfiguration(
-                "No trusted package keys are configured and unsigned packages are not allowed, so no " +
-                "package could ever be loaded. That is a configuration mistake, not a lockdown.");
+                routesTenants
+                    ? $"This host routes tenants and loads only packages whose signature establishes " +
+                      $"{floor}, but none of the {keys.Count} trusted key(s) configured establishes " +
+                      $"it, so no package could ever be loaded. That is a configuration mistake, not " +
+                      $"a lockdown (ADR-0033 §5.2)."
+                    : "No trusted package keys are configured and unsigned packages are not allowed, " +
+                      "so no package could ever be loaded. That is a configuration mistake, not a " +
+                      "lockdown.");
         }
 
         string[] duplicates =
@@ -234,6 +307,7 @@ public sealed class CountryPackageHostOptions
                 packagesDirectory,
                 environmentName,
                 allowUnsigned,
-                [.. keys]));
+                [.. keys],
+                routesTenants));
     }
 }

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The deliberately-hostile Country Package of ADR-0033 5.6, built the way a real one is, for the
+    admission-floor tests to refuse - and, in the positive control, to admit.
+
+    "Hostile" in the sense ADR-0033 2 uses: a package whose execution must be OBSERVABLE, so that a
+    refusal can be shown to have happened before it rather than after. It carries a module
+    initialiser that records that it ran (ModuleInitialiserWitness). The D1 tests assert that record
+    absent after a refusal and present after an admission; a failed Result alone would not
+    distinguish "refused before execution" from "refused after the type system ran the package's
+    initialisers" (ADR-0033 5.6 D1).
+
+    A sibling of Aurora.Countries.TestPackage, and like it not a test project: verify.sh stage 6 runs
+    test assemblies, and this one holds no tests. Aurora.Countries.Hosting.UnitTests references it so
+    the built assembly lands beside the tests, which copy it into a temporary package directory and
+    sign it with whichever key the case needs. The tests never reference a type from it: touching
+    one would load this assembly into the test's own context, run the initialiser there, and make
+    the witness worthless.
+  -->
+
+  <PropertyGroup>
+    <RootNamespace>Aurora.Countries.HostilePackage</RootNamespace>
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\Aurora.Countries.Contracts\Aurora.Countries.Contracts.csproj" />
+  </ItemGroup>
+
+  <!-- This is what makes it a package rather than a library (ADR-0008 3.2). -->
+  <ItemGroup>
+    <EmbeddedResource Include="package.manifest.json" LogicalName="package.manifest.json" />
+  </ItemGroup>
+
+</Project>

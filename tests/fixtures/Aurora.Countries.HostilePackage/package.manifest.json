@@ -1,0 +1,21 @@
+{
+  "id": "aurora.country.hostile",
+  "key": "hostile",
+  "displayName": "Hostile fixture",
+  "version": "1.0.0",
+  "coreContractRange": "[1.0.0, 2.0.0)",
+  "jurisdiction": {
+    "countryCode": "NZ",
+    "defaultCurrency": "NZD",
+    "locales": ["en-NZ"]
+  },
+  "capabilities": [
+    "IdentifierValidator"
+  ],
+  "schema": "pkg_hostile",
+  "dependsOn": [],
+  "conflictsWith": [],
+  "localeOnly": false,
+  "publisher": "Aurora fixtures",
+  "trust": "Unsigned"
+}

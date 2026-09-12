@@ -155,7 +155,8 @@ public sealed class PackageSignatureVerifierTests
             package.Root,
             CountryPackageHostOptions.DevelopmentEnvironmentName,
             allowUnsigned: true,
-            trustedKeys: []));
+            trustedKeys: [],
+            routesTenants: false));
 
         Result<PackageTrust> trust = new PackageSignatureVerifier(options).Verify(overclaiming);
 
@@ -183,7 +184,8 @@ public sealed class PackageSignatureVerifierTests
             package.Root,
             "Production",
             allowUnsigned: false,
-            trustedKeys: [bystander, asFirstParty]));
+            trustedKeys: [bystander, asFirstParty],
+            routesTenants: false));
 
         PackageTrust trust = Ok(new PackageSignatureVerifier(options).Verify(
             Ok(PackageMetadataReader.Read(package.Directory))));
@@ -225,7 +227,8 @@ public sealed class PackageSignatureVerifierTests
             package.Root,
             allowUnsigned ? CountryPackageHostOptions.DevelopmentEnvironmentName : "Production",
             allowUnsigned,
-            keys));
+            keys,
+            routesTenants: false));
 
         return new PackageSignatureVerifier(options)
             .Verify(Ok(PackageMetadataReader.Read(package.Directory)));

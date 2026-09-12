@@ -24,7 +24,8 @@ public sealed class CountryPackageHostOptionsTests
             "/srv/aurora/packages",
             environment,
             allowUnsigned: true,
-            trustedKeys: []);
+            trustedKeys: [],
+            routesTenants: false);
 
         options.IsFailure.ShouldBeTrue();
         options.Error.Code.ShouldBe(HostingErrors.HostConfigurationCode);
@@ -32,17 +33,24 @@ public sealed class CountryPackageHostOptionsTests
         options.Error.Description.ShouldContain("AllowUnsigned");
     }
 
+    /// <summary>
+    /// The one case ADR-0008 §9.3 honours — and, since ADR-0033 §5.2, only on a host that routes
+    /// no tenants. The tenant-routing case is <see cref="A_tenant_routing_host_that_allows_unsigned_packages_is_refused_in_every_environment"/>.
+    /// </summary>
     [Fact]
-    public void Allowing_unsigned_packages_in_development_is_the_one_case_that_is_honoured()
+    public void Allowing_unsigned_packages_in_development_is_honoured_on_a_host_that_routes_no_tenants()
     {
         CountryPackageHostOptions options = Ok(CountryPackageHostOptions.Create(
             "/srv/aurora/packages",
             CountryPackageHostOptions.DevelopmentEnvironmentName,
             allowUnsigned: true,
-            trustedKeys: []));
+            trustedKeys: [],
+            routesTenants: false));
 
         options.AllowUnsigned.ShouldBeTrue();
         options.IsDevelopment.ShouldBeTrue();
+        options.RoutesTenants.ShouldBeFalse();
+        options.AdmissionFloor.ShouldBe(PackageTrustLevel.Unsigned);
     }
 
     /// <summary>
@@ -53,7 +61,7 @@ public sealed class CountryPackageHostOptionsTests
     [Fact]
     public void A_host_that_could_never_load_anything_is_refused()
     {
-        CountryPackageHostOptions.Create("/srv/aurora/packages", "Production", false, [])
+        CountryPackageHostOptions.Create("/srv/aurora/packages", "Production", false, [], routesTenants: false)
             .IsFailure.ShouldBeTrue();
     }
 
@@ -63,7 +71,8 @@ public sealed class CountryPackageHostOptionsTests
     [InlineData("/srv/aurora/packages", null)]
     [InlineData("/srv/aurora/packages", " ")]
     public void A_host_that_does_not_know_where_or_what_it_is_is_refused(string? directory, string? environment) =>
-        CountryPackageHostOptions.Create(directory, environment, false, []).IsFailure.ShouldBeTrue();
+        CountryPackageHostOptions.Create(directory, environment, false, [], routesTenants: false)
+            .IsFailure.ShouldBeTrue();
 
     [Fact]
     public void The_same_key_configured_twice_is_refused()
@@ -75,10 +84,129 @@ public sealed class CountryPackageHostOptionsTests
             "/srv/aurora/packages",
             "Production",
             allowUnsigned: false,
-            trustedKeys: [key, key]);
+            trustedKeys: [key, key],
+            routesTenants: true);
 
         options.IsFailure.ShouldBeTrue();
         options.Error.Description.ShouldContain(key.Thumbprint);
+    }
+
+    /// <summary>
+    /// ADR-0033 §5.6 D3: the admission floor cannot be configured away. A host that routes tenants
+    /// and is told to load unsigned packages refuses to start, in every environment — Development
+    /// included, because there is no environment in which a package below the floor is outside the
+    /// tenancy trust boundary. Same shape and same reason as <c>AllowUnsigned</c> outside
+    /// Development (ADR-0008 §9.3): a flag that only a comment prevents from reaching production
+    /// will reach production.
+    /// </summary>
+    [Theory]
+    [InlineData("Development")]
+    [InlineData("development")]
+    [InlineData("Production")]
+    [InlineData("Staging")]
+    public void A_tenant_routing_host_that_allows_unsigned_packages_is_refused_in_every_environment(string environment)
+    {
+        Result<CountryPackageHostOptions> options = CountryPackageHostOptions.Create(
+            "/srv/aurora/packages",
+            environment,
+            allowUnsigned: true,
+            trustedKeys: [],
+            routesTenants: true);
+
+        options.IsFailure.ShouldBeTrue(
+            $"a host that routes tenants was allowed to start with AllowUnsigned in '{environment}'");
+        options.Error.Code.ShouldBe(HostingErrors.HostConfigurationCode);
+        options.Error.Description.ShouldContain("AllowUnsigned");
+        options.Error.Description.ShouldContain("routes tenants");
+        options.Error.Description.ShouldContain(nameof(PackageTrustLevel.FirstParty));
+        options.Error.Description.ShouldContain("ADR-0033");
+    }
+
+    /// <summary>
+    /// The existing "could never load anything" rule, applied with the floor: a tenant-routing host
+    /// whose only trusted key establishes <see cref="PackageTrustLevel.Partner"/> could inspect and
+    /// list packages but never load one. That is a configuration mistake, not a lockdown, and a
+    /// host that started anyway would look healthy and install nothing.
+    /// </summary>
+    [Fact]
+    public void A_tenant_routing_host_with_no_key_at_the_floor_could_never_load_anything_and_is_refused()
+    {
+        using TestTrustStore store = new();
+        (_, TrustedPackageKey partner) = store.Add(PackageTrustLevel.Partner);
+
+        Result<CountryPackageHostOptions> options = CountryPackageHostOptions.Create(
+            "/srv/aurora/packages",
+            "Production",
+            allowUnsigned: false,
+            trustedKeys: [partner],
+            routesTenants: true);
+
+        options.IsFailure.ShouldBeTrue();
+        options.Error.Code.ShouldBe(HostingErrors.HostConfigurationCode);
+        options.Error.Description.ShouldContain(nameof(PackageTrustLevel.FirstParty));
+        options.Error.Description.ShouldContain("no package could ever be loaded");
+    }
+
+    [Fact]
+    public void A_tenant_routing_host_with_a_first_party_key_starts_with_its_floor_at_first_party()
+    {
+        using TestTrustStore store = new();
+        (_, TrustedPackageKey firstParty) = store.Add(PackageTrustLevel.FirstParty);
+
+        CountryPackageHostOptions options = Ok(CountryPackageHostOptions.Create(
+            "/srv/aurora/packages",
+            "Production",
+            allowUnsigned: false,
+            trustedKeys: [firstParty],
+            routesTenants: true));
+
+        options.RoutesTenants.ShouldBeTrue();
+        options.AdmissionFloor.ShouldBe(PackageTrustLevel.FirstParty);
+    }
+
+    /// <summary>
+    /// ADR-0033 §5.2 narrows <i>where</i> a Partner key takes effect; it does not remove the level.
+    /// A Partner key may be configured on a tenant-routing host so that partner packages are
+    /// inspected and listed. What such a host will not do is load one — that refusal is
+    /// <see cref="CountryPackageLoader.Load"/>'s, and <c>PackageAdmissionFloorTests</c> proves it.
+    /// </summary>
+    [Fact]
+    public void A_partner_key_may_still_be_configured_on_a_tenant_routing_host_beside_a_first_party_one()
+    {
+        using TestTrustStore store = new();
+        (_, TrustedPackageKey partner) = store.Add(PackageTrustLevel.Partner);
+        (_, TrustedPackageKey firstParty) = store.Add(PackageTrustLevel.FirstParty);
+
+        CountryPackageHostOptions options = Ok(CountryPackageHostOptions.Create(
+            "/srv/aurora/packages",
+            "Production",
+            allowUnsigned: false,
+            trustedKeys: [partner, firstParty],
+            routesTenants: true));
+
+        options.TrustedKeys.Count.ShouldBe(2);
+        options.AdmissionFloor.ShouldBe(PackageTrustLevel.FirstParty);
+    }
+
+    /// <summary>
+    /// A host that routes no tenants keeps ADR-0008 §9.3's rules unchanged: a Partner key admits
+    /// partner packages there, because there is no tenant database for a loaded package to reach.
+    /// </summary>
+    [Fact]
+    public void A_host_that_routes_no_tenants_has_no_floor_above_the_signature_rules()
+    {
+        using TestTrustStore store = new();
+        (_, TrustedPackageKey partner) = store.Add(PackageTrustLevel.Partner);
+
+        CountryPackageHostOptions options = Ok(CountryPackageHostOptions.Create(
+            "/srv/aurora/packages",
+            "Production",
+            allowUnsigned: false,
+            trustedKeys: [partner],
+            routesTenants: false));
+
+        options.RoutesTenants.ShouldBeFalse();
+        options.AdmissionFloor.ShouldBe(PackageTrustLevel.Unsigned);
     }
 
     /// <summary>
