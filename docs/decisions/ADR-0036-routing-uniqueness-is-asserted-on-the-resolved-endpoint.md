@@ -1,0 +1,144 @@
+# ADR-0036 — The routing-uniqueness criterion is asserted on the resolved endpoint, and a cluster host is stored lower-case
+
+- **Status:** Accepted (2026-09-12)
+- **Deciders:** architect
+- **Supersedes:** —
+- **Amends:** **ADR-0034 §3.3** (the acceptance criterion, replaced in §2.3 below) and **ADR-0034 §2's variant 3 row** (one false statement of fact, corrected in §2.2). Adds **ADR-0034 §3.4** (§3 of this record). Everything else in ADR-0034 stands, including §3.1's index, §3.2's enumeration and the whole of §4's stamp argument.
+- **Superseded by:** —
+- **Related:** ADR-0007 §3.5, §4.3, ADR-0034 §2, §3.1–§3.3, §9, `../architecture/modules.md` §4
+- **Raised by:** B-20's developer, through the orchestrator, while implementing ADR-0034 §3.3 verbatim
+
+> ADR-0034 exists to say that a routing criterion must be the property and not the mechanism. Its own criterion was a mechanism — comparison of a composed string — and that comparison cannot fail. This record replaces it with the property it was reaching for.
+
+---
+
+## 1. Context
+
+ADR-0034 §3.3 states the acceptance criterion for routing uniqueness as:
+
+> *"No two non-deleted `catalog.tenant` rows produce the same resolved connection string, computed by running the real `ITenantConnectionResolver` over the real catalog rows and comparing the composed strings."*
+
+B-20's developer implemented exactly that and found it vacuous. `TenantConnectionStringComposer.Compose` sets
+
+```csharp
+ApplicationName = settings.ApplicationNameFor(tenantKey),   // "aurora-web:<tenant key>"
+```
+
+(`src/platform/Aurora.Platform.Tenancy/Routing/TenantConnectionStringComposer.cs`), and `ux_tenant_key` makes the tenant key unique across `catalog.tenant`. **Two distinct tenants therefore cannot produce equal connection strings, whatever the routing does.** The criterion is satisfied by a fleet in which every tenant resolves to one another tenant's database.
+
+This is the shape ADR-0034 was written to prevent, one level up: §3.3's own opening sentence is *"The assertion is the property, not the index"*, and then it named a comparand that is a mechanism — the serialised output of the composer, which carries a discriminator that the property is not about. It was quoted verbatim into a task brief as *the* acceptance criterion and approved by a reviewer. An implementer who followed the specification exactly would have written a check that reports clean on a broken fleet, and would have been right to believe they had done what was asked.
+
+The developer instead compared the **physical endpoint** parsed back out of the resolved string, and that version bites: it found ADR-0034 variant 3 live before the migration, naming both tenants and the shared endpoint, and reports `pairs compared: 120; collisions: 0` afterwards.
+
+Two further findings came with it, both in §3's territory and both settled here:
+
+- `catalog.database_cluster.host` has no lower-case check, although `tenant_host` has `ck_tenant_host_lower_case`. Two rows differing only in case are two endpoints to `ux_database_cluster_host_port` and one server in reality.
+- B-20's migration builds `ux_database_cluster_host_port` **without** `CONCURRENTLY`. That collides with ADR-0007 §7.2 rule 2 and is decided in [ADR-0037](ADR-0037-what-the-migration-sql-scanner-may-conclude.md) §5, not here, because it is a migration-safety question rather than a routing one.
+
+---
+
+## 2. Decision 1 — the comparand is the resolved physical endpoint
+
+### 2.1 Why the composed string is the wrong comparand, stated so it is not simplified back
+
+A connection string is a **serialisation of an intent**, not a description of a destination. It carries, beside the destination, at least: `Application Name` (per-tenant by construction, ADR-0016's requirement that a PostgreSQL session be attributable), `Username` and `Password` (which may differ per cluster), and every pool setting of ADR-0007 §5.2 (which differ between `TenantPoolSettings.Web` and `.Worker`). Every one of those is a field on which two strings can differ while addressing the same bytes on the same disk.
+
+**Any discriminator anywhere in the string makes string equality a test that cannot fail.** `Application Name` is the one that does it today; removing it would not make string comparison correct, it would only make the next added field the one that breaks it. The comparison must therefore be over a projection that contains the destination and nothing else, chosen deliberately, rather than over whatever the composer happens to emit.
+
+### 2.2 One correction of fact in ADR-0034 §2
+
+ADR-0034 §2's variant 3 row reads *"Both tenants resolve to `127.0.0.1:32905/aurora_t_t_82b6f49207bc` — byte-identical connection strings"*. The endpoint claim is true; the phrase **"byte-identical connection strings" is false** and always was, for the reason in §2.1. It is corrected to **"one identical physical endpoint"**. This matters beyond tidiness: that phrase is the evidence §3.3's criterion rested on, and with it uncorrected a reader would reconstruct the vacuous criterion from §2.
+
+### 2.3 ADR-0034 §3.3's criterion, replaced
+
+ADR-0034 §3.3's block quote is replaced by the following. It keeps §3.3's surrounding argument — the assertion is the property, not the index — unchanged.
+
+> **No two non-deleted `catalog.tenant` rows resolve to the same physical endpoint.** The endpoint of a tenant is the triple **`(host, port, database)` parsed out of the string the real `ITenantConnectionResolver` produced** — parsed with `NpgsqlConnectionStringBuilder`, from the resolver's own output, never read from the catalog row the resolver was given. Two endpoints are equal when `database` is equal ordinally (PostgreSQL database names are case-sensitive), `port` is equal, and `host` is equal **ignoring case** (DNS names are case-insensitive, so an ordinal comparison of hosts under-reports collisions, and under-reporting is the direction that hides a break).
+>
+> The assertion reports **how many tenants were resolved** and **how many pairs were compared**, and fails on zero of either.
+
+Three things about that wording are load-bearing and are spelled out rather than left to be inferred:
+
+1. **"parsed out of the string the resolver produced."** Reading `(host, port, database_name)` from the catalog rows instead would make the assertion a property of the *input* and would pass over a resolver that ignores its input entirely. The whole point is to measure what the resolver emits.
+2. **`host` compared ignoring case.** This is deliberately *more* aggressive than the database's own uniqueness index, which is byte-exact. The assertion may therefore go red on a fleet the index accepted — that is correct, and §3 removes the gap from the other side.
+3. **The counts.** `CLAUDE.md`'s self-check #2: a stage that reports success without a count cannot distinguish "all good" from "nothing ran". Zero tenants resolved, or zero pairs compared, is a failure, not a pass.
+
+### 2.4 What must demonstrate it, and which link each demonstration stops at
+
+The comparison and the fleet scan are **two separable pieces**, and separating them is what keeps the demonstration alive after the defect is fixed.
+
+- **D1 — the comparator, on synthetic input, as a unit test.** A pure function from a list of resolved connection strings to a list of colliding pairs. Fed: two strings that differ only in `Application Name`; two that differ only in `Host` case; two that differ only in `Password`; two that differ only in `Database` case. The first, second and third must be reported as collisions; the fourth must not. **This test can fail, and it stays able to fail forever**, because it never touches the catalog and therefore is not disarmed by the constraints that stop such rows from being stored.
+- **D2 — the fleet scan, on a real catalog, as an integration test.** The same comparator over the real resolver's output for every non-deleted tenant, reporting both counts. **Its ability to fail is bounded by what the catalog will accept**: after §3.1's index and §3's check constraint are in place, no seed can construct a collision through the normal write path, so D2 is a regression guard and not a demonstration.
+- **D3 — the one-shot demonstration, recorded on the pull request and not as a standing test.** D2 run against a catalog seeded with variant 3's two-cluster shape *before* `ux_database_cluster_host_port` exists, watched to go red, naming both tenants and the shared endpoint. B-20 has done this. It is written down here because **the fix removes the evidence**: once the index lands, nothing can reproduce D3, and a later reader who finds only a green D2 has no way to know D2 ever measured anything. That is this project's eighth recurring form — a fix that silently invalidates the evidence for the claim it was fixing — and the counter to it is to record the red run, with its output, where the claim lives.
+
+**The link D1 and D2 stop at:** the triple is what the *catalog* was told the endpoint is. Two DNS names for one server, a CNAME, a failover alias, and an IP literal beside a hostname all resolve to one machine and to two different triples. ADR-0034 §3.2 already enumerates this and §4 is the answer to it: the `TenantIdentityStamp` is the control, and this assertion is not. Nothing here changes that division.
+
+---
+
+## 3. Decision 2 — `catalog.database_cluster.host` is stored lower-case (ADR-0034 §3.4)
+
+The following is added to ADR-0034 §3 as a new §3.4.
+
+> **§3.4 — A cluster host is stored in one spelling.**
+>
+> ```sql
+> alter table catalog.database_cluster
+>   add constraint ck_database_cluster_host_lower_case check (host = lower(host));
+> ```
+>
+> §3.1's index is byte-exact, so without this a host written `DB1.example.com` and a host written `db1.example.com` are two rows, two endpoints to the index, and one server. This is part of the §3.1 invariant rather than a separate tidiness rule: the index's job is to make `cluster_id → (host, port)` injective **on the endpoint**, and it can only do that if one endpoint has one spelling. `ck_tenant_host_lower_case` already does the same job for `catalog.tenant_host`, so this is the existing rule applied to the column §3.1 depends on, not a new kind of rule.
+>
+> Lower-casing is lossless here and only here: DNS names are case-insensitive, so folding a hostname loses nothing, and an IPv4 or IPv6 literal contains no upper-case ASCII letter except in hexadecimal IPv6 groups, which are also case-insensitive. This holds for a host name or an IP literal. It does **not** generalise to a path — a Unix-socket directory is case-sensitive, and if `database_cluster.host` is ever allowed to carry one, this constraint is wrong and §9 brings whoever changes it back here.
+
+**What demonstrates it:** an integration test in the shape `CatalogConstraintTests` already uses for eleven other constraints — insert a `database_cluster` row with `DB1.example.com`, assert `PostgresException.SqlState == "23514"` and `ConstraintName == "ck_database_cluster_host_lower_case"`. Asserting the constraint *name* is what makes it a test of this rule rather than of whichever constraint happened to fire first.
+
+**What it does not demonstrate, and the link it stops at:** it proves the database refuses the second spelling. It does not prove that the operator surface which creates cluster rows *normalises* rather than merely fails — the write path may still hand a mixed-case host straight through and surface a `23514` to an operator who typed a legitimate address. That is a usability consequence, it is owned by the row that builds the cluster-administration surface, and no such surface exists today.
+
+**Migration category:** this constraint narrows the set of permitted rows, so it is not an Expand. See [ADR-0037](ADR-0037-what-the-migration-sql-scanner-may-conclude.md) §2.2 for the shape it must take (`NOT VALID` first, `VALIDATE CONSTRAINT` one schema version later) if `catalog.database_cluster` ever holds a row that violates it. **Today it holds none in any environment this project can observe**, because no deployment exists; the migration may therefore add it validated in one step, and that sentence is true only while it is true.
+
+---
+
+## 4. Options considered
+
+### 4.1 For the comparand (§2)
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A. `(host, port, database)` parsed from the resolved string** *(chosen)* | It is the destination and nothing else; it is a projection of the resolver's own output, so it measures the resolver; it survives ADR-0034 §3.2's PgBouncer change, where a second endpoint appears and the triple is still the thing that must be unique | Needs a parse step, and the parse is itself code that can be wrong — mitigated by using `NpgsqlConnectionStringBuilder`, the same type that composed it |
+| B. Compare whole composed strings (ADR-0034 §3.3 as written) | Nothing to choose, nothing to maintain | Vacuous. `Application Name` alone makes equality impossible between two tenants, and every future field added to the string has the same effect |
+| C. Compare whole strings with `Application Name` excluded | Small edit to the existing criterion | Fixes today's discriminator and not the class. `Password`, `Username`, `Max Pool Size` and `Command Timeout` all differ legitimately between two tenants on the same endpoint, so the comparison is still wrong — and it is wrong in the silent direction |
+| D. Compare `(cluster_id, database_name)` from the catalog rows | No resolver needed; fastest | It is the *logical* pair that ADR-0034 §2 exists to reject: variant 3 is two cluster ids on one endpoint, and this option cannot see it. It also never runs the resolver, so a resolver bug is invisible |
+
+### 4.2 For the host spelling (§3)
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A. A check constraint, as part of the §3.1 invariant** *(chosen)* | One spelling per endpoint, enforced for every principal including one writing raw SQL; matches the existing `ck_tenant_host_lower_case`; makes §3.1's index mean what §3.1 claims | Refuses a mixed-case host an operator may reasonably type, until a normalising write path exists |
+| B. Normalise in the write path only | No refusal reaches an operator | The catalog is reachable by `psql` and by the provisioning saga; a rule that lives only in one write path is a convention, and this project's standing rule is that a convention nothing enforces is not a link |
+| C. A case-insensitive (functional `lower(host)`) unique index instead of a constraint | Also closes the gap, and permits mixed-case storage | Two spellings of one endpoint remain storable, so every *reader* — the resolver, an operator view, a metric label — now has to know to fold. Storing one spelling is the smaller surface |
+| D. `citext` for the column | PostgreSQL solves it | An extension, a non-standard type, and a dependency for one column; the check constraint is free |
+
+---
+
+## 5. Consequences
+
+**Positive**
+
+- The routing criterion can now go red. Until this record it could not, in a document whose entire argument is that a criterion must be able to.
+- Splitting the comparator (D1) from the fleet scan (D2) means the demonstration outlives the fix. That pattern is worth copying wherever a constraint is added to stop the very shape a test was written to detect.
+- §3 removes the one residual §3.1's index could not see *and could have been made to see* cheaply, leaving the residuals that genuinely cannot be closed at this layer (aliases, CNAMEs, IP-versus-name) as §4's job, which is where ADR-0034 always said they belonged.
+
+**Negative, and owned**
+
+- **B-20's branch changes shape after review.** The criterion it was briefed on is not the criterion in this record; the endpoint comparison it wrote is. The branch is closer to correct than the brief was, which is the good direction, but its review round must re-read the acceptance criterion from here rather than from the brief.
+- **ADR-0034 needed amending three hours after it merged, and it was approved first pass.** The lesson is specific and worth carrying: an acceptance criterion phrased over a *serialised* value is suspect by default, because serialisation adds fields the property is not about. Added to the conventions note.
+- **§3's constraint may surface a `23514` to an operator** before a normalising write path exists. Accepted; the alternative stores two spellings of one machine.
+
+---
+
+## 6. Revisit when
+
+- **`database_cluster` grows a second endpoint pair** for PgBouncer (ADR-0034 §3.2). The triple becomes two triples; the comparator must then compare the endpoint the *app path* resolves to, and the assertion must run once per path rather than once. Both §2.3 and §3 are re-read then.
+- **`database_cluster.host` is allowed to carry a Unix-socket directory or a multi-host list.** Both break §3's lossless-folding argument, and the multi-host case breaks the triple as a projection.
+- **A shared-tier option appears** (ADR-0007 §3.5's escape hatch). Then many tenants deliberately share one endpoint, §2.3's criterion is false by design, and ADR-0034 §3 is rewritten rather than patched — as ADR-0034 §9 already says.
+- **Any field is added to the composed connection string.** Not because it affects the triple, but as the trigger to re-read §2.1 and confirm nobody has reintroduced a whole-string comparison somewhere else.
