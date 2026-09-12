@@ -11,8 +11,8 @@ internal delegate void ScopeCallback(TenantScope scope);
 
 /// <summary>
 /// Every shape by which a public member or a public type can hand a tenant proof to code outside
-/// the friend set, plus the inbound shape and members that mention no proof at all. Link 3's scan
-/// is proven against this type: each door must be reported, the negatives must not be.
+/// the friend set, plus the inbound shape and members that mention no proof at all. Link 3's two
+/// scans are proven against this type: each door must be reported, the negatives must not be.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -20,7 +20,9 @@ internal delegate void ScopeCallback(TenantScope scope);
 /// first two are the shapes PR #13's first security review walked through the original scan in
 /// green: an event, and a callback parameter. The three collections are the second review's
 /// door: types that declare nothing and hand proofs out through what they inherit, which a scan of
-/// declared members cannot see.
+/// declared members cannot see. <see cref="ScopeHost"/> is the third review's: a public type nobody
+/// sealed, whose protected members anyone deriving from it can reach, which a scan of public
+/// members cannot see and the derivability check must.
 /// </para>
 /// <para>
 /// The rest are the shapes that scan already caught (kept as controls, so a rewrite cannot lose
@@ -85,7 +87,11 @@ internal static class ProofDoorProbes
         public static TenantScope? Held { get; }
     }
 
-    /// <summary>Second-review probe, type half: declares nothing, inherits every member of a list of scopes.</summary>
+    /// <summary>
+    /// Second-review probe, type half: declares nothing, inherits every member of a list of
+    /// scopes. Deliberately not sealed, so that <see cref="DeeperCollection"/> can derive from it -
+    /// which also makes it a type the derivability check must report.
+    /// </summary>
     public class OpenScopeCollection : List<TenantScope>;
 
     /// <summary>One step further down the chain, so the base walk must not stop at the first base type.</summary>
@@ -106,5 +112,40 @@ internal static class ProofDoorProbes
         IEnumerator<TenantScope> IEnumerable<TenantScope>.GetEnumerator() => _scopes.GetEnumerator();
 
         IEnumerator IEnumerable.GetEnumerator() => _scopes.GetEnumerator();
+    }
+
+    /// <summary>
+    /// Third-review probe: a public type nobody sealed, with three protected doors. The member scan
+    /// sees none of them (protected is not public); the derivability check reports the type, because
+    /// anyone deriving from it reaches all three.
+    /// </summary>
+    public abstract class ScopeHost
+    {
+        protected TenantScope? Held { get; set; }
+
+        protected internal TenantScope? Shared { get; set; }
+
+        protected static void With(Action<TenantScope> callback) => callback(null!);
+    }
+
+    /// <summary>
+    /// Control: <c>TenantAccess</c>'s own shape - abstract, with an internal constructor, so nothing
+    /// outside the assembly can derive from it and its protected member is unreachable. Not reported.
+    /// </summary>
+    public abstract class LockedHost
+    {
+        internal LockedHost()
+        {
+        }
+
+        protected TenantScope? Held { get; }
+    }
+
+    /// <summary>Control: sealed, with a public constructor. Not derivable, not reported.</summary>
+    public sealed class SealedHost
+    {
+        public SealedHost()
+        {
+        }
     }
 }

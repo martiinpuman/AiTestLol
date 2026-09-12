@@ -27,16 +27,20 @@ namespace Aurora.Platform.Tenancy.UnitTests.Kernel;
 /// <item><description>Every constructor of <c>TenantAccess</c> and <c>TenantScope</c> is
 /// <c>internal</c>, and <c>TenantScope</c> is sealed, so no derived type can add a public one.</description></item>
 /// <item><description><c>internal</c> reaches exactly the assemblies <c>[InternalsVisibleTo]</c>
-/// names, so that list is asserted as an exact set - a grant added later is a red test, not a
-/// silent widening.</description></item>
+/// names - on the contracts assembly, and on <c>Aurora.Platform.Tenancy</c>, where the factory that
+/// mints scopes will live - so both lists are asserted as exact sets: a grant added to either is a
+/// red test, not a silent widening.</description></item>
 /// <item><description>No public member of either friend assembly that ships - the contracts
-/// assembly and <c>Aurora.Platform.Tenancy</c> - mentions a <c>TenantAccess</c> anywhere in its
-/// signature, and no public type of either inherits one through its base chain or interfaces,
-/// unless named here by exact key as a sanctioned door, a proof-taking member, or one of the proof
-/// types themselves. Direction is not inferred and declared members are not the whole population,
-/// because inferring and declaring is where two reviews found the gaps. The scan is proven against
-/// <see cref="ProofDoorProbes"/>, and <see cref="ProofMentionScan"/> states what a signature scan
-/// cannot see.</description></item>
+/// assembly and <c>Aurora.Platform.Tenancy</c>, derived from link 2's grants rather than listed by
+/// hand - mentions a <c>TenantAccess</c> anywhere in its signature, and no public type of either
+/// inherits one through its base chain or interfaces, unless named here by exact key as a
+/// sanctioned door, a proof-taking member, or one of the proof types themselves. And no public
+/// type of either can be derived from outside it, so "public member" is the whole reachable
+/// surface: a protected door needs a derivable type, and there is none. Direction is not
+/// inferred, declared members are not the whole population, and public is not the whole surface,
+/// because three reviews found the gaps in exactly those three places. Both scans are proven
+/// against <see cref="ProofDoorProbes"/>, and <see cref="ProofMentionScan"/> states what a
+/// signature scan cannot see.</description></item>
 /// <item><description>There is no parameterless constructor at any accessibility. That is what
 /// closes <c>new T()</c>, <c>Activator.CreateInstance</c>, System.Text.Json and
 /// <c>DataContractSerializer</c> - each is tried, not reasoned about.</description></item>
@@ -45,7 +49,8 @@ namespace Aurora.Platform.Tenancy.UnitTests.Kernel;
 /// public property - every one, by reflection and counted, and a property that claims an absent
 /// reading must actually be read: a getter that throws instead has its claim untested and fails,
 /// and <c>NullReferenceException</c> fails by name because it is the signature of a getter
-/// dereferencing what the constructor would have set. The last link is a scope every consumer
+/// dereferencing what the constructor would have set. A real scope is read the same way, so a
+/// declared refusal cannot be one that throws always. The last link is a scope every consumer
 /// refuses, not one that passes for real.</description></item>
 /// </list>
 /// <para>
@@ -73,15 +78,36 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
 
     private static readonly Assembly Contracts = typeof(TenantAccess).Assembly;
 
+    private static readonly Assembly Tenancy = typeof(TenantIdentityStamp).Assembly;
+
     /// <summary>
-    /// The assemblies <c>internal</c> reaches that ship: link 2's grants minus the test assembly.
-    /// <c>Aurora.Platform.Tenancy</c> is where B-06.3 puts the scope factory, which is why its
-    /// surface is scanned with the same allow-lists rather than trusted to stay internal.
+    /// The grants link 2 asserts on the contracts assembly: <c>Aurora.Platform.Tenancy</c>, where
+    /// B-06.3's scope factory will live, and this test assembly, which proves the type surface.
+    /// </summary>
+    private static readonly string[] ContractsGrants = ["Aurora.Platform.Tenancy", "Aurora.Platform.Tenancy.UnitTests"];
+
+    /// <summary>
+    /// The grants link 2 asserts on <c>Aurora.Platform.Tenancy</c>: its two test assemblies. A
+    /// friend there can call the internal scope factory when it lands without ever needing the
+    /// contracts grant, which is why this list is a mechanism too. ADR-0034 §6.1 plans a third
+    /// (<c>Aurora.TestKit</c>, B-18.5) and makes this assertion its first condition.
+    /// </summary>
+    private static readonly string[] TenancyGrants = ["Aurora.Platform.Tenancy.IntegrationTests", "Aurora.Platform.Tenancy.UnitTests"];
+
+    /// <summary>
+    /// The assemblies <c>internal</c> reaches that ship: the contracts assembly and every assembly
+    /// its <c>[InternalsVisibleTo]</c> names that is not a test assembly - derived from link 2's
+    /// list, not written beside it, so a third shipping grant widens the scan by itself. The
+    /// named-type assertion in the scan test proves the load actually happened.
     /// </summary>
     private static readonly Assembly[] ShippingFriends =
     [
         Contracts,
-        typeof(TenantIdentityStamp).Assembly,
+        .. Contracts.GetCustomAttributes<InternalsVisibleToAttribute>()
+            .Select(static attribute => attribute.AssemblyName)
+            .Where(static name => !name.EndsWith(".UnitTests", StringComparison.Ordinal)
+                && !name.EndsWith(".IntegrationTests", StringComparison.Ordinal))
+            .Select(static name => Assembly.Load(name)),
     ];
 
     /// <summary>
@@ -135,6 +161,13 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     /// member - with the value a hollow scope reads, named so that nobody reads it as evidence of
     /// a real scope.
     /// </summary>
+    /// <remarks>
+    /// The <c>Reason</c> entry rests on <c>Request</c> being member 0 of <c>TenantAccessReason</c>:
+    /// it is the least privileged reason, so a hollow scope reading it claims nothing. Reorder that
+    /// enum so that <c>Provisioning</c>, <c>Migration</c> or <c>OperatorSupport</c> sits at 0 and a
+    /// hollow scope would claim the most privileged reason instead; the test below asserts the
+    /// constraint so that the entry is corrected by rejecting the reorder, not by matching it.
+    /// </remarks>
     private static readonly Dictionary<string, object> CannotRefuse = new(StringComparer.Ordinal)
     {
         ["Reason"] = TenantAccessReason.Request,
@@ -144,7 +177,8 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     /// The properties that refuse a hollow scope by throwing, with the exception each is designed
     /// to throw. Empty today: no property of <c>TenantScope</c> throws. B-06.3's lease may add one
     /// (<c>TenantScopeExpiredException</c>, ADR-0007 §10.4); a <c>NullReferenceException</c> is never
-    /// a designed refusal and is refused by name whether or not a property is listed here.
+    /// a designed refusal and is refused by name whether or not a property is listed here, and a
+    /// property listed here is also read on a real scope, where it must not throw.
     /// </summary>
     private static readonly Dictionary<string, Type> RefusesByThrowing = new(StringComparer.Ordinal);
 
@@ -180,30 +214,34 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void Internals_are_visible_to_the_tenancy_assembly_and_its_unit_test_assembly_and_nothing_else()
+    public void Internals_of_the_contracts_assembly_are_visible_to_the_tenancy_assembly_and_its_unit_test_assembly_and_nothing_else()
     {
         // Link 2. "internal" means nothing on its own: it means "these assemblies". ADR-0007 §3.4
         // names the tenancy assembly and its test assembly as the only grants, and this asserts the
         // exact set rather than a floor, so the day a third name appears the test says so.
-        string[] grants =
-        [
-            .. Contracts.GetCustomAttributes<InternalsVisibleToAttribute>()
-                .Select(attribute => attribute.AssemblyName)
-                .OrderBy(name => name, StringComparer.Ordinal),
-        ];
+        Grants(Contracts).ShouldBe(ContractsGrants);
+    }
 
-        grants.ShouldBe(["Aurora.Platform.Tenancy", "Aurora.Platform.Tenancy.UnitTests"]);
+    [Fact]
+    public void Internals_of_the_tenancy_assembly_are_visible_to_its_two_test_assemblies_and_nothing_else()
+    {
+        // Link 2, the other assembly. B-06.3's scope factory is internal to Aurora.Platform.Tenancy
+        // and returns a scope; an assembly granted internals there mints scopes without ever needing
+        // the contracts grant. So this list is a mechanism too, asserted as an exact set (the shape
+        // ADR-0034 §6.1 requires before Aurora.TestKit may be added to it).
+        Grants(Tenancy).ShouldBe(TenancyGrants);
     }
 
     [Fact]
     public void No_public_member_or_type_of_a_shipping_friend_assembly_mentions_a_proof_unless_it_is_named_here()
     {
-        // Link 3. Every public member of every public type in both friend assemblies that ship,
-        // nested types included, and every public type's inheritance. A mention is reported by
-        // exact key and must be in one of the three allow-lists; every allow-list entry must match
-        // exactly one mention, so a stale or misspelled entry sanctions nothing. The count is printed
-        // on every run and held to a floor, and the types the rule is about are asserted as
-        // visited - a floor proves the scan ran, naming the types proves what it ran over.
+        // Link 3, first scan. Every public member of every public type in both friend assemblies
+        // that ship, nested types included, and every public type's inheritance. A mention is
+        // reported by exact key and must be in one of the three allow-lists; every allow-list entry
+        // must match exactly one mention, so a stale or misspelled entry sanctions nothing. The
+        // count is printed on every run and held to a floor, and the types the rule is about are
+        // asserted as visited - a floor proves the scan ran, naming the types proves what it ran
+        // over.
         ProofMentionScanResult scan = ProofMentionScan.Over(ShippingFriends.SelectMany(ProofMentionScan.TopLevelPublicTypes));
         string[] allowed = [.. SanctionedDoors, .. ProofTakingMembers, .. ProofTypesThemselves];
 
@@ -213,6 +251,7 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
             + $"({string.Join(", ", ShippingFriends.Select(static assembly => assembly.GetName().Name))}); "
             + $"{scan.Mentions.Count} mention a proof, {allowed.Length} allow-listed; floor {ExaminedFloor}");
 
+        ShippingFriends.Length.ShouldBe(2, "the contracts assembly and the one shipping assembly its grants name");
         scan.Examined.ShouldBeGreaterThanOrEqualTo(
             ExaminedFloor,
             $"{scan.Examined} public members examined; the floor is the measured count rounded down to the "
@@ -221,7 +260,7 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         scan.VisitedTypes.ShouldContain(typeof(TenantScope).FullName!);
         scan.VisitedTypes.ShouldContain(
             "Aurora.Platform.Tenancy.CatalogServiceCollectionExtensions",
-            "the one non-migration type Aurora.Platform.Tenancy exports; without it the scan read one assembly, not two");
+            "the DI extension Aurora.Platform.Tenancy exports; without it the scan read one assembly, not two");
 
         scan.Mentions
             .Where(mention => !allowed.Contains(mention, StringComparer.Ordinal))
@@ -240,14 +279,44 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void No_public_type_of_a_shipping_friend_assembly_can_be_derived_from_outside_it()
+    {
+        // Link 3, second scan. The first scan reads public members. Protected and protected-internal
+        // members of a public type nobody sealed are reachable by anyone who derives from it, and
+        // BindingFlags.Public never sees them - the third review's door. This asserts that no
+        // public type in either friend assembly can be derived from outside it: sealed, static, an
+        // interface with no protected member, or a class with no public or protected constructor.
+        // With that true, the public surface is the whole reachable surface and the first scan is
+        // complete. Every public type is examined, nested types included, and the count is printed;
+        // the migration classes are asserted as examined by name because EF scaffolds them public
+        // and unsealed, which is exactly the shape this catches.
+        DerivabilityScanResult scan = ProofMentionScan.DerivableTypes(ShippingFriends.SelectMany(ProofMentionScan.TopLevelPublicTypes));
+
+        output.WriteLine(
+            $"link 3: {scan.Examined.Count} public types examined for derivability in "
+            + $"{Plural(ShippingFriends.Length, "assembly", "assemblies")}; {scan.Derivable.Count} derivable from outside");
+
+        scan.Examined.Count.ShouldBeGreaterThanOrEqualTo(15, "the friend assemblies declare well over a dozen public types");
+        scan.Examined.ShouldContain(typeof(TenantAccess).FullName!);
+        scan.Examined.ShouldContain(typeof(TenantScope).FullName!);
+        scan.Examined.ShouldContain(
+            "Aurora.Platform.Tenancy.Migrations.AppendOnlyTrails",
+            "an EF migration is public and, until sealed by hand, derivable; it must be in the population");
+        scan.Derivable.ShouldBeEmpty(
+            "a public type that code outside the friend set can derive from makes every protected member "
+            + "it declares, now or later, a door the member scan cannot see: seal it, make it static, or give "
+            + "it no public or protected constructor");
+    }
+
+    [Fact]
     public void The_scan_reports_every_door_shape_and_the_inbound_shape_and_neither_negative_control()
     {
-        // The scan proven to fail: run over a type built of doors, it must report each - including
-        // the two shapes the first review walked through the earlier scan in green (the event and
-        // the callback parameter) and the three types the second review walked through the next
-        // one (collections that declare nothing and inherit their scopes) - and must stay silent on
-        // the members that mention no proof. The examined count is exact so that a member the
-        // fixture gained or lost is noticed too.
+        // The first scan proven to fail: run over a type built of doors, it must report each -
+        // including the two shapes the first review walked through the earlier scan in green (the
+        // event and the callback parameter) and the three types the second review walked through
+        // the next one (collections that declare nothing and inherit their scopes) - and must stay
+        // silent on the members that mention no proof. The examined count is exact so that a member
+        // the fixture gained or lost is noticed too.
         ProofMentionScanResult scan = ProofMentionScan.Over([typeof(ProofDoorProbes)]);
 
         string probes = typeof(ProofDoorProbes).FullName!;
@@ -265,15 +334,19 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
                 probes,
                 typeof(ProofDoorProbes.DeeperCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeCollection).FullName!,
+                typeof(ProofDoorProbes.LockedHost).FullName!,
                 nested,
                 typeof(ProofDoorProbes.OpenScopeCollection).FullName!,
+                typeof(ProofDoorProbes.ScopeHost).FullName!,
+                typeof(ProofDoorProbes.SealedHost).FullName!,
             ],
             "every nested public type is expanded");
         scan.Examined.ShouldBe(
             21,
             "the fixture's public members: one event with two accessors, nine methods, three properties "
             + "with five accessors between them, the nested type's property with its getter, and the "
-            + "explicit collection's ToString");
+            + "explicit collection's ToString; the hosts' protected members are not public and are the "
+            + "derivability check's to see");
         scan.Mentions.Order(StringComparer.Ordinal).ShouldBe(
             new[]
             {
@@ -301,6 +374,36 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         scan.Mentions.ShouldNotContain(probes + ".Describe(System.String)");
         scan.Mentions.ShouldNotContain(probes + ".All()", "the member names no proof; its return type is reported as a type");
         scan.Mentions.ShouldNotContain(probes + ".Bag()", "the member names no proof; its return type is reported as a type");
+    }
+
+    [Fact]
+    public void The_derivability_check_reports_every_type_an_outsider_could_derive_from_and_neither_control()
+    {
+        // The second scan proven to fail: the third review's ScopeHost (abstract, protected doors,
+        // an implicit protected constructor) and the unsealed collection must be reported, each with
+        // what deriving would expose; the sealed control and the internal-constructor control (the
+        // shape TenantAccess and a sealed migration take) must not. The examined set is exact.
+        DerivabilityScanResult scan = ProofMentionScan.DerivableTypes([typeof(ProofDoorProbes)]);
+
+        scan.Examined.ShouldBe(
+            [
+                typeof(ProofDoorProbes).FullName!,
+                typeof(ProofDoorProbes.DeeperCollection).FullName!,
+                typeof(ProofDoorProbes.ExplicitScopeCollection).FullName!,
+                typeof(ProofDoorProbes.LockedHost).FullName!,
+                typeof(ProofDoorProbes.Nested).FullName!,
+                typeof(ProofDoorProbes.OpenScopeCollection).FullName!,
+                typeof(ProofDoorProbes.ScopeHost).FullName!,
+                typeof(ProofDoorProbes.SealedHost).FullName!,
+            ]);
+        scan.Derivable.Order(StringComparer.Ordinal).ShouldBe(
+            [
+                typeof(ProofDoorProbes.OpenScopeCollection).FullName
+                    + ": derivable from outside through a public constructor; protected members it would expose: none today",
+                typeof(ProofDoorProbes.ScopeHost).FullName
+                    + ": derivable from outside through a protected constructor; protected members it would expose: "
+                    + "Held, Shared, With, get_Held, get_Shared, set_Held, set_Shared",
+            ]);
     }
 
     [Fact]
@@ -366,8 +469,12 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         // by name whatever the property is listed as, because on a hollow scope it is the signature
         // of a getter dereferencing a field the constructor would have set - B-06.3's most likely
         // lease shape, IsActive => _lease.Held - and not a refusal anyone designed.
+        default(TenantAccessReason).ShouldBe(
+            TenantAccessReason.Request,
+            "CannotRefuse's Reason entry is only safe while the least privileged reason is member 0");
+
         object hollow = RuntimeHelpers.GetUninitializedObject(typeof(TenantScope));
-        PropertyInfo[] properties = typeof(TenantScope).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        PropertyInfo[] properties = PublicProperties();
 
         properties.Length.ShouldBe(
             ReadsAsAbsent.Count + CannotRefuse.Count + RefusesByThrowing.Count,
@@ -425,10 +532,49 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void A_real_scope_reads_every_public_property_without_throwing()
+    {
+        // Link 5's other side. A property named in RefusesByThrowing is designed to refuse a
+        // hollow scope; on a real one it must read, or "refuses by throwing" is "throws always" and
+        // the hollow-scope test could not tell the two apart. Every public property is read on a
+        // scope this assembly built through the internal constructor, the same population the
+        // hollow-scope test enumerates, so the two tests cannot drift apart on which properties exist.
+        TenantScope real = new(
+            TenantId.Create(),
+            TenantKey.Parse("acme-trading", null),
+            Region.Parse("nz", null),
+            SchemaVersion.Of(1),
+            InstalledPackages.None,
+            TenantAccessReason.Request);
+        PropertyInfo[] properties = PublicProperties();
+
+        properties.Length.ShouldBe(ReadsAsAbsent.Count + CannotRefuse.Count + RefusesByThrowing.Count);
+        List<string> report = [];
+        foreach (PropertyInfo property in properties)
+        {
+            object? reading = property.GetValue(real);
+            report.Add($"{property.Name}: {reading ?? "null"}");
+        }
+
+        report.Count.ShouldBe(properties.Length, string.Join("; ", report));
+        real.IsActive.ShouldBeTrue();
+    }
+
+    [Fact]
     public void The_abstract_base_cannot_be_materialised_at_all()
     {
         Should.Throw<MemberAccessException>(() => RuntimeHelpers.GetUninitializedObject(typeof(TenantAccess)));
     }
+
+    private static PropertyInfo[] PublicProperties() =>
+        typeof(TenantScope).GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+    private static string[] Grants(Assembly assembly) =>
+    [
+        .. assembly.GetCustomAttributes<InternalsVisibleToAttribute>()
+            .Select(static attribute => attribute.AssemblyName)
+            .OrderBy(static name => name, StringComparer.Ordinal),
+    ];
 
     private static string Inherits(Type type, params Type[] ancestry) =>
         type.FullName + " : " + string.Join(", ", ancestry.Select(static ancestor => ancestor.ToString()).Order(StringComparer.Ordinal));
