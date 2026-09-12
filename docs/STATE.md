@@ -2,7 +2,7 @@
 
 **Phase:** build · **Milestone:** M1 walking skeleton (B-01 … B-15)
 **Integration branch:** `claude/multi-tenant-saas-erp-pv2nap` · draft PR #1 tracks it
-**Last iteration:** 8 (2026-09-12)
+**Last iteration:** 9 (2026-09-12)
 
 ## Product in one line
 A multi-tenant SaaS ERP for SMBs with a country-agnostic core, where every jurisdiction-specific rule ships as an installable **Country Package**.
@@ -20,7 +20,7 @@ request**. Merge authority is the orchestrator's; no branch waits on a human.
 xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework major from 3.0 on).
 `source scripts/dev-env.sh` before any `dotnet`; `scripts/bootstrap-env.sh` rebuilds a fresh container.
 
-## Done and merged (twelve tasks)
+## Done and merged (fourteen tasks)
 - **B-01** solution skeleton — 9 projects, Release clean at 0 warnings, lock file per project.
 - **B-02** `scripts/verify.sh` — the quality gate, plus `verify-selftest.sh`, which injects a defect,
   asserts the gate fails naming the right stage, and reverts. 21/21.
@@ -51,31 +51,28 @@ and **never inherited** — three in-flight branches each re-round it (826, 840,
 the merged result rather than trusting the incoming line. Git cannot see that conflict, which is why
 the rule exists.
 
-## In flight — three pull requests and two fresh builds
+## In flight
 | What | Tier | Where it stands |
 |---|---|---|
-| PR #13 `task/B-06.1a` | Full | **Rework 2.** Second review found three majors, one of which is the eighth form *inside the fix for the seventh*: link 5's new "a throwing getter counts as fail-closed" arm passes green on B-06.3's natural lease shape, where the pre-rework version failed loudly. |
-| PR #14 `task/B-06.1` | Full | **APPROVED** by the second reviewer, no blockers or majors. Taking four cheap minors first — two are *a test that passes for the wrong reason*. Merges **before** B-20. |
-| PR #16 `task/B-09` | Full | **Rework 1.** Two blockers: a procedural body in a *single-quoted* literal is never read and reported clean (`DO '…'` versus `DO $$…$$`), and MIG1 goes red at merge because B-19's migration carries no `[MigrationSafety]`. |
-| `task/B-20` | Full | ADR-0034 §3.1's `(host, port)` unique index. Building. Warned: it reds **six** integration tests, five of them because `RoutingTestBed` builds a cluster row per bed on one endpoint. |
-| `task/B-21` | Full | ADR-0033's package admission floor, `FirstParty`-only, with D1/D2/D3. Building. |
-
-## Routings recorded but not yet actioned (transcribe before merging, never after)
-All four of the previous entries are **answered** by ADR-0033/0034/0035 on PR #15: `TenantDatabaseHandle`
-is kept and owned by B-07.1 but moves out of `.Contracts` (that project may not reference Npgsql);
-`InstalledPackages` is confirmed with an `Active`/`TryGetActive` correction B-06.1a must absorb;
-ADR-0007 §3.5 moves rather than the code changing, because a connection string is a live credential and
-a `.Contracts` type is nameable by every module; and `FOLLOWUP-032` is narrowed.
-
-Open, and held: **B-18.1 and B-07.1 both wait on ADR-0034's `ux_database_cluster_host_port` index.**
-Three variants of the tenant-takeover finding have now been executed, and every one defined a
-constraint over a *logical* identifier where the thing that must be unique is the *physical* endpoint.
+| PR #13 `task/B-06.1a` | Full | **Rework 3.** Third review found `BindingFlags.Public` is not the externally reachable surface — `protected` on a public unsealed type is reachable by anyone who derives from it, and a non-friend assembly compiled against three such doors. Also a second unguarded `DROP DATABASE` site, and two wrong numbers in `verify.sh`'s own comment. |
+| PR #16 `task/B-09` | Full | **Rework 2**, queued behind the rate limit. `ENABLE REPLICA TRIGGER` scans clean and is *pinned clean as a safe look-alike* — it disarms B-19's guards exactly as `DISABLE TRIGGER` does. And adjacent string literals are one body to PostgreSQL, so half of a concatenated body is never read. |
+| PR #18 `task/B-20` | Full | First review. The branch found **ADR-0034 §3.3's acceptance criterion cannot fail as written** — `Application Name` carries the tenant key, so composed strings never collide. |
+| `task/ARCH-MIGRATION-IDENTIFIERS` | Full | Architect, queued. Six questions: the `pkg_<id>` identifier rule, CHECK-replacement-as-Expand and whether a naming convention may be a link, `varchar` widening and the release manifest, ADR-0033's Development reading, **§3.3's vacuous criterion**, and whether the destructive set classifies by spelling or by effect. |
 
 ## Known risks
-1. **Usage limits kill agents mid-task, repeatedly** (five times so far). Mitigation works: developers
-   commit as soon as work compiles, and nothing has been lost. **A completion notice can badly
-   understate what an agent did** — B-05's showed one sentence while its branch held 24 commits.
-   Always check the branch before concluding nothing happened.
+1. **Usage limits kill agents mid-task, repeatedly** — most recently **all four at once**, costing
+   about three hours of wall clock. **Nothing was lost, again:** seven worktrees intact, every branch
+   pushed, and all four resumable with their context. The mitigation is the discipline that developers
+   commit as soon as work compiles and the orchestrator never removes a worktree whose agent it may
+   want back.
+   **What caused it is worth recording as an orchestrator error rather than bad luck:** five agents
+   with four building, sustained. `LOOP_PROMPT.md` already said six-agent load had exhausted the limit
+   once. Four building is the stated cap and it is a cap, not a target — the cost of exceeding it is
+   paid in wall clock, not in work.
+   **A completion notice can badly understate what an agent did** — B-05's showed one sentence while
+   its branch held 24 commits. Always check the branch before concluding nothing happened. Equally:
+   an agent reporting that it is *waiting on a run* may be telling the truth — check for a live
+   process before treating it as a stall. That has now gone both ways once each.
 2. **Fable has its own, tighter quota.** Three concurrent Fable agents exhausted it in under a minute.
    Prefer one or two; fall back to Opus on a rate limit rather than leaving the graph idle.
 3. **B-11 must implement ADR-0026's two-tier dependency gate**, not the original §1 rule — the
