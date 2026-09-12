@@ -151,12 +151,24 @@ mechanisms:
    back, an `UPDATE` and a `DELETE` of a seeded row on each table and a `TRUNCATE` of it must
    return `42501` and the guard's message, and the probe reports
    `relations probed / statements refused / silent` by `table/VERB`, floored at the two tables the
-   record names. A fault theory hollows the function body two ways (`RETURN COALESCE(NEW, OLD)` and
-   `RETURN NULL` — one statement each, leaving every `pg_trigger` column byte-identical), and
-   disables and drops each of the two guards in turn, and watches the probe name exactly the
-   silenced statements and go green again once rolled back. The `pg_trigger` enumeration
-   (`tgtype 27` and `34`, `tgenabled 'A'`) stays as the locator that says which table and why;
-   it is blind to a hollow body by construction. Under `session_replication_role = 'replica'`,
+   record names. Beside it, a **binding check** reads, for each guard the migration created, every
+   `pg_trigger` column that decides whether it fires — `tgtype` exactly, `tgenabled 'A'`,
+   `tgfoid` resolved to `catalog.refuse_append_only_change` *by schema*, `tgqual` null, `tgattr`
+   empty — because a guard whose firing was made *conditional* lets nothing through for the
+   probe's session: a `WHEN (current_setting('aurora.maintenance', true) IS DISTINCT FROM 'on')`
+   clause fires for every session that has not set that GUC, the probe included, and a
+   `BEFORE UPDATE OF correlation_id` list fires for the one column the probe updates. Both shipped
+   through the first review of this branch with every test green (PR #12), because the
+   enumeration then read `tgtype`, `tgenabled` and a schema-less `proname` and nothing else. A
+   fault theory runs ten tamper shapes — the function body hollowed two ways (`RETURN
+   COALESCE(NEW, OLD)`, `RETURN NULL`), each guard disabled and dropped, the row guard re-created
+   with a `WHEN` clause, the truncate guard re-created with one (PostgreSQL 17.11 accepts it on a
+   statement trigger *and evaluates it* — executed: with the GUC set the `TRUNCATE` lands and the
+   table reads back empty, so `tgqual` is load-bearing on both guards), the row guard re-created for
+   `UPDATE OF` one column, and the row guard rebound to a hollow `shadow_b19.refuse_append_only_change()`
+   — and for each states what the probe sees and what the binding check sees, executes the
+   bypass with the GUC set for the shapes only the binding check sees, and requires that at least
+   one side reports every shape. All rolled back. Under `session_replication_role = 'replica'`,
    which suppresses an ordinary trigger with `pg_trigger` unchanged, the `ALWAYS` guards still
    refuse.
 3. **No default privilege for the schema.** `pg_default_acl` holds zero rows scoped to `catalog`. A
@@ -165,13 +177,21 @@ mechanisms:
    resulting ACL of every catalog relation and never which statement produced it.
 
 **What this does not cover, stated rather than implied.** `aurora_migrator`, as the DDL-path role,
-can disable or drop either guard or replace the function's body, and then rewrite, remove or empty
-a trail; nothing here detects that. That is the detection-not-prevention boundary ADR-0028 §2
-draws; its cover is a chain head recorded outside the tenant database — in `operator_audit_event`,
-by `FOLLOWUP-031`'s job — carried as `FOLLOWUP-026`. Neither table is partitioned, so Amendment 2's
-partition clause (a guard created on every partition) does not arise here. And the writers, not
-this module, keep personal data and erased values out of `detail` and `affected` (ADR-0018 §4, §6
-point 6): a column cannot enforce that, and no test here claims to.
+can disable, drop, re-create or rebind either guard, or replace the function's body, and then
+rewrite, remove or empty a trail. Of those acts, the effect probe sees the ones that let *its own*
+statements through — a hollowed body, a disabled or dropped guard, a guard rebound to a function
+that does not raise; the binding check sees the ones that change a guard's binding — disabled,
+dropped, rebound, or made conditional by a `WHEN` clause or a column list, which the probe cannot
+see because such a guard fires for the probe's session and not for the attacker's. Until the check
+read `tgqual` and `tgattr`, that last path was invisible to both and shipped through a one-line
+migration diff with every test green. What neither sees, and nothing here detects: a transient
+tamper between two runs — disable, act, restore — and any shape neither the probe executes nor the
+check binds. That is the detection-not-prevention boundary ADR-0028 §2 draws; its cover is a chain
+head recorded outside the tenant database — in `operator_audit_event`, by `FOLLOWUP-031`'s job —
+carried as `FOLLOWUP-026`. Neither table is partitioned, so Amendment 2's partition clause (a guard
+created on every partition) does not arise here. And the writers, not this module, keep personal
+data and erased values out of `detail` and `affected` (ADR-0018 §4, §6 point 6): a column cannot
+enforce that, and no test here claims to.
 
 ---
 

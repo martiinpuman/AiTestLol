@@ -142,23 +142,32 @@ namespace Aurora.Platform.Tenancy.Migrations
             // suppresses with pg_trigger unchanged; the GUC is superuser-only on PostgreSQL 17 and
             // one GRANT SET ON PARAMETER away, and ENABLE ALWAYS costs one statement.
             //
-            // What is asserted of the guards is that they refuse, never that they exist:
-            // CatalogAppendOnlyGuardTests executes UPDATE, DELETE and TRUNCATE as aurora_migrator
-            // inside a transaction it rolls back and requires 42501 and this function's message
-            // from each, because CREATE OR REPLACE FUNCTION with a hollow body - RETURN NULL, which
-            // a statement-level trigger ignores - is one statement that leaves every pg_trigger
-            // column byte-identical while the TRUNCATE lands. The pg_trigger enumeration is kept as
-            // the locator that says which table and why, and it is blind to that fault by
-            // construction.
+            // What is asserted of the guards is that they refuse and that they are bound as
+            // written here, never merely that they exist. CatalogAppendOnlyGuardTests executes
+            // UPDATE, DELETE and TRUNCATE as aurora_migrator inside a transaction it rolls back and
+            // requires 42501 and this function's message from each, because CREATE OR REPLACE
+            // FUNCTION with a hollow body - RETURN NULL, which a statement-level trigger ignores -
+            // is one statement that leaves every pg_trigger column byte-identical while the
+            // TRUNCATE lands. And it reads back, for each guard, every pg_trigger column that
+            // decides whether it fires - tgtype exactly, tgenabled 'A', tgfoid resolved to this
+            // function by schema, tgqual null, tgattr empty - because a guard made conditional
+            // refuses the probe and not the attacker: re-created WITH a WHEN clause keyed on a GUC,
+            // it fires for every session that has not set that GUC, the probe included, while a
+            // session that has set it deletes or truncates freely (PR #12, critical; executed on
+            // 17.11 for the row guard and the truncate guard alike), and re-created for UPDATE OF
+            // one column it fires for that column and no other. Neither changes tgtype, tgenabled
+            // or the function's name, which is all the first version of that check read.
             //
             // Neither table is partitioned, so Amendment 2's partition clause - a guard created on
             // every partition, because a truncate guard is never cloned to one - does not arise
             // here. What the guards leave, stated rather than implied: aurora_migrator, as the
-            // DDL-path role, can still disable or drop either guard or replace this function's
-            // body - the detection-not-prevention boundary ADR-0028 section 2 draws, whose cover
-            // is the chain head recorded in operator_audit_event by FOLLOWUP-031's job
-            // (FOLLOWUP-026). aurora_app never reaches either guard: its UPDATE, DELETE and
-            // TRUNCATE are 42501 from the privilege check, and the ACL comparison keeps it so.
+            // DDL-path role, can still disable, drop, re-create or rebind either guard or replace
+            // this function's body, and a transient tamper between two runs - disable, act,
+            // restore - is seen by nothing here; that is the detection-not-prevention boundary
+            // ADR-0028 section 2 draws, whose cover is the chain head recorded in
+            // operator_audit_event by FOLLOWUP-031's job (FOLLOWUP-026). aurora_app never reaches
+            // either guard: its UPDATE, DELETE and TRUNCATE are 42501 from the privilege check, and
+            // the ACL comparison keeps it so.
             foreach (string table in new[] { "operator_audit_event", "erasure_replay_log" })
             {
                 migrationBuilder.Sql(
