@@ -8,7 +8,7 @@ it creates it. The full list, and what each one owns and must not do, is in
 
 | Module | State | Owner |
 |---|---|---|
-| [`Aurora.Platform.Tenancy`](Aurora.Platform.Tenancy/README.md) + `.Contracts` | Catalog database and the tenant registry (B-05). Connection resolution, scopes and the tenant `DbContext` factory land with B-06 | B-05 … B-08 |
+| [`Aurora.Platform.Tenancy`](Aurora.Platform.Tenancy/README.md) + `.Contracts` | Catalog database and the tenant registry (B-05); the connection resolver, its routing cache and the §5.2 pool settings (B-06.1). Scopes and the tenant `DbContext` factory land with B-06.2 and B-06.3 | B-05 … B-08 |
 | Identity, Access, Audit, Messaging, Jobs, Localization, Configuration | Not created yet | their own tasks |
 
 The `Platform.` namespace segment is load-bearing: every architecture fitness test is expressed as

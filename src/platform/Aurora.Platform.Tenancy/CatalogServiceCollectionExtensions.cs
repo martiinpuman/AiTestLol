@@ -20,14 +20,17 @@ namespace Aurora.Platform.Tenancy;
 /// The routing cache (ADR-0007 §3.5, ADR-0012 §3) is registered here rather than with the
 /// resolver, because it is a property of the catalog context, not of its readers: every tenant
 /// state change written through the context must reach the cache, whichever host wrote it and
-/// whether or not that host also resolves connections.
+/// whether or not that host also resolves connections. The invalidation is a
+/// <c>SaveChangesInterceptor</c> attached to the context's options here, so a context obtained
+/// from the container cannot be had without it.
 /// </para>
 /// </remarks>
 public static class CatalogServiceCollectionExtensions
 {
     /// <summary>
     /// Adds the catalog <c>DbContext</c>, scoped, over <paramref name="connectionString"/>, with
-    /// the routing cache the resolver reads through.
+    /// the routing cache the resolver reads through and the interceptor that invalidates it on a
+    /// tenant state change.
     /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="connectionString"/> is blank.</exception>
@@ -38,8 +41,13 @@ public static class CatalogServiceCollectionExtensions
 
         services.AddHybridCache();
         services.TryAddSingleton<TenantRoutingCache>();
+        services.TryAddSingleton<TenantRoutingCacheInvalidator>();
 
-        services.AddDbContext<CatalogDbContext>(options => CatalogDbContextOptions.Configure(options, connectionString));
+        services.AddDbContext<CatalogDbContext>((provider, options) =>
+        {
+            CatalogDbContextOptions.Configure(options, connectionString);
+            options.AddInterceptors(provider.GetRequiredService<TenantRoutingCacheInvalidator>());
+        });
         return services;
     }
 }

@@ -210,6 +210,53 @@ with B-10's `Aurora.TestKit`, then owes:
 
 ---
 
+## What B-06.1 adds: the connection resolver
+
+`ITenantConnectionResolver` (ADR-0007 §3.5) — **the only code that builds a tenant connection
+string** — with its routing cache and the §5.2 pool settings. All of it in `Routing/` and
+`Secrets/`, all of it internal: the assembly exports its two DI extensions and the one enum a host
+passes to them (`TenantPoolProfile`), and `CatalogContextAccessibilityTests` holds it to that.
+
+| Piece | Does | Proven by |
+|---|---|---|
+| `CatalogTenantRoutingReader` | The one catalog read: `catalog.tenant` left-joined to `catalog.database_cluster`, one statement, as whichever role the context holds (`aurora_app` on the request path). Reads the admin and migrator secret references alongside the app one, so `ITenantAdminConnectionFactory` (B-07.1, ADR-0027 §2) reuses this read instead of writing a second query | `The_reader_joins_the_tenant_to_its_cluster_in_one_statement_as_the_app_role` counts the statements sent and reads both table names out of the SQL |
+| `TenantRoutingCache` | The 60 s `HybridCache` entry under `c:tenant-routing:{tenantId}` (`CatalogCacheKey`, ADR-0012 rule 2). An unknown tenant throws and is never cached | Unit tests count reads through a counting reader behind a real `HybridCache`: 1, then 1 (hit), then 2 after removal; +59 s hit and +61 s miss with a `FakeTimeProvider` driving both clocks the cache reads |
+| `TenantRoutingCacheInvalidator` | A `SaveChangesInterceptor` on every `CatalogDbContext` the container hands out (`AddCatalogDatabase`): a tenant whose `state`, `key`, `cluster_id`, `database_name` or `residency_region` is saved has its entry removed after the save; a failed save removes nothing; an activity stamp alone removes nothing | **The row's non-negotiable proof**, against PostgreSQL through the production DI wiring on both sides: statements 1 → 1 (hit) → suspend through `Tenant.Suspend` and a real `SaveChangesAsync` → 2 (miss), and the cached row then reads `Suspended`. Sever the interceptor's selection, or its wiring, and the third count stays at 1 — both were done before the tests were committed |
+| `TenantConnectionResolver` | Cache → state check (`Active` and `Suspended` route; every other state is refused naming the state) → credential from the secret store on every resolve → `TenantConnectionStringComposer` | `TenantConnectionResolverTests` (unit), and the integration test that opens the resolved string and has the server report `current_database()`, `current_user` and `application_name` |
+| `TenantPoolSettings` / `TenantPoolProfile` | The §5.2 table: Minimum Pool Size 0; Maximum 10 (Web) / 5 (Worker); Connection Idle Lifetime 30 s; Pruning Interval 5 s; Max Auto Prepare 0; Timeout 5 s; Command Timeout 30 s (Web) / 300 s (Worker); Application Name `aurora-web:{tenantKey}` / `aurora-worker:{tenantKey}` | `TenantPoolSettingsTests` parses the composed string back with `NpgsqlConnectionStringBuilder` and asserts all eight from there, counting them; the seven that differ from Npgsql's default are pinned against a fresh builder, so a composer that set nothing cannot pass on the two that equal it |
+| `ISecretStore` / `EnvironmentSecretStore` | ADR-0011 tier 2: `env:NAME` is the environment variable `NAME`. The catalog holds the reference; the value enters the connection string in memory and nothing else. A vault or mounted-file store is a second implementation chosen in the composition root | `EnvironmentSecretStoreTests` |
+
+Three things a reader will want stated:
+
+- **What is cached is the routing row with the secret's reference, never the credential.** The
+  store is consulted on every resolve, so a rotated secret takes effect on the next resolve with no
+  catalog read (ADR-0011: rotation is an overlap window), and no password can reach an L2 backend
+  when one arrives. `TenantConnection.ToString()` redacts the connection string (ADR-0016).
+- **Which states route.** `Active` and `Suspended`: §11.4 keeps a suspended tenant readable behind a
+  banner, so the application still connects and the read-only restriction is enforced elsewhere.
+  `Provisioning`, `ProvisioningFailed`, `SchemaBlocked`, `PendingDeletion` and `Deleted` are refused
+  for the reasons §7.4, §7.5, §4.3 and §11.4 give; `Exporting` is refused on the fail-closed reading
+  until the export job (no backlog row yet) says what it needs. The DDL path never comes through the
+  resolver (ADR-0027 §2); it reads through the same `ITenantRoutingReader` and applies its own rules.
+- **What invalidation promises, and what it does not.** The interceptor sees every state change
+  written through the entity; a change written around the change tracker (raw SQL, `ExecuteUpdate`)
+  is bounded by the entry's 60 s lifetime, as is another instance's copy until an L2 exists
+  (ADR-0012). A read already in flight when the entry is removed can store the row it read a moment
+  earlier — cache-aside has no version to compare — so the guarantee is "the next resolve after a
+  committed state change re-reads the catalog", with the same 60 s bound in the racing case.
+
+`Tenant` gains `Suspend` (ADR-0007 §11.4, the first offboarding step; only an active tenant, only a
+UTC instant) — the state change the proof above drives. `suspended_at` is not a column `aurora_app`
+may write, so the suspend runs as the owner in the tests and the request path's privilege record is
+unchanged.
+
+Where the interface lives: ADR-0007 §3.5 places `ITenantConnectionResolver` and `TenantConnection`
+in `Aurora.Platform.Tenancy.Contracts`. They are internal to this assembly for now — B-06.1a owns
+that assembly under the file partition, and every consumer named so far (B-06.2, B-06.3, B-07.1)
+lives here. Promoting them is a one-file move once a consumer outside the assembly exists.
+
+---
+
 ## Running the tests
 
 ```

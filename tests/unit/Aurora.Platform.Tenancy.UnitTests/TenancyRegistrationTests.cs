@@ -1,7 +1,12 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Routing;
 using Aurora.Platform.Tenancy.Secrets;
 using Aurora.Platform.Tenancy.UnitTests.Catalog;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
 using Shouldly;
@@ -47,6 +52,22 @@ public sealed class TenancyRegistrationTests
         }
 
         second.ShouldBeSameAs(first, "an entry removed in one request must be gone for the next");
+    }
+
+    [Fact]
+    public void The_catalog_context_the_container_hands_out_carries_the_routing_cache_invalidator()
+    {
+        // The link between "a state change was saved" and "the cache forgot the tenant" is this
+        // interceptor being on the context's options. A context without it would save and keep
+        // serving the stale row for 60 s.
+        using ServiceProvider provider = Build(TenantPoolProfile.Web);
+        using IServiceScope scope = provider.CreateScope();
+        using CatalogDbContext catalog = scope.ServiceProvider.GetRequiredService<CatalogDbContext>();
+
+        IEnumerable<IInterceptor> interceptors =
+            catalog.GetService<IDbContextOptions>().FindExtension<CoreOptionsExtension>()?.Interceptors ?? [];
+
+        interceptors.OfType<TenantRoutingCacheInvalidator>().ShouldHaveSingleItem();
     }
 
     [Fact]

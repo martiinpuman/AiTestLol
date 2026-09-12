@@ -29,10 +29,12 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// a restore re-points it to a fresh database (ADR-0007 §11.2).
 /// </para>
 /// <para>
-/// Only the transitions B-05 needs are here: reserve and activate, the two ends of the provisioning
-/// saga, and recording activity. The rest of the lifecycle arrives with the tasks that drive it
-/// (B-06 <c>SchemaBlocked</c>, B-07 <c>ProvisioningFailed</c>, offboarding) as methods on this
-/// type, guarded the same way <see cref="Activate"/> is.
+/// Only the transitions a landed task needs are here: reserve and activate, the two ends of the
+/// provisioning saga (B-05); recording activity; and suspend, the first offboarding step, which
+/// B-06.1 needs to prove its routing cache forgets a tenant whose state moved. The rest of the
+/// lifecycle arrives with the tasks that drive it (B-06.2 <c>SchemaBlocked</c>, B-07
+/// <c>ProvisioningFailed</c>, the remaining offboarding steps) as methods on this type, guarded the
+/// same way <see cref="Activate"/> is.
 /// </para>
 /// </remarks>
 internal sealed class Tenant
@@ -158,6 +160,27 @@ internal sealed class Tenant
         State = TenantState.Active;
         CoreSchemaVersion = coreSchemaVersion;
         ActivatedAt = activatedAt;
+    }
+
+    /// <summary>
+    /// The first offboarding step (ADR-0007 §11.4): the tenant becomes read-only behind an
+    /// end-of-service banner, and its jobs are skipped. Reversible. Only an active tenant can be
+    /// suspended, and suspending one is a state change every routing cache must learn of.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The tenant is not active.</exception>
+    /// <exception cref="ArgumentException"><paramref name="suspendedAt"/> is not UTC.</exception>
+    public void Suspend(DateTimeOffset suspendedAt)
+    {
+        UtcInstant.Require(suspendedAt, nameof(suspendedAt));
+
+        if (State != TenantState.Active)
+        {
+            throw new InvalidOperationException(
+                $"Tenant '{Key}' is {State}; only an active tenant can be suspended.");
+        }
+
+        State = TenantState.Suspended;
+        SuspendedAt = suspendedAt;
     }
 
     /// <summary>Notes that the tenant opened a scope (ADR-0007 §10.3).</summary>
