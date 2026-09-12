@@ -19,14 +19,16 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// </para>
 /// <para>
 /// The package id is stored as text with the spelling ADR-0008 §4.1 R1 needs for the package's
-/// schema (<c>pkg_&lt;id&gt;</c>); the typed package identifier arrives with
-/// <c>Aurora.Countries.Contracts</c> in B-12 and can replace the CLR type without a schema change.
-/// <see cref="InstalledBy"/> is an actor reference, never a display name (ADR-0018).
+/// schema (<c>pkg_&lt;id&gt;</c>), held to <see cref="PackageIdFormat"/> here, in the check
+/// constraint and in the read-path entry alike (ADR-0038 §2.2). The typed package identifier in
+/// <c>Aurora.Countries.Contracts</c> is a different identifier - a dotted global id that this
+/// column's rule refuses - and which of the two this row should carry is left open until the
+/// installer exists (ADR-0038 §2.6). <see cref="InstalledBy"/> is an actor reference, never a
+/// display name (ADR-0018).
 /// </para>
 /// </remarks>
 internal sealed class InstalledPackage
 {
-    public const int MaxPackageIdLength = 32;
     public const int MaxVersionLength = 64;
     public const int MaxInstalledByLength = 128;
 
@@ -68,11 +70,10 @@ internal sealed class InstalledPackage
         ArgumentException.ThrowIfNullOrWhiteSpace(version);
         ArgumentException.ThrowIfNullOrWhiteSpace(installedBy);
 
-        if (!IsWellFormedPackageId(packageId))
+        if (!PackageIdFormat.IsWellFormed(packageId))
         {
             throw new ArgumentException(
-                $"'{packageId}' is not a package id: lower-case ASCII letters, digits and underscores, " +
-                $"starting with a letter, at most {MaxPackageIdLength} characters - the stem of the " +
+                $"'{packageId}' is not a package id: {PackageIdFormat.Description} - the stem of the " +
                 "package's pkg_<id> schema (ADR-0008 4.1).",
                 nameof(packageId));
         }
@@ -100,23 +101,5 @@ internal sealed class InstalledPackage
             InstalledAt = UtcInstant.Require(startedAt, nameof(startedAt)),
             InstalledBy = installedBy,
         };
-    }
-
-    private static bool IsWellFormedPackageId(string packageId)
-    {
-        if (packageId.Length is 0 or > MaxPackageIdLength || !char.IsAsciiLetterLower(packageId[0]))
-        {
-            return false;
-        }
-
-        foreach (char character in packageId)
-        {
-            if (!char.IsAsciiLetterLower(character) && !char.IsAsciiDigit(character) && character != '_')
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 }
