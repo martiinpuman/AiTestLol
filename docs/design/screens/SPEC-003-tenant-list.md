@@ -65,7 +65,7 @@ public enum TenantState
 │  [🔍 Search name or key]  [State ▾]  [Region ▾]  [Plan ▾]  ☐ Include deleted│
 │  ┌─────────────────────────────────────────────────────────────────────┐ │
 │  │ Tenant                    State                Plan   Region  Schema│ │
-│  │ Kessler Fasteners GmbH    ● Needs action        —      —       —    │ │  ProvisioningFailed, red group
+│  │ Kessler Fasteners GmbH    ● Needs action        Std   eu-west   —    │ │  ProvisioningFailed, red group
 │  │  kessler-fasteners        Provisioning failed after 5 attempts      │ │
 │  │ Solheim Trading           ● Needs action        Std   eu-north  9   │ │  SchemaBlocked
 │  │  solheim-trading          Blocked — schema v9 is below minimum v11  │ │
@@ -105,7 +105,7 @@ Read together: the strip answers "is anything wrong, right now" in one glance wi
 |---|---|---|
 | Tenant | `display_name` (primary line) + `key` (secondary line, `mono`, muted) | Plain text; wraps rather than truncates (see "Long values") |
 | State | `state` | Status badge (`components.md` §12) + a one-line status detail beneath it, state-specific (see table below) — the detail line is what makes two `SchemaBlocked` rows distinguishable from each other, not just from an `Active` one |
-| Plan | `plan` | Plain text; `—` while `Provisioning` (not yet meaningful until `Activate`) |
+| Plan | `plan` | Plain text — set at reservation (`Tenant.Reserve`, ADR-0007 §8 step 1), so present even while `Provisioning`, unlike `Schema` below. *(An earlier draft of this row claimed Plan was blank until `Activate` — checked against `Tenant.cs` and corrected: `Plan`, like `Region`, is a constructor argument to `Reserve`, not a field `Activate` fills in.)* |
 | Region | `residency_region` | Monospace region code (e.g. `eu-north`) — an infrastructure identifier, never localized, never translated (same reasoning as `SPEC-002`'s `{permission}` interpolation) |
 | Schema | `core_schema_version` | Right-aligned tabular number; `—` until `Activate` has run |
 | Created | `created_at` | Locale-formatted date, same discipline as every other date in this design system |
@@ -181,9 +181,20 @@ No badge invents a new color — all six map onto the five semantic categories `
 - The severity-first default sort is announced the same way any grid sort state is (`components.md` §8) — an `aria-sort` value on the effective sort column where one exists; where the default view has no single-column equivalent (it is a compound rank, not one column), the toolbar's view selector reads "Needs attention first" as its accessible name, so a screen-reader user knows *that* an ordering choice is active even where it can't be expressed as a single `aria-sort`.
 - `Include deleted` is a real checkable control (`role="switch"` or a native checkbox, not a styled `<div>`), labeled, and its state change re-queries and announces the new row count via the same polite live region toasts use.
 
+**Named against WCAG 2.2 AA, per criterion, rather than asserted:**
+
+| SC | How this screen meets it |
+|---|---|
+| 1.3.1 Info and Relationships | Real `<table>`/`<th scope="col">`/`<caption>` markup, exactly like `SPEC-002-companies-list.md`'s own correction; the Attention strip is a named landmark, not a `<div>` soup. |
+| 1.4.1 Use of Color | Every state is identified by a text label (badge text + detail line), never by badge color alone — the same rule `components.md` §12 already states for Status badges generally, exercised here at its sharpest point (`danger` used for two different states, told apart only by their detail-line text). |
+| 1.4.3 / 1.4.11 Contrast | Badge and detail-line colors are existing, audited `tokens.md` pairs (`danger`/`danger-muted`, `warning`/`warning-muted`, `text-muted` on `surface`) — no new color pair is introduced by this screen, so no new audit row is needed; the detail line specifically uses `text-muted` (6.30:1 light / 7.47:1 dark on `surface`), never `text-subtle`, per the correction `SPEC-002` already made to this design system for exactly this kind of "real content, not a placeholder" text. |
+| 2.4.6 Headings and Labels | The Attention strip's accessible name ("Needs attention") and every column header are descriptive, not generic ("Column 2"). |
+| 4.1.2 Name, Role, Value | The severity-first view is exposed via the toolbar's own accessible label, not only a visual arrow, since it can't be expressed as a single column's `aria-sort`. |
+| 4.1.3 Status Messages | The Attention strip's appearance/count changes, and the "Include deleted" toggle's row-count change, are both announced via a polite live region — the same mechanism `components.md` §15 already requires for toasts, reused here rather than reinvented. |
+
 ## Resource keys
 
-English is the base locale; sv-SE demonstrates the layer is real, per Principle 6 and `ADR-0022`. New prefix `tenants.*`, plus `tenants.state.*` (shared with `SPEC-003-tenant-detail.md` and `SPEC-003-tenant-offboarding.md` — one enum, one set of display strings, per Principle 4).
+English is the base locale; sv-SE demonstrates the layer is real, per Principle 6 and `ADR-0022`. New prefix `tenants.*`, plus `tenants.state.*` (shared with `SPEC-003-tenant-detail.md` and `SPEC-003-tenant-offboarding.md` — one enum, one set of display strings, per Principle 4). `tenants.demoPanelTitle` (used identically across all three of this task's prototypes' "Prototype controls" panels) is scaffolding, same as `companies.demo*` in `SPEC-002` — it does not ship.
 
 | Key | en | sv-SE | Where |
 |---|---|---|---|
@@ -249,7 +260,7 @@ English is the base locale; sv-SE demonstrates the layer is real, per Principle 
 **Grid mechanics and formatting**
 
 7. **[M]** Every row's State cell renders both a Status badge and a state-specific detail line; the detail line is styled `text-muted`, never `text-subtle`. *Fails if the detail text fails the 4.5:1 contrast check.*
-8. **[M]** The `Schema` and `Plan` columns render `—` for any row in `Provisioning` state and a real value for every other state.
+8. **[M]** The `Schema` column renders `—` for any row in `Provisioning` state and a real value for every other state; the `Plan` and `Region` columns render a real value in **every** state including `Provisioning`, since both are set at reservation, not at activation. *Fails if `Plan`/`Region` are ever blanked for a `Provisioning` row — that would repeat the error this spec's own "Columns" section caught and corrected.*
 9. **[M]** The footer's `{total}` and the two Attention-strip counts are each produced by the locale number formatter, not a literal — verified by rendering under two locales with different grouping separators and asserting the two renders differ only in punctuation, never in digits.
 10. **[M]** `Created` and `Last activity` render through the shared date/date-time formatter; a null `Last activity` renders `tenants.state.activeDetailNever`, never a blank cell or "Invalid Date."
 11. **[M]** No row-level checkbox column exists anywhere in this grid's markup, in any state.

@@ -85,6 +85,32 @@
       button's loading state, and what the user is told when the circuit drops mid-submit.</p>
       <div class="tags"><span class="badge badge-info">Master data</span><span class="badge badge-neutral">Permissions</span><span class="badge badge-neutral">Create form</span></div>
     </a>
+    <a class="proto-card" href="tenant-list.html">
+      <div class="thumb">🛰</div>
+      <h2>Tenants — operator console (list)</h2>
+      <p>The operator's home: every tenant with its real, eight-value lifecycle state, a severity-first default
+      sort, and the new Attention summary strip so <code>ProvisioningFailed</code>/<code>SchemaBlocked</code>
+      rows and a soonest-first pending-deletion countdown don't render as equal-weight pills. Note the
+      deliberately different top bar — a separate shell from every other prototype here.</p>
+      <div class="tags"><span class="badge badge-danger">Operator console</span><span class="badge badge-neutral">Data grid</span><span class="badge badge-neutral">Attention strip</span></div>
+    </a>
+    <a class="proto-card" href="tenant-detail.html">
+      <div class="thumb">🗄</div>
+      <h2>Tenant detail — state-to-action mapping</h2>
+      <p>One tenant, one page — use the prototype-controls dropdown to step through all eight
+      <code>TenantState</code> values and watch the action set change with it: a destroy dialog only exists
+      for <code>ProvisioningFailed</code>, and it re-checks the database's identity stamp live before it will
+      let you type a confirmation.</p>
+      <div class="tags"><span class="badge badge-danger">Operator console</span><span class="badge badge-neutral">Danger zone panel</span></div>
+    </a>
+    <a class="proto-card" href="tenant-offboarding.html">
+      <div class="thumb">⛔</div>
+      <h2>Tenant offboarding — export, then destroy</h2>
+      <p>The deliberately uncomfortable flow: suspend → export → a 30-day pending-deletion window → permanent
+      deletion. "Cancel deletion" and "Permanently delete" sit in two separate, unmistakably different panels;
+      the delete dialog re-shows the export and needs three independent confirmations before it will run.</p>
+      <div class="tags"><span class="badge badge-danger">Operator console</span><span class="badge badge-neutral">Workflow stepper</span><span class="badge badge-neutral">Irreversible action</span></div>
+    </a>
     <a class="proto-card" href="list.html">
       <div class="thumb">🧾</div>
       <h2>Sales Orders — list</h2>

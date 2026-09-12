@@ -146,6 +146,18 @@ The submit button (`tenants.offboarding.confirmDelete`, "Permanently delete") st
 - The permanent-delete dialog's three gates are each announced as they become satisfied (`aria-live="polite"` on a small status line: "2 of 3 confirmed"), so an operator using a screen reader gets the same "how much further" feedback a sighted operator gets from watching the submit button's disabled state.
 - The deletion certificate (Stage 4) is ordinary page content, not an alert — it's the page's steady-state content once reached, not an interruption.
 
+**Named against WCAG 2.2 AA, per criterion, rather than asserted:**
+
+| SC | How this screen meets it |
+|---|---|
+| 1.3.1 Info and Relationships | The vertical stepper's four stages are real headed content in document order, not an image or a canvas rendering of a progress bar; "Cancel deletion" and "Permanently delete…" are two separate `<section>`s. |
+| 1.4.1 Use of Color | The stepper never relies on the connecting line's color alone — every stage carries a text label; the Danger zone panel's red border is reinforced by its own "Danger zone" heading text, not color alone. |
+| 2.1.1 Keyboard | Both export download links are real `<a href>` elements, reachable and activatable by keyboard, per "Keyboard" above — never a click-only affordance. |
+| 2.4.6 Headings and Labels | Every stage and both Stage-3 panels have a real, specific heading ("Suspended," "Cancel deletion," "Danger zone") rather than a generic one. |
+| 3.3.4 Error Prevention (this SC is written for legal/financial commitments, and this screen's final step is exactly that class of commitment) | The permanent-delete action requires review (the re-shown export), confirmation (the checkbox), and correction opportunity (the typed key, rejecting a near-miss) before it submits — the three-gate design directly implements this criterion's own three suggested mechanisms, not by coincidence. |
+| 4.1.2 Name, Role, Value | `aria-disabled` (never native `disabled`) on "Permanently delete…" before eligibility and before all three gates are met, so its reason stays reachable — same rule as the other two specs in this set. |
+| 4.1.3 Status Messages | The three-gate status line and the identity/eligibility state both update through a polite live region, not a visual-only change. |
+
 ## Resource keys
 
 New prefix `tenants.offboarding.*`.
@@ -156,6 +168,10 @@ New prefix `tenants.offboarding.*`.
 | `tenants.offboarding.heading` | Offboarding {tenant} | Avveckling av {tenant} | `<h1>` |
 | `tenants.offboarding.intro` | Offboarding suspends this tenant (read-only, reversible), then produces an export, then a 30-day reversible pending-deletion window, then permanent deletion. Nothing here is irreversible until the final step. | Avveckling stänger av klienten (skrivskyddad, återställningsbar), skapar sedan en export, därefter ett 30-dagars återställningsbart väntefönster, och slutligen permanent radering. Inget här är oåterkalleligt förrän det sista steget. | Stage 0 |
 | `tenants.offboarding.beginAction` | Suspend {tenant} to begin | Stäng av {tenant} för att börja | Stage 0 action |
+| `tenants.offboarding.stageSuspended` | Suspended | Avstängd | Stepper stage 1 label |
+| `tenants.offboarding.stageExported` | Exported | Exporterad | Stepper stage 2 label |
+| `tenants.offboarding.stagePendingDeletion` | Pending deletion | Väntar på radering | Stepper stage 3 label |
+| `tenants.offboarding.stageDeleted` | Deleted | Raderad | Stepper stage 4 label |
 | `tenants.offboarding.resume` | Resume tenant | Återuppta klient | Stage 1 action |
 | `tenants.offboarding.startExport` | Start export → | Starta export → | Stage 1 action |
 | `tenants.offboarding.dumpBundle` | Portability dump (.pgdump) | Portabilitetsdump (.pgdump) | Stage 2 |

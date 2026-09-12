@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title id="page-title">Tenant detail · Aurora ERP</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  /* Page-specific only; the reusable shapes (Danger zone panel, info-grid,
+     badges, dialogs) live in app.css. See SPEC-003-tenant-detail.md. */
+  .tenant-head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
+  .tenant-head h1 { font-size: var(--font-size-heading-md); font-weight: 600; }
+  .tenant-key-line { font-family: var(--font-family-mono); font-size: 12px; color: var(--color-text-muted); }
+  .info-grid .field label { font-size: 11px; }
+  .step-list { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+  .step-list .s-row { display: flex; gap: var(--space-2); align-items: center; }
+  .step-list .s-row.done { color: var(--color-success); }
+  .step-list .s-row.current { color: var(--color-accent); font-weight: 600; }
+  .step-list .s-row.upcoming { color: var(--color-text-muted); }
+  table.packages { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.packages th { text-align: left; color: var(--color-text-muted); font-weight: 600; padding: 6px var(--space-2); border-bottom: 1px solid var(--color-border); }
+  table.packages td { padding: 6px var(--space-2); border-bottom: 1px solid var(--color-border); }
+  table.activity td { padding: 5px var(--space-2); font-size: 12px; vertical-align: top; }
+  table.activity td.ts { color: var(--color-text-muted); white-space: nowrap; font-family: var(--font-family-mono); font-size: 11px; }
+  .demo-select-wrap { display: flex; flex-direction: column; gap: 4px; }
+  .demo-select-wrap select { width: 100%; }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main" data-i18n="shell.skipToContent">Skip to main content</a>
+<div class="shell shell-operator" id="shell">
+  <header class="topbar topbar-operator">
+    <div class="brand"><span class="mark">A</span> <span data-i18n="operator.brand">Aurora ERP · Operator Console</span></div>
+    <div class="spacer"></div>
+    <div class="theme-toggle">
+      <button data-mode="light" onclick="setTheme('light')">Light</button>
+      <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+      <button data-mode="system" onclick="setTheme('system')">System</button>
+    </div>
+    <div class="operator-user"><span class="company-badge" style="--badge-color:#57616C">JA</span><span>J. Alvarez</span></div>
+    <button class="btn btn-ghost btn-sm" data-i18n="operator.signOut">Sign out</button>
+  </header>
+
+  <main class="main">
+    <div class="page" style="max-width:1200px;">
+      <div>
+        <a class="btn btn-ghost btn-sm" href="tenant-list.html" style="padding-left:0;" data-i18n="tenants.detail.backToList">← Tenants</a>
+      </div>
+
+      <div class="tenant-head">
+        <h1 id="t-name">—</h1>
+        <span class="badge" id="t-badge"></span>
+      </div>
+      <div class="tenant-key-line" id="t-key">—</div>
+
+      <!-- Offboarding banner: Suspended / Exporting / PendingDeletion only -->
+      <div class="panel" id="offboarding-banner" style="padding:var(--space-3) var(--space-4);" hidden>
+        <div class="actions-row" style="justify-content:space-between;">
+          <span data-i18n="tenants.detail.offboardingBanner">This tenant is being offboarded.</span>
+          <a class="btn btn-secondary btn-sm" id="manage-offboarding-link" href="tenant-offboarding.html" data-i18n="tenants.detail.manageOffboarding">Manage offboarding →</a>
+        </div>
+        <div id="deletion-countdown" style="margin-top:6px;font-weight:600;color:var(--color-warning);" hidden></div>
+      </div>
+
+      <!-- Refresh action (Provisioning only) -->
+      <div id="refresh-row" hidden>
+        <button class="btn btn-secondary btn-sm" onclick="render(currentState)" data-i18n="tenants.detail.refresh">Refresh</button>
+      </div>
+
+      <!-- Identity / Database / Schema (hidden entirely for Deleted) -->
+      <div class="panel" id="idb-panel" style="padding:var(--space-4);">
+        <div class="info-grid">
+          <div class="field"><label data-i18n="tenants.detail.colKey">Key</label><div class="value mono" id="f-key">—</div></div>
+          <div class="field"><label data-i18n="tenants.detail.colPlan">Plan</label><div class="value" id="f-plan">—</div></div>
+          <div class="field"><label data-i18n="tenants.detail.colRegion">Region</label><div class="value" id="f-region">—</div></div>
+          <div class="field"><label data-i18n="tenants.detail.colCreated">Created</label><div class="value" id="f-created">—</div></div>
+          <div class="field"><label data-i18n="tenants.detail.colCluster">Cluster</label><div class="value mono" id="f-cluster">—</div></div>
+          <div class="field">
+            <label data-i18n="tenants.detail.colDatabase">Database</label>
+            <div class="value mono" style="display:flex;align-items:center;gap:6px;">
+              <span id="f-database">—</span>
+              <button class="icon-btn" style="width:22px;height:22px;font-size:12px;" data-i18n-aria-label="tenants.detail.copyDatabaseName" aria-label="Copy database name" onclick="copyDatabaseName()">⧉</button>
+            </div>
+          </div>
+          <div class="field"><label data-i18n="tenants.detail.colVersion">Version</label><div class="value tnum" id="f-schema-version">—</div></div>
+          <div class="field"><label data-i18n="tenants.detail.colStatus">Status</label><div class="value" id="f-schema-status">—</div></div>
+        </div>
+      </div>
+
+      <!-- Provisioning progress (Provisioning / ProvisioningFailed only) -->
+      <div class="panel section" id="progress-panel" style="padding:var(--space-4);" hidden>
+        <h2 data-i18n="tenants.detail.progressHeading">Provisioning progress</h2>
+        <div class="step-list" id="step-list"></div>
+        <div id="last-error-wrap" hidden>
+          <div class="field-foot" style="margin-bottom:4px;"><label style="font-size:11px;font-weight:600;color:var(--color-text-muted);">Last error</label></div>
+          <div class="last-error" id="last-error"></div>
+        </div>
+      </div>
+
+      <!-- Blocked reason (SchemaBlocked only) -->
+      <div class="panel section" id="blocked-panel" style="padding:var(--space-4);" hidden>
+        <h2 data-i18n="tenants.detail.blockedReasonHeading">Blocked reason</h2>
+        <p id="blocked-reason-text"></p>
+        <div>
+          <button class="btn btn-secondary btn-sm" data-i18n="tenants.detail.viewMigrationRun">View migration run</button>
+        </div>
+      </div>
+
+      <!-- Export progress (Exporting only) -->
+      <div class="panel section" id="export-progress-panel" style="padding:var(--space-4);" hidden>
+        <h2 data-i18n="tenants.state.exporting">Exporting</h2>
+        <div id="export-bundle-rows" style="font-size:12px;display:flex;flex-direction:column;gap:6px;"></div>
+      </div>
+
+      <!-- Installed Country Packages -->
+      <div class="panel section" id="packages-panel" style="padding:var(--space-4);" hidden>
+        <h2 data-i18n="tenants.detail.packagesHeading">Installed Country Packages</h2>
+        <table class="packages">
+          <thead><tr><th>Package</th><th>Version</th><th>State</th><th>Installed</th></tr></thead>
+          <tbody id="packages-body"></tbody>
+        </table>
+      </div>
+
+      <!-- Deletion certificate (Deleted only) -->
+      <div class="panel section" id="certificate-panel" style="padding:var(--space-4);" hidden>
+        <h2 data-i18n="tenants.offboarding.certificateHeading">Deletion certificate</h2>
+        <p id="certificate-text"></p>
+      </div>
+
+      <!-- Activity -->
+      <div class="panel section" id="activity-panel" style="padding:var(--space-4);">
+        <h2 data-i18n="tenants.detail.activityHeading">Activity</h2>
+        <table class="activity"><tbody id="activity-body"></tbody></table>
+      </div>
+
+      <!-- Danger zone (ProvisioningFailed: destroy · Active: begin offboarding) -->
+      <div class="danger-zone" id="danger-zone" hidden>
+        <h2 data-i18n="tenants.dangerZoneHeading">Danger zone</h2>
+        <div class="actions-row">
+          <button class="btn btn-danger" id="destroy-btn" onclick="openDestroyDialog()" data-i18n="tenants.detail.destroyAction" hidden>Destroy database…</button>
+          <button class="btn btn-danger" id="begin-offboarding-btn" onclick="location.href='tenant-offboarding.html'" data-i18n="tenants.detail.beginOffboarding" hidden>Begin offboarding…</button>
+        </div>
+      </div>
+
+    </div>
+  </main>
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<!-- Destroy confirmation dialog (ProvisioningFailed only) -->
+<div class="modal-overlay" id="destroy-modal" hidden>
+  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="destroy-title">
+    <h2 id="destroy-title"></h2>
+    <div id="identity-checking" role="status" aria-live="polite">Checking identity stamp…</div>
+    <div id="identity-confirmed" class="field-foot" style="color:var(--color-success);" hidden></div>
+    <div id="identity-mismatch" class="last-error" style="color:var(--color-danger);background:var(--color-danger-muted);" hidden></div>
+    <div class="field" id="typed-confirm-field" hidden>
+      <label id="typed-confirm-label"></label>
+      <input class="input" id="typed-confirm-input" oninput="updateDestroyButton()" autocomplete="off">
+    </div>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="closeModal('destroy-modal')" data-i18n="tenants.destroy.cancel" id="destroy-cancel-label">Cancel</button>
+      <button class="btn btn-danger" id="destroy-confirm-btn" aria-disabled="true" onclick="submitDestroy()" data-i18n="tenants.destroy.confirm" hidden>Destroy database</button>
+    </div>
+  </div>
+</div>
+
+<div class="demo-controls" style="max-width:260px;">
+  <div class="title" data-i18n="tenants.demoPanelTitle">Prototype controls</div>
+  <div class="demo-select-wrap">
+    <label style="font-size:11px;color:var(--color-text-muted);">TenantState</label>
+    <select class="input" id="state-select" onchange="render(this.value)">
+      <option value="Provisioning">Provisioning</option>
+      <option value="ProvisioningFailed">ProvisioningFailed</option>
+      <option value="Active" selected>Active</option>
+      <option value="Suspended">Suspended</option>
+      <option value="SchemaBlocked">SchemaBlocked</option>
+      <option value="Exporting">Exporting</option>
+      <option value="PendingDeletion">PendingDeletion</option>
+      <option value="Deleted">Deleted</option>
+    </select>
+  </div>
+  <label style="font-size:11px;display:flex;gap:6px;align-items:center;">
+    <input type="checkbox" id="simulate-mismatch"> Simulate identity mismatch on destroy
+  </label>
+  <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+<div class="toast-stack"></div>
+
+<script src="app.js"></script>
+<script src="i18n.js"></script>
+<script>
+  // ---------------------------------------------------------------------
+  // Eight fictional scenarios, one per TenantState, so the demo select
+  // proves SPEC-003-tenant-detail.md's state-to-action mapping table by
+  // actually swapping the rendered action set — not just the badge.
+  // ---------------------------------------------------------------------
+  var SCENARIOS = {
+    Provisioning: {
+      name: "Larkspur Logistics AB", key: "larkspur-logistics", state: "Provisioning",
+      plan: "Standard", region: "eu-west", created: "2026-09-12",
+      cluster: "eu-west-1", database: "aurora_t_larkspur_logistics",
+      step: 5, attempts: 0,
+      activity: [{ ts: "2026-09-12 08:00", actor: "J. Alvarez", action: "Provisioning requested" }]
+    },
+    ProvisioningFailed: {
+      name: "Kessler Fasteners GmbH", key: "kessler-fasteners", state: "ProvisioningFailed",
+      plan: "Standard", region: "eu-west", created: "2026-09-08",
+      cluster: "eu-west-1", database: "aurora_t_kessler_fasteners",
+      step: 5, attempts: 5,
+      lastError: "MigrateSchema: relation \"platform.tenant_identity\" already exists but does not match tenant id — refusing to adopt.",
+      activity: [
+        { ts: "2026-09-08 09:41", actor: "System", action: "Provisioning failed after 5 attempts" },
+        { ts: "2026-09-08 09:20", actor: "System", action: "Provisioning requested" }
+      ]
+    },
+    Active: {
+      name: "Nordwind Group", key: "nordwind-group", state: "Active",
+      plan: "Standard", region: "eu-west", created: "2026-06-02",
+      cluster: "eu-west-1", database: "aurora_t_nordwind_group",
+      schemaVersion: 14, schemaStatus: "current",
+      packages: [{ id: "se-fiscal", version: "3.2", state: "Active", installedAt: "2026-06-02", installedBy: "J. Alvarez" }],
+      activity: [
+        { ts: "2026-06-02 09:02", actor: "J. Alvarez", action: "Provisioned" }
+      ]
+    },
+    Suspended: {
+      name: "Comet Bay Logistics", key: "comet-bay-logistics", state: "Suspended",
+      plan: "Standard", region: "eu-west", created: "2025-11-19",
+      cluster: "eu-west-1", database: "aurora_t_comet_bay_logistics",
+      schemaVersion: 14, schemaStatus: "current",
+      packages: [{ id: "se-fiscal", version: "3.1", state: "Active", installedAt: "2025-11-19", installedBy: "J. Alvarez" }],
+      activity: [
+        { ts: "2026-09-07 09:00", actor: "M. Okafor", action: "Suspended — offboarding started" },
+        { ts: "2025-11-19 10:12", actor: "J. Alvarez", action: "Provisioned" }
+      ]
+    },
+    SchemaBlocked: {
+      name: "Solheim Trading", key: "solheim-trading", state: "SchemaBlocked",
+      plan: "Standard", region: "eu-north", created: "2026-06-02",
+      cluster: "eu-north-1", database: "aurora_t_solheim_trading",
+      schemaVersion: 9, minVersion: 11, schemaStatus: "blocked",
+      blockedReason: "Migration run #4821 quarantined this tenant at 2026-09-10 08:14 UTC — schema fell to v9, below the minimum supported v11.",
+      packages: [{ id: "se-fiscal", version: "3.2", state: "Active", installedAt: "2026-06-02", installedBy: "J. Alvarez" }],
+      activity: [
+        { ts: "2026-09-10 08:14", actor: "System", action: "Suspended by migration run — SchemaBlocked" },
+        { ts: "2026-06-02 09:02", actor: "J. Alvarez", action: "Provisioned" }
+      ]
+    },
+    Exporting: {
+      name: "Nordbridge Wholesale", key: "nordbridge-wholesale", state: "Exporting",
+      plan: "Standard", region: "eu-west", created: "2026-02-20",
+      cluster: "eu-west-1", database: "aurora_t_nordbridge_wholesale",
+      schemaVersion: 14, schemaStatus: "current",
+      bundles: [
+        { name: "tenants.offboarding.dumpBundle", status: "ready" },
+        { name: "tenants.offboarding.openFormatBundle", status: "running" }
+      ],
+      packages: [{ id: "se-fiscal", version: "3.2", state: "Active", installedAt: "2026-02-20", installedBy: "J. Alvarez" }],
+      activity: [
+        { ts: "2026-09-11 09:00", actor: "M. Okafor", action: "Export started" },
+        { ts: "2026-09-04 09:00", actor: "M. Okafor", action: "Suspended — offboarding started" }
+      ]
+    },
+    PendingDeletion: {
+      name: "Meridian Distribution", key: "meridian-distribution", state: "PendingDeletion",
+      plan: "Standard", region: "eu-north", created: "2026-01-15",
+      cluster: "eu-north-1", database: "aurora_t_meridian_distribution",
+      schemaVersion: 14, schemaStatus: "current",
+      deletionDueDays: 2, deletionDueDate: "2026-09-14",
+      packages: [{ id: "se-fiscal", version: "3.2", state: "Deactivated", installedAt: "2026-01-15", installedBy: "J. Alvarez" }],
+      activity: [
+        { ts: "2026-08-15 09:40", actor: "System", action: "Export completed" },
+        { ts: "2026-08-15 09:02", actor: "J. Alvarez", action: "Suspended — offboarding started" }
+      ]
+    },
+    Deleted: {
+      name: "Old Bridge Traders", key: "old-bridge-traders", state: "Deleted",
+      created: "2025-08-04", deletedAt: "2026-07-01", deletedBy: "J. Alvarez", backupExpiry: "2026-08-05",
+      activity: [
+        { ts: "2026-07-01 10:15", actor: "J. Alvarez", action: "Permanently deleted" },
+        { ts: "2026-06-01 09:00", actor: "J. Alvarez", action: "Pending-deletion grace period elapsed" }
+      ]
+    }
+  };
+
+  var BADGE = {
+    Provisioning: "info", ProvisioningFailed: "danger", Active: "success",
+    Suspended: "neutral", SchemaBlocked: "danger", Exporting: "info",
+    PendingDeletion: "warning", Deleted: "neutral"
+  };
+  var PKG_BADGE = { Installing: "info", Active: "success", Deactivated: "neutral", UpgradePending: "info", Failed: "danger" };
+
+  var currentState = "Active";
+
+  function stateLabel(s) { return t("tenants.state." + s.charAt(0).toLowerCase() + s.slice(1)); }
+  function show(id, visible) { document.getElementById(id).hidden = !visible; }
+
+  function render(state) {
+    currentState = state;
+    document.getElementById("state-select").value = state;
+    var s = SCENARIOS[state];
+
+    document.getElementById("t-name").textContent = s.name;
+    document.getElementById("t-key").textContent = s.key;
+    var badge = document.getElementById("t-badge");
+    badge.className = "badge badge-" + BADGE[state];
+    badge.textContent = stateLabel(state);
+    document.title = s.name + " · Aurora ERP";
+
+    // Identity/Database/Schema — omitted entirely for Deleted (tombstone
+    // has no cluster/database/schema per ADR-0007 SS11.4), shown otherwise.
+    show("idb-panel", state !== "Deleted");
+    if (state !== "Deleted") {
+      document.getElementById("f-key").textContent = s.key;
+      document.getElementById("f-plan").textContent = s.plan || "—";
+      document.getElementById("f-region").textContent = s.region || "—";
+      document.getElementById("f-created").textContent = formatDate(s.created);
+      document.getElementById("f-cluster").textContent = s.cluster || "—";
+      document.getElementById("f-database").textContent = s.database || "—";
+      document.getElementById("f-schema-version").textContent = s.schemaVersion != null ? formatCount(s.schemaVersion) : "—";
+      var statusEl = document.getElementById("f-schema-status");
+      if (s.schemaStatus === "current") statusEl.textContent = t("tenants.schema.current");
+      else if (s.schemaStatus === "blocked") statusEl.textContent = t("tenants.schema.blocked", { minimum: s.minVersion });
+      else statusEl.textContent = "—";
+    }
+
+    // Provisioning progress — Provisioning and ProvisioningFailed only.
+    show("progress-panel", state === "Provisioning" || state === "ProvisioningFailed");
+    if (state === "Provisioning" || state === "ProvisioningFailed") {
+      var steps = ["ReserveTenant", "CreateDatabase", "HardenDatabase", "StampIdentity", "MigrateSchema", "SeedPlatformData", "InstallPackages", "RegisterRouting", "Announce"];
+      var list = document.getElementById("step-list");
+      list.innerHTML = "";
+      steps.forEach(function (name, i) {
+        var n = i + 1;
+        var cls = n < s.step ? "done" : (n === s.step ? "current" : "upcoming");
+        var row = document.createElement("div");
+        row.className = "s-row " + cls;
+        row.textContent = (n < s.step ? "✓" : (n === s.step ? "●" : "○")) + " " + n + ". " + name;
+        list.appendChild(row);
+      });
+      show("last-error-wrap", state === "ProvisioningFailed");
+      if (state === "ProvisioningFailed") document.getElementById("last-error").textContent = s.lastError;
+    }
+    show("refresh-row", state === "Provisioning");
+
+    // Blocked reason — SchemaBlocked only.
+    show("blocked-panel", state === "SchemaBlocked");
+    if (state === "SchemaBlocked") document.getElementById("blocked-reason-text").textContent = s.blockedReason;
+
+    // Export progress — Exporting only.
+    show("export-progress-panel", state === "Exporting");
+    if (state === "Exporting") {
+      var wrap = document.getElementById("export-bundle-rows");
+      wrap.innerHTML = "";
+      s.bundles.forEach(function (b) {
+        var row = document.createElement("div");
+        var icon = b.status === "ready" ? "✓" : (b.status === "failed" ? "⚠" : "⋯");
+        row.textContent = icon + " " + t(b.name) + " — " + b.status;
+        wrap.appendChild(row);
+      });
+    }
+
+    // Installed packages — every state that has been Active at least once.
+    var hasPackages = ["Active", "Suspended", "SchemaBlocked", "Exporting", "PendingDeletion"].indexOf(state) !== -1;
+    show("packages-panel", hasPackages);
+    if (hasPackages) {
+      var body = document.getElementById("packages-body");
+      body.innerHTML = "";
+      s.packages.forEach(function (p) {
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td class='mono'>" + p.id + "</td><td>" + p.version + "</td><td><span class='badge badge-" +
+          PKG_BADGE[p.state] + "'></span></td><td></td>";
+        tr.querySelectorAll("span.badge")[0].textContent = p.state;
+        tr.lastElementChild.textContent = formatDate(p.installedAt) + " · " + p.installedBy;
+        body.appendChild(tr);
+      });
+    }
+
+    // Offboarding banner + countdown — Suspended / Exporting / PendingDeletion.
+    var offboarding = ["Suspended", "Exporting", "PendingDeletion"].indexOf(state) !== -1;
+    show("offboarding-banner", offboarding);
+    var countdown = document.getElementById("deletion-countdown");
+    countdown.hidden = state !== "PendingDeletion";
+    if (state === "PendingDeletion") {
+      countdown.textContent = t("tenants.detail.deletionCountdown", { days: formatRelativeDays(s.deletionDueDays), date: formatDate(s.deletionDueDate) });
+    }
+
+    // Deletion certificate — Deleted only.
+    show("certificate-panel", state === "Deleted");
+    if (state === "Deleted") {
+      document.getElementById("certificate-text").textContent = t("tenants.offboarding.certificateBody", {
+        date: formatDate(s.deletedAt), actor: s.deletedBy, backupExpiry: formatDate(s.backupExpiry)
+      });
+    }
+
+    // Activity — always shown.
+    var actBody = document.getElementById("activity-body");
+    actBody.innerHTML = "";
+    s.activity.forEach(function (e) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td class='ts'></td><td></td><td></td>";
+      tr.children[0].textContent = e.ts;
+      tr.children[1].textContent = e.actor;
+      tr.children[2].textContent = e.action;
+      actBody.appendChild(tr);
+    });
+
+    // Danger zone — ProvisioningFailed (destroy) / Active (begin offboarding) only.
+    show("danger-zone", state === "ProvisioningFailed" || state === "Active");
+    show("destroy-btn", state === "ProvisioningFailed");
+    show("begin-offboarding-btn", state === "Active");
+  }
+
+  // ------------------------- Destroy confirmation ------------------------
+  function openDestroyDialog() {
+    var s = SCENARIOS[currentState];
+    document.getElementById("destroy-title").textContent = t("tenants.destroy.dialogTitle", { key: s.key });
+    document.getElementById("identity-checking").hidden = false;
+    document.getElementById("identity-confirmed").hidden = true;
+    document.getElementById("identity-mismatch").hidden = true;
+    document.getElementById("typed-confirm-field").hidden = true;
+    document.getElementById("typed-confirm-input").value = "";
+    document.getElementById("destroy-confirm-btn").hidden = true;
+    document.getElementById("destroy-confirm-btn").setAttribute("aria-disabled", "true");
+    openModal("destroy-modal");
+    var mismatch = document.getElementById("simulate-mismatch").checked;
+    setTimeout(function () {
+      document.getElementById("identity-checking").hidden = true;
+      if (mismatch) {
+        var m = document.getElementById("identity-mismatch");
+        m.hidden = false;
+        m.textContent = t("tenants.destroy.identityMismatch", { key: s.key });
+        announce(m.textContent, true);
+      } else {
+        var c = document.getElementById("identity-confirmed");
+        c.hidden = false;
+        c.textContent = t("tenants.destroy.identityConfirmed", { key: s.key });
+        announce(c.textContent, false);
+        var field = document.getElementById("typed-confirm-field");
+        field.hidden = false;
+        document.getElementById("typed-confirm-label").textContent = t("tenants.destroy.typeToConfirm", { key: s.key });
+        var btn = document.getElementById("destroy-confirm-btn");
+        btn.hidden = false;
+        document.getElementById("typed-confirm-input").focus();
+      }
+    }, 600);
+  }
+  function updateDestroyButton() {
+    var s = SCENARIOS[currentState];
+    var typed = document.getElementById("typed-confirm-input").value;
+    var btn = document.getElementById("destroy-confirm-btn");
+    btn.setAttribute("aria-disabled", typed === s.key ? "false" : "true");
+  }
+  function submitDestroy() {
+    var btn = document.getElementById("destroy-confirm-btn");
+    if (btn.getAttribute("aria-disabled") === "true") return;
+    var s = SCENARIOS[currentState];
+    btn.textContent = "…";
+    setTimeout(function () {
+      closeModal("destroy-modal");
+      showToast("success", t("tenants.destroy.successToast", { key: s.key }));
+      setTimeout(function () { location.href = "tenant-list.html"; }, 900);
+    }, 500);
+  }
+
+  function copyDatabaseName() {
+    var s = SCENARIOS[currentState];
+    if (navigator.clipboard) { navigator.clipboard.writeText(s.database || "").catch(function () {}); }
+    showToast("success", t("tenants.detail.copied"));
+  }
+
+  document.addEventListener("DOMContentLoaded", function () { render("Active"); });
+</script>
+</body>
+</html>

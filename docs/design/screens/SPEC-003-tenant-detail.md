@@ -146,6 +146,17 @@ Both remain proposals, exactly like `organization.company.manage` in `SPEC-002` 
 - The Danger zone panel (`components.md` §14) has its own heading ("Danger zone" / `tenants.dangerZoneHeading`) so it is independently reachable via heading navigation, not just visually last.
 - The destroy dialog's identity re-check result is announced via `role="status"`/`aria-live="polite"` the moment it resolves, since it gates whether the rest of the dialog is usable at all.
 
+**Named against WCAG 2.2 AA, per criterion, rather than asserted:**
+
+| SC | How this screen meets it |
+|---|---|
+| 1.3.1 Info and Relationships | Identity/Database/Schema render as a real `info-grid` of labeled fields (`components.md`'s existing pattern), not a two-column table masquerading as prose; a section that doesn't apply to the current state is absent from the DOM, not present-but-empty. |
+| 1.4.1 Use of Color | `InstalledPackageState`'s five values are each a badge with its own text label; no package status is color-only. |
+| 2.4.3 Focus Order | The destroy dialog's typed-confirmation field is not autofocused until the identity check resolves — autofocusing a control the operator can't yet use would place focus somewhere temporarily meaningless, the same reasoning `components.md` §1 and §14 already apply elsewhere in this design system. |
+| 2.4.6 Headings and Labels | The Danger zone panel has its own heading, reachable by heading navigation independent of visual position — see `components.md` §14's new convention. |
+| 4.1.2 Name, Role, Value | Every action button's accessible name states the action ("Destroy database…", never a bare icon); `aria-disabled` (not native `disabled`) is used everywhere a permission gap disables a control that still needs a reachable reason, per `components.md` §1's correction. |
+| 4.1.3 Status Messages | The destroy dialog's identity-check result, and the success toast naming the destroyed key, are both announced through the live-region mechanism `components.md` §15 already specifies — this screen does not invent a second one. |
+
 ## Resource keys
 
 New prefix `tenants.detail.*`; reuses `tenants.state.*` from the list spec.
@@ -158,7 +169,17 @@ New prefix `tenants.detail.*`; reuses `tenants.state.*` from the list spec.
 | `tenants.detail.schemaHeading` | Schema | Schema | Section heading |
 | `tenants.detail.packagesHeading` | Installed Country Packages | Installerade landspaket | Section heading |
 | `tenants.detail.activityHeading` | Activity | Aktivitet | Section heading |
+| `tenants.detail.colKey` | Key | Nyckel | Field label |
+| `tenants.detail.colPlan` | Plan | Plan | Field label |
+| `tenants.detail.colRegion` | Region | Region | Field label |
+| `tenants.detail.colCreated` | Created | Skapad | Field label |
+| `tenants.detail.colCluster` | Cluster | Kluster | Field label |
+| `tenants.detail.colDatabase` | Database | Databas | Field label |
+| `tenants.detail.colVersion` | Version | Version | Field label |
+| `tenants.detail.colStatus` | Status | Status | Field label |
 | `tenants.dangerZoneHeading` | Danger zone | Riskzon | Danger zone panel heading |
+| `tenants.detail.progressHeading` | Provisioning progress | Etableringsförlopp | `Provisioning`/`ProvisioningFailed` panel heading |
+| `tenants.destroy.cancel` | Cancel | Avbryt | Destroy dialog's own Cancel button — distinct from `tenants.offboarding.cancelDeletion`, which cancels a *pending deletion*, not this dialog |
 | `tenants.schema.current` | Current | Aktuell | Schema status |
 | `tenants.schema.behind` | {count} releases behind — scheduled for the next migration wave | {count} versioner efter — schemalagd för nästa migreringsomgång | Schema status |
 | `tenants.schema.blocked` | Below minimum supported v{minimum} | Under lägsta tillåtna v{minimum} | Schema status |

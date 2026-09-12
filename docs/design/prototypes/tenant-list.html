@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title id="page-title" data-i18n="tenants.pageTitle">Tenants — Operator Console · Aurora ERP</title>
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+<style>
+  /* Page-specific bits only — everything reusable (attention strip, operator
+     shell top bar, grid, badges, dialogs) lives in app.css so a second
+     operator screen doesn't reinvent it. See SPEC-003-tenant-list.md. */
+  .state-cell { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; }
+  .state-cell .detail { font-size: 11px; color: var(--color-text-muted); }
+  .tenant-cell { display: flex; flex-direction: column; gap: 1px; padding: 6px 0; }
+  .tenant-cell .key { font-family: var(--font-family-mono); font-size: 11px; color: var(--color-text-muted); }
+  td.mono-cell { font-family: var(--font-family-mono); font-size: 12px; }
+  .toolbar label.chk { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-muted); cursor: pointer; }
+  .toolbar label.chk input { accent-color: var(--color-accent-solid); }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main" data-i18n="shell.skipToContent">Skip to main content</a>
+<div class="shell shell-operator" id="shell">
+
+  <!-- app-shell.md "Operator console": a deliberately different top bar
+       (surface-sunken, no tenant/company switcher, no global search/palette
+       in this milestone) so this can never be mistaken for the tenant shell
+       used by companies-list.html etc. -->
+  <header class="topbar topbar-operator">
+    <div class="brand"><span class="mark">A</span> <span data-i18n="operator.brand">Aurora ERP · Operator Console</span></div>
+    <div class="spacer"></div>
+    <div class="theme-toggle">
+      <button data-mode="light" onclick="setTheme('light')">Light</button>
+      <button data-mode="dark" onclick="setTheme('dark')">Dark</button>
+      <button data-mode="system" onclick="setTheme('system')">System</button>
+    </div>
+    <div class="operator-user">
+      <span class="company-badge" style="--badge-color:#57616C">JA</span>
+      <span>J. Alvarez</span>
+    </div>
+    <button class="btn btn-ghost btn-sm" data-i18n="operator.signOut">Sign out</button>
+  </header>
+
+  <main class="main">
+    <div class="page" style="max-width:1500px;">
+      <div class="page-header">
+        <h1 data-i18n="tenants.heading">Tenants</h1>
+      </div>
+
+      <!-- ============== Missing-permission state (whole page) ============== -->
+      <div id="noperm-view" hidden>
+        <div class="empty-state">
+          <div class="glyph" aria-hidden="true">🔒</div>
+          <h3 data-i18n="tenants.unavailableHeading">You don't have permission to view tenants</h3>
+          <p data-i18n-html="tenants.unavailableBody" data-i18n-vars='{"permission":"<code>platform.tenant.view</code>"}'></p>
+        </div>
+      </div>
+
+      <!-- ============== Normal view ============== -->
+      <div id="default-view">
+        <!-- Attention summary strip — components.md #19. Absent entirely
+             when both counts are zero; see renderAttentionStrip(). -->
+        <div class="attention-strip" id="attention-strip" role="navigation" aria-label="Needs attention"></div>
+
+        <div class="panel">
+          <div class="toolbar">
+            <div class="search-box" style="width:260px;">
+              <span aria-hidden="true">🔍</span>
+              <input id="search-box" data-i18n-placeholder="tenants.searchPlaceholder" placeholder="Search name or key" oninput="scheduleRender()">
+            </div>
+            <select class="view-select" id="region-filter" onchange="render()">
+              <option value="">Region: all</option>
+              <option value="eu-north">eu-north</option>
+              <option value="eu-west">eu-west</option>
+            </select>
+            <select class="view-select" id="plan-filter" onchange="render()">
+              <option value="">Plan: all</option>
+              <option value="Standard">Standard</option>
+              <option value="Trial">Trial</option>
+            </select>
+            <label class="chk"><input type="checkbox" id="include-deleted" onchange="render()"> <span data-i18n="tenants.includeDeleted">Include deleted</span></label>
+            <div class="spacer"></div>
+            <select class="view-select" id="view-select" aria-label="View" disabled>
+              <option data-i18n="tenants.defaultView">Needs attention first</option>
+            </select>
+          </div>
+
+          <!-- Loading -->
+          <div id="grid-loading" hidden>
+            <div class="grid-scroll">
+              <table class="grid density-compact">
+                <thead><tr>
+                  <th data-i18n="tenants.colTenant">Tenant</th><th data-i18n="tenants.colState">State</th>
+                  <th data-i18n="tenants.colPlan">Plan</th><th data-i18n="tenants.colRegion">Region</th>
+                  <th class="num" data-i18n="tenants.colSchema">Schema</th>
+                  <th data-i18n="tenants.colCreated">Created</th><th data-i18n="tenants.colLastActivity">Last activity</th>
+                </tr></thead>
+                <tbody>
+                  <tr><td><div class="skeleton" style="width:70%;height:14px;"></div></td><td><div class="skeleton" style="width:60%;height:14px;"></div></td><td><div class="skeleton" style="width:40%;height:14px;"></div></td><td><div class="skeleton" style="width:40%;height:14px;"></div></td><td><div class="skeleton" style="width:20%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td></tr>
+                  <tr><td><div class="skeleton" style="width:65%;height:14px;"></div></td><td><div class="skeleton" style="width:55%;height:14px;"></div></td><td><div class="skeleton" style="width:40%;height:14px;"></div></td><td><div class="skeleton" style="width:40%;height:14px;"></div></td><td><div class="skeleton" style="width:20%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td></tr>
+                  <tr><td><div class="skeleton" style="width:75%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td><td><div class="skeleton" style="width:40%;height:14px;"></div></td><td><div class="skeleton" style="width:40%;height:14px;"></div></td><td><div class="skeleton" style="width:20%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td><td><div class="skeleton" style="width:50%;height:14px;"></div></td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="visually-hidden" role="status" data-i18n="tenants.loadingLabel">Loading tenants…</div>
+          </div>
+
+          <!-- True empty (zero tenants ever provisioned) -->
+          <div id="grid-true-empty" hidden>
+            <div class="empty-state">
+              <div class="glyph" aria-hidden="true">🗂</div>
+              <h3 data-i18n="tenants.emptyHeading">No tenants yet</h3>
+              <p data-i18n="tenants.emptyBody">Tenants are created through the provisioning API, not from this screen. Once the first tenant is provisioned, it appears here.</p>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div id="grid-error" hidden>
+            <div class="empty-state">
+              <div class="glyph" aria-hidden="true">⚠</div>
+              <h3 data-i18n="tenants.errorHeading">We couldn't load tenants</h3>
+              <button class="btn btn-secondary btn-sm" onclick="showState('default')" data-i18n="tenants.retry">Retry</button>
+            </div>
+          </div>
+
+          <!-- Real grid + filtered-empty (rendered by JS) -->
+          <div id="grid-real">
+            <div class="grid-scroll">
+              <table class="grid density-compact" id="tenants-grid">
+                <caption class="visually-hidden" data-i18n="tenants.tableCaption">All tenants</caption>
+                <thead>
+                  <tr>
+                    <th scope="col" data-i18n="tenants.colTenant">Tenant</th>
+                    <th scope="col" data-i18n="tenants.colState">State</th>
+                    <th scope="col" data-i18n="tenants.colPlan">Plan</th>
+                    <th scope="col" data-i18n="tenants.colRegion">Region</th>
+                    <th scope="col" class="num" data-i18n="tenants.colSchema">Schema</th>
+                    <th scope="col" data-i18n="tenants.colCreated">Created</th>
+                    <th scope="col" data-i18n="tenants.colLastActivity">Last activity</th>
+                  </tr>
+                </thead>
+                <tbody id="tenants-body"></tbody>
+              </table>
+            </div>
+            <div class="grid-footer">
+              <span id="footer-count"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div class="conn-banner" id="conn-banner" data-state="connected"></div>
+</div>
+
+<div class="demo-controls">
+  <div class="title" data-i18n="tenants.demoPanelTitle">Prototype controls</div>
+  <button class="btn btn-secondary btn-sm" onclick="showState('default')">Default</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('loading')">Loading</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('true-empty')">True empty</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('filtered-empty')">Filtered to nothing</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('error')">Error</button>
+  <button class="btn btn-secondary btn-sm" onclick="showState('noperm')">No permission</button>
+  <button class="btn btn-secondary btn-sm" onclick="cycleConnectionDemo()">Cycle connection banner</button>
+  <a class="btn btn-ghost btn-sm" href="index.html">← Back to index</a>
+</div>
+<div class="toast-stack"></div>
+
+<script src="app.js"></script>
+<script src="i18n.js"></script>
+<script>
+  // ---------------------------------------------------------------------
+  // Fictional fleet data. Nothing here is a real tenant. Severity ranks and
+  // detail lines follow SPEC-003-tenant-list.md's mapping table exactly —
+  // this is the direction, not a claim that this exact query shape ships.
+  // ---------------------------------------------------------------------
+  var TENANTS = [
+    /* Plan and Region are set at reservation (Tenant.Reserve, ADR-0007 SS8
+       step 1), so both are real even for Provisioning/ProvisioningFailed —
+       only Schema (core_schema_version) is genuinely unset until Activate.
+       An earlier draft of this fixture nulled Plan/Region here too; caught
+       against Tenant.cs and fixed, see SPEC-003-tenant-list.md "Columns." */
+    { key: "kessler-fasteners", name: "Kessler Fasteners GmbH", state: "ProvisioningFailed", attempts: 5, plan: "Standard", region: "eu-west", schema: null, created: "2026-09-08" },
+    { key: "solheim-trading", name: "Solheim Trading", state: "SchemaBlocked", schemaVersion: 9, minVersion: 11, plan: "Standard", region: "eu-north", created: "2026-06-02" },
+    { key: "meridian-distribution", name: "Meridian Distribution", state: "PendingDeletion", deletionDueDays: 2, deletionDueDate: "2026-09-14", plan: "Standard", region: "eu-north", schema: 14, created: "2026-01-15" },
+    { key: "ashcroft-retail", name: "Ashcroft Retail Group", state: "PendingDeletion", deletionDueDays: 9, deletionDueDate: "2026-09-21", plan: "Trial", region: "eu-west", schema: 14, created: "2026-03-03" },
+    { key: "larkspur-logistics", name: "Larkspur Logistics AB", state: "Provisioning", step: 5, plan: "Standard", region: "eu-west", schema: null, created: "2026-09-12" },
+    { key: "nordbridge-wholesale", name: "Nordbridge Wholesale", state: "Exporting", plan: "Standard", region: "eu-west", schema: 14, created: "2026-02-20" },
+    { key: "nordwind-group", name: "Nordwind Group", state: "Active", lastActivityMinutes: 3, plan: "Standard", region: "eu-west", schema: 14, created: "2026-06-02" },
+    { key: "havenport-trading", name: "Havenport Trading Co", state: "Active", lastActivityMinutes: 2880, plan: "Standard", region: "eu-north", schema: 14, created: "2026-04-11" },
+    { key: "ferro-sons-metalworks", name: "Ferro & Sons Metalworks", state: "Active", lastActivityMinutes: 47, plan: "Standard", region: "eu-west", schema: 13, created: "2026-05-30" },
+    { key: "ilkkala-paper-group", name: "Ilkkala Paper Group", state: "Active", lastActivityMinutes: null, plan: "Trial", region: "eu-north", schema: 14, created: "2026-09-01" },
+    { key: "comet-bay-logistics", name: "Comet Bay Logistics", state: "Suspended", suspendedMinutesAgo: 7200, plan: "Standard", region: "eu-west", schema: 14, created: "2025-11-19" },
+    { key: "old-bridge-traders", name: "Old Bridge Traders", state: "Deleted", deletedDate: "2026-07-01", plan: null, region: null, schema: null, created: "2025-08-04" }
+  ];
+
+  var SEVERITY_RANK = {
+    ProvisioningFailed: 1, SchemaBlocked: 1,
+    PendingDeletion: 2,
+    Provisioning: 3, Exporting: 3,
+    Active: 4, Suspended: 4,
+    Deleted: 5
+  };
+  var BADGE = {
+    Provisioning: "info", ProvisioningFailed: "danger", Active: "success",
+    Suspended: "neutral", SchemaBlocked: "danger", Exporting: "info",
+    PendingDeletion: "warning", Deleted: "neutral"
+  };
+
+  var activeStateFilter = null; // set by an Attention-strip segment; null = no state filter
+  var renderTimer = null;
+  function scheduleRender() { clearTimeout(renderTimer); renderTimer = setTimeout(render, 200); }
+
+  function stateLabel(s) { return t("tenants.state." + s.charAt(0).toLowerCase() + s.slice(1)); }
+
+  function detailLine(row) {
+    switch (row.state) {
+      case "Provisioning": return t("tenants.state.provisioningDetail", { step: formatCount(row.step) });
+      case "ProvisioningFailed": return t("tenants.state.provisioningFailedDetail", { attempts: formatCount(row.attempts) });
+      case "Active": return row.lastActivityMinutes == null
+        ? t("tenants.state.activeDetailNever")
+        : t("tenants.state.activeDetail", { relativeTime: formatRelativeAuto(row.lastActivityMinutes) });
+      case "Suspended": return t("tenants.state.suspendedDetail", { relativeTime: formatRelativeAuto(row.suspendedMinutesAgo) });
+      case "SchemaBlocked": return t("tenants.state.schemaBlockedDetail", { version: row.schemaVersion, minimum: row.minVersion });
+      case "Exporting": return t("tenants.state.exportingDetail");
+      case "PendingDeletion": return t("tenants.state.pendingDeletionDetail", { days: formatRelativeDays(row.deletionDueDays), date: formatDate(row.deletionDueDate) });
+      case "Deleted": return t("tenants.state.deletedDetail", { date: formatDate(row.deletedDate) });
+    }
+  }
+
+  function severityCompare(a, b) {
+    var ra = SEVERITY_RANK[a.state], rb = SEVERITY_RANK[b.state];
+    if (ra !== rb) return ra - rb;
+    if (a.state === "PendingDeletion") return a.deletionDueDays - b.deletionDueDays;
+    if (a.state === "Provisioning" || a.state === "Exporting") return (a.created < b.created) ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  }
+
+  function currentRows() {
+    var search = (document.getElementById("search-box").value || "").toLowerCase();
+    var region = document.getElementById("region-filter").value;
+    var plan = document.getElementById("plan-filter").value;
+    var includeDeleted = document.getElementById("include-deleted").checked;
+    return TENANTS.filter(function (r) {
+      if (!includeDeleted && r.state === "Deleted") return false;
+      if (activeStateFilter && activeStateFilter.indexOf(r.state) === -1) return false;
+      if (search && r.name.toLowerCase().indexOf(search) === -1 && r.key.indexOf(search) === -1) return false;
+      if (region && r.region !== region) return false;
+      if (plan && r.plan !== plan) return false;
+      return true;
+    }).sort(severityCompare);
+  }
+
+  // The Attention strip's counts are computed over the WHOLE fleet (minus
+  // "Deleted", which can never need action), independent of the grid's own
+  // filters — SPEC-003-tenant-list.md AC-1: "the whole filtered fleet, not
+  // just the current page." A production build issues this as its own
+  // server-side count query; this static prototype recomputes it from the
+  // fixed sample every render.
+  function renderAttentionStrip() {
+    var needsAction = TENANTS.filter(function (r) { return r.state === "ProvisioningFailed" || r.state === "SchemaBlocked"; });
+    var pending = TENANTS.filter(function (r) { return r.state === "PendingDeletion"; }).sort(function (a, b) { return a.deletionDueDays - b.deletionDueDays; });
+    var strip = document.getElementById("attention-strip");
+    strip.innerHTML = "";
+    if (needsAction.length === 0 && pending.length === 0) return; // components.md #19: absent, not empty
+    if (needsAction.length) {
+      var b1 = document.createElement("button");
+      b1.className = "attention-segment needs-action";
+      b1.innerHTML = '<span class="ic" aria-hidden="true">⚠</span> <span></span>';
+      b1.querySelector("span:last-child").textContent = t("tenants.attentionNeedsAction", { count: formatCount(needsAction.length) });
+      b1.onclick = function () {
+        activeStateFilter = ["ProvisioningFailed", "SchemaBlocked"];
+        render();
+        document.getElementById("search-box").focus();
+      };
+      strip.appendChild(b1);
+    }
+    if (pending.length) {
+      var b2 = document.createElement("button");
+      b2.className = "attention-segment pending-deletion";
+      b2.innerHTML = '<span class="ic" aria-hidden="true">⏳</span> <span></span>';
+      b2.querySelector("span:last-child").textContent = t("tenants.attentionPendingDeletion", {
+        count: formatCount(pending.length), days: formatRelativeDays(pending[0].deletionDueDays)
+      });
+      b2.onclick = function () {
+        activeStateFilter = ["PendingDeletion"];
+        render();
+        document.getElementById("search-box").focus();
+      };
+      strip.appendChild(b2);
+    }
+  }
+
+  function render() {
+    renderAttentionStrip();
+    var rows = currentRows();
+    var body = document.getElementById("tenants-body");
+    var real = document.getElementById("grid-real");
+    var trueEmpty = document.getElementById("grid-true-empty");
+    trueEmpty.hidden = true; // demo's "true empty" is its own showState(), not reachable via filters
+    if (rows.length === 0) {
+      real.querySelector(".grid-scroll").hidden = true;
+      real.querySelector(".grid-footer").hidden = true;
+      if (!document.getElementById("filtered-empty-row")) {
+        var wrap = document.createElement("div");
+        wrap.id = "filtered-empty-row";
+        wrap.className = "empty-state";
+        wrap.innerHTML = '<div class="glyph" aria-hidden="true">🔎</div><h3></h3><button class="btn btn-secondary btn-sm"></button>';
+        wrap.querySelector("h3").textContent = t("tenants.filteredEmptyHeading");
+        var clear = wrap.querySelector("button");
+        clear.textContent = t("tenants.clearFilters");
+        clear.onclick = function () {
+          document.getElementById("search-box").value = "";
+          document.getElementById("region-filter").value = "";
+          document.getElementById("plan-filter").value = "";
+          activeStateFilter = null;
+          render();
+        };
+        real.appendChild(wrap);
+      }
+      return;
+    }
+    var existingEmpty = document.getElementById("filtered-empty-row");
+    if (existingEmpty) existingEmpty.remove();
+    real.querySelector(".grid-scroll").hidden = false;
+    real.querySelector(".grid-footer").hidden = false;
+
+    body.innerHTML = "";
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.tabIndex = 0;
+      tr.onclick = function () { location.href = "tenant-detail.html?key=" + row.key; };
+      tr.onkeydown = function (e) { if (e.key === "Enter") tr.onclick(); };
+
+      var tenantCell = document.createElement("td");
+      tenantCell.innerHTML = '<div class="tenant-cell"><div>' + escapeHtml(row.name) + '</div><div class="key"></div></div>';
+      tenantCell.querySelector(".key").textContent = row.key;
+      tr.appendChild(tenantCell);
+
+      var stateCell = document.createElement("td");
+      var badge = BADGE[row.state];
+      stateCell.innerHTML = '<div class="state-cell"><span class="badge badge-' + badge + '"></span><span class="detail"></span></div>';
+      stateCell.querySelector(".badge").textContent = stateLabel(row.state);
+      stateCell.querySelector(".detail").textContent = detailLine(row);
+      tr.appendChild(stateCell);
+
+      var planCell = document.createElement("td"); planCell.textContent = row.plan || "—"; tr.appendChild(planCell);
+      var regionCell = document.createElement("td"); regionCell.className = "mono-cell"; regionCell.textContent = row.region || "—"; tr.appendChild(regionCell);
+      var schemaCell = document.createElement("td"); schemaCell.className = "num tnum"; schemaCell.textContent = row.schema != null ? formatCount(row.schema) : "—"; tr.appendChild(schemaCell);
+      var createdCell = document.createElement("td"); createdCell.textContent = formatDate(row.created); tr.appendChild(createdCell);
+      var lastCell = document.createElement("td");
+      lastCell.textContent = row.state === "Active" && row.lastActivityMinutes != null ? formatRelativeAuto(row.lastActivityMinutes) : "—";
+      tr.appendChild(lastCell);
+
+      body.appendChild(tr);
+    });
+
+    document.getElementById("footer-count").textContent =
+      t("tenants.footerCount", { rangeStart: formatCount(1), rangeEnd: formatCount(rows.length), total: formatCount(rows.length) });
+  }
+
+  function escapeHtml(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  function showState(state) {
+    document.getElementById("noperm-view").hidden = (state !== "noperm");
+    document.getElementById("default-view").hidden = (state === "noperm");
+    document.getElementById("attention-strip").hidden = (state === "loading");
+    document.getElementById("grid-loading").hidden = (state !== "loading");
+    document.getElementById("grid-error").hidden = (state !== "error");
+    document.getElementById("grid-real").hidden = (state === "loading" || state === "error" || state === "true-empty");
+    document.getElementById("grid-true-empty").hidden = (state !== "true-empty");
+    if (state === "filtered-empty") {
+      document.getElementById("search-box").value = "zzz-no-such-tenant-zzz";
+      activeStateFilter = null;
+    } else if (state === "default") {
+      document.getElementById("search-box").value = "";
+      activeStateFilter = null;
+    }
+    if (state !== "loading" && state !== "error" && state !== "true-empty" && state !== "noperm") render();
+  }
+
+  document.addEventListener("DOMContentLoaded", function () { render(); });
+</script>
+</body>
+</html>

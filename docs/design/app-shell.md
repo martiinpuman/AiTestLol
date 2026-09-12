@@ -103,6 +103,8 @@ Added by `DESIGN-002` for `screens/SPEC-003-tenant-list.md`, `SPEC-003-tenant-de
 
 **Permission model.** Every screen behind this shell requires a platform-level capability distinct from any tenant-scoped permission in `ADR-0010` (there is no tenant to scope it to, the same reasoning `SPEC-001` BR-1 applies to triggering provisioning itself). `SPEC-003-tenant-list.md` proposes concrete permission names; as with `organization.company.manage` in `SPEC-002`, these are naming proposals for the implementing developer and architect to confirm, not locked decisions.
 
+**Resource keys owned at the shell level** (referenced, not redefined, by every screen behind this shell — the same relationship `shell.skipToContent` already has to every tenant-shell screen): `operator.brand` ("Aurora ERP · Operator Console" / "Aurora ERP · Operatörskonsol") for the top-bar wordmark, and `operator.signOut` ("Sign out" / "Logga ut") for the sign-out control. Sign-in/authentication for this console is out of scope for this task (see `SPEC-003-tenant-list.md`'s "Scope") and is assumed to exist, not designed here.
+
 ## What we borrowed and why
 
 - **Persistent tenant/workspace identity in the header, never a settings-menu afterthought** — borrowed from Slack/Notion's always-visible workspace name and Google Workspace's persistent account badge; adapted here with mandatory restatement on the record itself, because the cost of getting it wrong in an ERP (a misposted financial document) is categorically higher than in a chat app (a message in the wrong workspace).
