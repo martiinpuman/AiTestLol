@@ -328,21 +328,34 @@ echo
 # visible the moment you look; the wrong branch is invisible precisely because
 # every command still succeeds.
 echo "working tree"
+# Where is the integration branch checked out, and is that where you are about to commit?
+#
+# The original form of this check asserted the MAIN checkout was on the integration
+# branch. That was right about the hazard and wrong about the remedy: agents legitimately
+# check task branches out in the main checkout, so the check sat permanently red, and a
+# permanently red check is one nobody reads - which is the same failure it exists to catch.
+#
+# The invariant that actually matters is that SOME worktree holds the integration branch
+# and you know which one, because a commit made anywhere else is pushed by
+# `git push origin <integration>` with a SUCCESS message and an unchanged ref. That
+# happened twice on 2026-09-12. Nothing failed; every command returned zero.
+integration_wt="$(git worktree list --porcelain \
+  | awk -v b="refs/heads/${INTEGRATION}" '/^worktree /{wt=$2} $0=="branch "b{print wt}')"
 checked_out="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(detached)')"
-if [ "${checked_out}" != "${INTEGRATION}" ]; then
-  fail "the main checkout is on '${checked_out}', not the integration branch '${INTEGRATION}'"
-  say "        Anything committed here lands on '${checked_out}'. A push naming the"
-  say "        integration branch will still report success - it pushes that ref, which"
-  say "        has not moved - so the work is silently somewhere else."
-  say "        An agent working in the main checkout should have a worktree instead."
-  say "        Check where your recent commits actually went:"
-  say "            git branch --contains <sha>"
-  say "            git merge-base --is-ancestor <sha> origin/${INTEGRATION}"
+if [ -z "${integration_wt}" ]; then
+  fail "no worktree holds the integration branch '${INTEGRATION}'"
+  say "       Integration work has nowhere to land. Create one and commit there:"
+  say "           git worktree add <path> ${INTEGRATION}"
 else
-  ok "on ${INTEGRATION}"
+  ok "integration branch checked out at ${integration_wt}"
+  if [ "${checked_out}" != "${INTEGRATION}" ]; then
+    say "       this checkout is on '${checked_out}' - commit integration work in the worktree above,"
+    say "       and verify every push landed rather than trusting its output:"
+    say "           git merge-base --is-ancestor HEAD origin/${INTEGRATION}"
+  fi
 fi
 if [ -n "$(git status --porcelain)" ]; then
-  fail "uncommitted changes in the main checkout:"
+  fail "uncommitted changes in this checkout:"
   git status --porcelain | sed 's/^/            /'
 else
   ok "clean"
