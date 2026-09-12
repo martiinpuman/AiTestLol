@@ -30,6 +30,8 @@ set is deliberately small and each member earns its place.
 | `DateRange` | A half-open run of calendar days |
 | `IEntityId<TSelf>`, `EntityId` | The contract every strongly-typed identifier obeys, and its shared behaviour |
 | `TenantId`, `CompanyId` | The two identifiers the whole system shares |
+| `CompanyScope` | Which companies of the tenant a unit of work may see: every one, or a named set. The empty set cannot be built |
+| `ICompanyScoped` | Marks an entity that belongs to one company, so that a `CompanyScope` can filter it. A company is scoped to itself |
 | `Result`, `Result<TValue>`, `Error`, `ErrorKind` | How an expected failure is returned rather than thrown |
 
 ## The decisions worth knowing before you use these
@@ -69,6 +71,22 @@ ends where it starts is empty, which is a state an inclusive range cannot expres
 where `CompanyId` is wanted. `IEntityId<TSelf>` carries both halves of an EF Core value conversion
 so one converter serves every identifier; `EntityIdContract<TId>` in the test project holds each new
 identifier to the same invariants.
+
+**`CompanyScope` has two forms and no empty one** (ADR-0029 §5 and A1.2 H-2; ADR-0010 rules 4
+and 6). `AllCompaniesInTenant` is the scope of a Role Assignment that names no company — every
+company in the tenant, including ones created later — and emits no predicate, because tenant
+isolation is the database. `Of(ids)` is a named set: it deduplicates and orders, so two scopes over
+the same companies are one value with one hash code, and it throws on an empty collection and on
+any unassigned (default) `CompanyId` rather than dropping it. The empty set is refused at
+construction because an empty filter list that a query builder turns into no filter is
+`WHERE 1=1`, which is every company — the company-level twin of a cross-tenant read. It is a sealed
+class rather than a struct because a struct `default` would have to mean something, and neither
+"every company" nor a third form is acceptable. A consumer branches on `IsAllCompaniesInTenant`,
+never on the count of `CompanyIds`. How the scope reaches a query is decided but not yet built:
+ADR-0029 A1.2 H-2 makes it a constructor parameter of any `DbContext` that maps an
+`ICompanyScoped` entity, never an ambient lookup, and B-06.3 builds that rule — this assembly
+holds the marker and the value, not the mechanism. A company implements `ICompanyScoped` by
+returning its own id, so `Company` needs no special case.
 
 **`Result` is for expected failures only.** A broken invariant still throws (ADR-0017 layer 2) and
 input shape is still validated at the boundary (layer 1). `Result` exists so that "the period is
