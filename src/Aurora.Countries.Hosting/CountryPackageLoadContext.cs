@@ -27,7 +27,8 @@ namespace Aurora.Countries.Hosting;
 /// code that runs here runs in-process with full trust: it can read any file this process can read
 /// and open any socket. What this class provides is version isolation and unloadability. The
 /// controls that actually decide whether hostile code runs are upstream of it — the signature, the
-/// reference rule, and v1's "first-party packages only".
+/// reference rule, and the admission floor of ADR-0033 §5.2
+/// (<see cref="CountryPackageHostOptions.AdmissionFloor"/>).
 /// </para>
 /// </remarks>
 internal sealed class CountryPackageLoadContext : AssemblyLoadContext

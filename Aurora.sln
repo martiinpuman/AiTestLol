@@ -44,6 +44,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "integration", "integration", "{28A6993C-471E-82FE-7D9E-AD3B1EC22BD9}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aurora.Platform.Tenancy.IntegrationTests", "tests\integration\Aurora.Platform.Tenancy.IntegrationTests\Aurora.Platform.Tenancy.IntegrationTests.csproj", "{227DA4DA-EC18-4C5C-B220-2035A7DE0FAC}"
+EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aurora.Countries.Hosting", "src\Aurora.Countries.Hosting\Aurora.Countries.Hosting.csproj", "{9C6D0C53-E9CC-4BD4-9C8B-EA1F453B5F61}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aurora.Countries.Contracts.UnitTests", "tests\unit\Aurora.Countries.Contracts.UnitTests\Aurora.Countries.Contracts.UnitTests.csproj", "{5B1F52AB-7EDD-45ED-AE6F-E6501CD55288}"
@@ -51,6 +52,8 @@ EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aurora.Countries.Hosting.UnitTests", "tests\unit\Aurora.Countries.Hosting.UnitTests\Aurora.Countries.Hosting.UnitTests.csproj", "{F21FBDEF-1FB0-4296-B225-8440D65A518D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aurora.Countries.TestPackage", "tests\fixtures\Aurora.Countries.TestPackage\Aurora.Countries.TestPackage.csproj", "{C61ABB8F-D0FA-45C7-AB75-DF48BFD31900}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Aurora.Countries.HostilePackage", "tests\fixtures\Aurora.Countries.HostilePackage\Aurora.Countries.HostilePackage.csproj", "{42414ABA-113C-4A88-A33A-3161B0CC1894}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -278,6 +281,18 @@ Global
 		{C61ABB8F-D0FA-45C7-AB75-DF48BFD31900}.Release|x64.Build.0 = Release|Any CPU
 		{C61ABB8F-D0FA-45C7-AB75-DF48BFD31900}.Release|x86.ActiveCfg = Release|Any CPU
 		{C61ABB8F-D0FA-45C7-AB75-DF48BFD31900}.Release|x86.Build.0 = Release|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Debug|x64.Build.0 = Debug|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Debug|x86.Build.0 = Debug|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Release|Any CPU.Build.0 = Release|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Release|x64.ActiveCfg = Release|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Release|x64.Build.0 = Release|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Release|x86.ActiveCfg = Release|Any CPU
+		{42414ABA-113C-4A88-A33A-3161B0CC1894}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -306,5 +321,6 @@ Global
 		{5B1F52AB-7EDD-45ED-AE6F-E6501CD55288} = {9D556B49-86D1-93A7-9596-FFAAB74EC556}
 		{F21FBDEF-1FB0-4296-B225-8440D65A518D} = {9D556B49-86D1-93A7-9596-FFAAB74EC556}
 		{C61ABB8F-D0FA-45C7-AB75-DF48BFD31900} = {9D556B49-86D1-93A7-9596-FFAAB74EC556}
+		{42414ABA-113C-4A88-A33A-3161B0CC1894} = {9D556B49-86D1-93A7-9596-FFAAB74EC556}
 	EndGlobalSection
 EndGlobal

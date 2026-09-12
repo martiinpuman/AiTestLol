@@ -9,9 +9,10 @@
     AssemblyLoadContext. That is deliberate. Every mechanism under test is about an assembly as a
     file on disk, and a test double would prove none of it.
 
-    The reference to Aurora.Countries.TestPackage is what puts that assembly beside the tests. The
-    tests never reference a type from it: it must load into the package's own load context, and
-    touching a type here would load it into the default one instead.
+    The references to Aurora.Countries.TestPackage and Aurora.Countries.HostilePackage are what put
+    those assemblies beside the tests. The tests never reference a type from either: each must load
+    into the package's own load context, and touching a type here would load it into the default
+    one instead - and, for the hostile package, run the module initialiser the D1 tests observe.
   -->
 
   <PropertyGroup>
@@ -29,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\src\Aurora.Countries.Hosting\Aurora.Countries.Hosting.csproj" />
     <ProjectReference Include="..\..\fixtures\Aurora.Countries.TestPackage\Aurora.Countries.TestPackage.csproj" />
+    <ProjectReference Include="..\..\fixtures\Aurora.Countries.HostilePackage\Aurora.Countries.HostilePackage.csproj" />
   </ItemGroup>
 
 </Project>
