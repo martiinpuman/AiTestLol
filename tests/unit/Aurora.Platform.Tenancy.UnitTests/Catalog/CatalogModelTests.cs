@@ -53,6 +53,23 @@ public sealed class CatalogModelTests
     }
 
     [Fact]
+    public void The_cluster_endpoint_is_unique_in_the_model()
+    {
+        using CatalogDbContext context = OfflineCatalog.Open();
+
+        // A tripwire on the configuration, not the acceptance criterion: an index in the model
+        // proves nothing about what the catalog refuses, which CatalogRoutingUniquenessTests asserts
+        // against PostgreSQL (ADR-0034 §3.3). What this catches with Docker stopped is the index
+        // being taken out of DatabaseClusterConfiguration with a migration scaffolded to match, which
+        // the snapshot check above would let through.
+        IEntityType cluster = context.Model.FindEntityType(typeof(DatabaseCluster))!;
+        IIndex endpoint = cluster.GetIndexes().Single(index => index.GetDatabaseName() == "ux_database_cluster_host_port");
+
+        endpoint.IsUnique.ShouldBeTrue();
+        endpoint.Properties.Select(property => property.GetColumnName()).ShouldBe(["host", "port"]);
+    }
+
+    [Fact]
     public void Queries_do_not_track_by_default()
     {
         using CatalogDbContext context = OfflineCatalog.Open();

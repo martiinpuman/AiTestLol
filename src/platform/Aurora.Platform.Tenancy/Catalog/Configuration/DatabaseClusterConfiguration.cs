@@ -57,5 +57,20 @@ internal sealed class DatabaseClusterConfiguration : IEntityTypeConfiguration<Da
 
         // Placement (ADR-0007 8 step 1) asks for accepting clusters in one region.
         builder.HasIndex(cluster => new { cluster.Region, cluster.State }).HasDatabaseName("ix_database_cluster_region_state");
+
+        // The routing-uniqueness axis is the physical endpoint (ADR-0034 3.1): with this index
+        // cluster_id -> (host, port) is injective, fk_tenant_cluster_in_region makes it total for
+        // every non-deleted tenant, and ux_tenant_cluster_id_database_name makes
+        // (cluster_id, database_name) unique - so (host, port, database_name), the triple the
+        // resolver composes into a connection string, is unique across catalog.tenant. It closes
+        // the third executed variant of the tenant-takeover finding: two cluster rows on one
+        // server, one tenant each, the attacker's database_name copied from the victim's. It does
+        // not cover two names for one server (a CNAME, a second DNS record, a failover alias, an
+        // IP literal beside a host name); that is TenantIdentityStamp's job (ADR-0034 4). A read
+        // replica or a pooler endpoint is not a row here (3.2); if either ever becomes one, this
+        // index is wrong as written and ADR-0034 9 is where to start.
+        builder.HasIndex(cluster => new { cluster.Host, cluster.Port })
+            .IsUnique()
+            .HasDatabaseName("ux_database_cluster_host_port");
     }
 }
