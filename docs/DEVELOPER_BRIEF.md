@@ -9,7 +9,13 @@ describes a design, open the named section — do not implement from this page's
 ## The five things that are true on every task
 
 1. **Integration branch is `claude/multi-tenant-saas-erp-pv2nap`, never `main`.** Branch to
-   `task/<ID>`, commit there, do not merge, do not push. The orchestrator integrates.
+   `task/<ID>`, commit there, **do not merge**. Push your own branch when your task brief
+   says to — `git push -u origin task/<ID>` — and never any other branch. The orchestrator
+   merges; you never do, and you never push to the integration branch or to `main`.
+   *(This line said "do not push" until 2026-09-12, while task briefs said to push. B-09's
+   author followed the brief, flagged the contradiction rather than guessing, and was right
+   on both counts. A branch that is never pushed cannot have a pull request, and the review
+   happens on the pull request.)*
 2. **Commit as soon as your work first compiles**, then in small steps. Usage limits have killed
    agents on this project five times; committed work always survived, uncommitted work nearly did not.
 3. **`source scripts/dev-env.sh`** before any `dotnet` command. The SDK is not on `PATH` by default.

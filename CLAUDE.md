@@ -109,7 +109,21 @@ The forms this has taken here, each invisible to the check that caught the previ
 a test that cannot fail · a **demonstration** that cannot fail · a floor set below the narrowing it
 detects · a correction that re-introduces what it fixed · a test that passes **for the wrong reason** ·
 a check that verifies **presence** where only **effect** matters · a parser that reads a subset of its
-input and reports as though it read all of it.
+input and reports as though it read all of it · **a fix that silently invalidates the evidence for the
+claim it was fixing.**
+
+That last one is the newest and the least obvious, so here is the case. A comparison was widened to
+count a pinned-but-absent key as a finding — the correct fix. One row of the fourteen-row evidence
+table beneath it had been green *because* the old comparator skipped absent keys; the fix turned that
+row red, and nobody re-ran the table. The document then carried an executed-looking matrix with a
+wrong cell, and a load-bearing sentence resting on that cell (*"part 4 is not belt and braces there,
+it is the only witness"*) that was no longer true. The mechanism was right and the argument for it had
+quietly rotted.
+
+**So: when you change a mechanism, re-run every demonstration that rests on it, and say in the
+handback which ones you re-ran and what each printed.** A table of executed results is evidence only
+for the version of the code that produced it. Stale evidence is worse than no evidence, because its
+shape invites trust.
 
 Two more, learned the same way:
 - **`decimal` is exact until it is not, and it does not tell you.** Multiplication and division round

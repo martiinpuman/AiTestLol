@@ -22,6 +22,14 @@ The catalog database only: schema `catalog`, five entity types, their EF configu
 | `catalog.subscription` | What a tenant is entitled to, over a half-open span of days | §9.2 |
 | `catalog.installed_package` | Which Country Packages a tenant has, and in what state | §9.2, ADR-0008 §4 |
 
+**After B-19**, the catalog's two append-only trails — created by raw SQL in the
+`AppendOnlyTrails` migration, mapped by no entity, written by rows that have not landed yet:
+
+| Table | Holds | Source |
+|---|---|---|
+| `catalog.operator_audit_event` | The platform side of the tenant boundary: a provisioning attempt that failed or was retried and the successful platform-side event, a time-boxed, reason-coded support-access grant, the daily record of each tenant's audit chain head — append-only | ADR-0007 §9.2, ADR-0010 rule 8, ADR-0018 §1, ADR-0028 §6, SPEC-001 BR-7 |
+| `catalog.erasure_replay_log` | One row per erasure executed in a tenant — subject reference, requester, when, which fields, never the erased values — re-applied after any restore; append-only | ADR-0007 §11.5, ADR-0018 §6 |
+
 ### Which §9.2 tables are deliberately *not* here yet
 
 ADR-0007 §9.2 lists the catalog's full eventual contents. B-05 lands the registry and routing core;
@@ -34,12 +42,12 @@ so that the migration that adds it also adds the code that uses it:
 | `catalog.migration_run`, `catalog.migration_run_tenant` | B-08 (migration runner, §7.3) |
 | `catalog.identity_user`, `catalog.user_tenant_membership` | Identity module (ADR-0009) |
 | `catalog.outbox` | Messaging platform module (ADR-0015) |
-| `catalog.operator_audit_event`, `catalog.erasure_replay_log` | Audit platform module (ADR-0018, §11.5) |
 | `catalog.feature_flag`, `catalog.feature_flag_tenant_override` | Configuration platform module (ADR-0011) |
 | `quartz.*` | Jobs platform module (ADR-0014) — its own schema, not `catalog` |
 
-Whoever adds one must, in the same commit, add its columns to `CatalogSchemaAllowlist.Columns` (or
-the ADR-0007 §9.3 guard fails) and record what `aurora_app` may do to it in
+Whoever adds one must, in the same commit, add its columns to `CatalogSchemaAllowlist.Columns` —
+`AppendOnlyColumns` for a table created by raw SQL that no entity maps — (or the ADR-0007 §9.3
+guard fails) and record what `aurora_app` may do to it in
 `CatalogSchemaAllowlist.AppRolePrivileges` — each grant with the task, saga step or module that
 issues it — granting exactly that in the migration that creates it. Nothing arrives by default: the
 catalog sets no default privilege that grants — its one `ALTER DEFAULT PRIVILEGES` revokes, closing
@@ -55,16 +63,22 @@ another role (inherited, or one `SET ROLE` away), a function left at PostgreSQL'
 and a privilege this code had never heard of (PostgreSQL 17's `MAINTAIN` was the one the security
 review used) are reported as themselves rather than missed. A function, sequence or type is recorded
 in `CatalogSchemaAllowlist.AppRoleObjectPrivileges` the way a table is in `AppRolePrivileges` — `[]`
-for one the role may not touch, which is what ADR-0028 §2's trigger function will be: a trigger fires
-for `aurora_app` without `aurora_app` holding `EXECUTE` on it. An append-only table —
-`operator_audit_event`, `erasure_replay_log` — records `SELECT, INSERT` and nothing else (ADR-0004
-rule 5). A write privilege with no component to name is not granted. That is the intended friction:
-the allowlist diffs are where a reviewer sees a new catalog object arrive, and what the request path
-may do to it.
+for one the role may not touch, which is what ADR-0028 §2's guard function
+`refuse_append_only_change()` is: a trigger fires for `aurora_app` without `aurora_app` holding
+`EXECUTE` on it. An append-only table — `operator_audit_event`, `erasure_replay_log` — records
+`SELECT, INSERT` and nothing else (ADR-0004 rule 5), and `CatalogPrivilegeAllowlistTests` holds the
+record to that. A partitioned table records what the role holds on every partition of its tree in
+`CatalogSchemaAllowlist.PartitionPrivileges`, keyed by the root — **empty**, the catalog's shape,
+because a partition in a schema with no default privilege has no ACL and is reached through its
+parent and never directly; the entry must be present and empty, or the oracle reports every
+partition of the tree as undecided (none exists yet; `catalog.authentication_event`, B-18.9, is
+the first). A write privilege with no component to name is not granted. That is the intended
+friction: the allowlist diffs are where a reviewer sees a new catalog object arrive, and what the
+request path may do to it.
 
 ---
 
-## Three decisions a reader will want justified
+## What a reader will want justified
 
 ### `CatalogDbContext` is `internal`
 
@@ -114,6 +128,101 @@ each of the eight and asserts four plausible near-misses are refused.
 `Tenant` itself exposes only `Reserve` and `Activate` — the two ends of the provisioning saga. The
 methods that reach the other six states arrive with the tasks that drive them, guarded the same way.
 
+### The two append-only trails are append-only by mechanism, and the guard is asserted by its effect
+
+`catalog.operator_audit_event` and `catalog.erasure_replay_log` (B-19; `solution-layout.md` §6.4
+item 5; ADR-0028 §2 as amended) are created by raw SQL in `AppendOnlyTrails` — the guard they carry
+is nothing the EF model can express — so nothing about them is asserted against the model: the
+columns are read from `information_schema`, the grants from the ACL, and the writes are tried as
+the role (`CatalogAppendOnlyTests`, `CatalogAppendOnlyGuardTests`, `CatalogPrivilegeTests`). Three
+mechanisms:
+
+1. **The grant.** `aurora_app` holds exactly `SELECT, INSERT` on each, recorded with its writers —
+   the provisioning saga (B-07.1, B-07.4), ADR-0010 rule 8's support-access grant, ADR-0018 §1's
+   chain-head job, the erasure path. As the role, an `INSERT` succeeds and `UPDATE`/`DELETE` are
+   `42501` from the privilege check, before a row is looked at.
+2. **The guards.** On each table a `BEFORE UPDATE OR DELETE … FOR EACH ROW` trigger and a
+   `BEFORE TRUNCATE … FOR EACH STATEMENT` trigger, both `ENABLE ALWAYS`, raising `42501` with the
+   guard's own message, so the owner — whom privileges do not restrain — is refused too. The
+   truncate guard is on these unpartitioned tables deliberately: §6.4 item 5's "does not arise"
+   is about cloning, and the `TRUNCATE` statement does not care whether a table is partitioned —
+   without it the owner emptied either trail in one statement. What is asserted is that they
+   *refuse*, never that they exist: as `aurora_migrator`, inside a transaction that is rolled
+   back, an `UPDATE` and a `DELETE` of a seeded row on each table and a `TRUNCATE` of it must
+   return `42501` and the guard's message, and the probe reports
+   `relations probed / statements refused / silent` by `table/VERB`, floored at the two tables the
+   record names. Beside it, a **binding check** follows the chain from what it asserts to what
+   must be true, one catalog per link, and compares each link with what the migration wrote: the
+   ACL decides who may issue a statement (the oracle above); `pg_trigger` decides which guard
+   fires, when, for which rows and with what — `tgtype` exactly, `tgenabled 'A'`, `tgfoid`
+   resolved to `catalog.refuse_append_only_change` *by schema*, `tgqual` null, `tgattr` empty,
+   `tgnargs` zero; `pg_rewrite` can discard or redirect the statement before any guard fires — no
+   rule; `pg_class.relrowsecurity` and `pg_policy` decide which rows it reaches — off, and none;
+   and `pg_proc` holds what the guard the trigger names *actually does* — `pg_get_functiondef`'s
+   rendering, body, language, security and configuration in one string, equal to a literal the
+   test holds on its own, deliberately not read from the migration, because the bypass was proved
+   by committing three lines into the migration's source. Each link is a way to make the table
+   behave for the probe's session
+   and not for an attacker's, and each was found by a review of this branch with every test green
+   because the check had stopped one link short: a
+   `WHEN (current_setting('aurora.maintenance', true) IS DISTINCT FROM 'on')` clause fires for
+   every session that has not set that GUC, the probe included (first review, critical — the
+   enumeration read `tgtype`, `tgenabled` and a schema-less `proname`); a rule `ON INSERT … WHERE
+   current_setting(…) = 'on' DO INSTEAD NOTHING` discards an armed session's inserts with nothing
+   refused (second review, high — the check was complete over `pg_trigger`, which is not the whole
+   mechanism); and the body re-written to return for an armed session and raise, with the
+   migration's own message, for every other (third review, blocker — the check resolved the
+   function's name and stopped there). A fault theory runs fifteen tamper shapes — the function
+   body hollowed two ways (`RETURN COALESCE(NEW, OLD)`, `RETURN NULL`), each guard disabled and
+   dropped, the row guard re-created with a `WHEN` clause, the truncate guard re-created with one
+   (PostgreSQL 17.11 accepts it on a statement trigger *and evaluates it* — executed: with the GUC
+   set the `TRUNCATE` lands and the table reads back empty, so `tgqual` is load-bearing on both
+   guards), the row guard re-created for `UPDATE OF` one column, the row guard rebound to a
+   hollow `shadow_b19.refuse_append_only_change()`, the truncate guard passed an argument its
+   function ignores, the discarding rule, the concealing policy, and the conditional body twice —
+   bypassing `DELETE` on one table and `TRUNCATE` on the other with the same statement, because
+   one function serves both tables and all three verbs — and for each states what the probe sees
+   and what the binding check sees, executes the bypass with the GUC set for the shapes only the
+   binding check sees and proves it by a `SELECT`, and requires that at least one side reports
+   every shape. All rolled back. Under `session_replication_role = 'replica'`, which suppresses an
+   ordinary trigger with `pg_trigger` unchanged, the `ALWAYS` guards still refuse. **None of these
+   integration tests is in `verify.sh`'s merge gate today:** stage 6 filters `Category!=Integration`
+   and stage 8 is pending (owned by B-11), so a migration that re-opened any of these doors would
+   fail `dev-test.sh` on the integration project and still pass the gate.
+3. **No default privilege for the schema.** `pg_default_acl` holds zero rows scoped to `catalog`. A
+   copied `ALTER DEFAULT PRIVILEGES … IN SCHEMA catalog GRANT` takes the count to one and is caught;
+   the `REVOKE` form writes no row and is not — survivable, because mechanism 1 asserts the
+   resulting ACL of every catalog relation and never which statement produced it.
+
+**What this does not cover, stated rather than implied.** `aurora_migrator`, as the DDL-path role,
+can disable, drop, re-create or rebind either guard, replace the function's body, or attach a rule
+or a policy, and then rewrite, remove, empty, silently discard writes to, or conceal a trail. Of
+those acts, the effect probe sees the ones that let *its own* statements through — a hollowed body,
+a disabled or dropped guard, a guard rebound to a function that does not raise; the binding check
+sees the ones that change any link of the chain — a guard disabled, dropped, rebound, argued, or
+made conditional by a `WHEN` clause or a column list; a rule; row-level security; a policy; and the
+function's definition, which is where a body made conditional on the session lives — the shapes
+the probe cannot see, because such a table behaves for the probe and not for the attacker. The harm
+of the silent shapes is specific: an ADR-0010 rule 8 support-access grant never recorded, an
+ADR-0007 §11.5 erasure never replayed after a restore, a trail that looks intact because nothing
+was ever refused, only discarded. `aurora_app` can *arm* one (`SET aurora.maintenance = 'on'` is
+any role's to run) but cannot plant one; planting is DDL. Until the check read `tgqual` and
+`tgattr`, then `pg_rewrite` and `pg_policy`, then `pg_get_functiondef`, each of those paths was
+invisible to both sides and shipped through a one-file migration diff with every test green — the
+link stopped one column short, then one catalog short, then at the function's name. What
+`pg_get_functiondef` cannot see: the definition is text, and what an identifier in it resolves to
+at execution is the session's `search_path`, which this definition does not pin; the body's one
+call is `format()`, and a shadowed `format()` cannot stop the `RAISE`, only change the message,
+which the probe compares exactly. What neither sees, and nothing here detects: a transient tamper
+between two runs — plant, act, remove — and a shape nobody enumerated, which is the general limit
+of a fault theory; a `CHECK` constraint keyed on a GUC is the one shape that announces itself (an
+armed insert fails loudly) and is not read. That is the detection-not-prevention boundary ADR-0028
+§2 draws; its cover is a chain head recorded outside the tenant database — in
+`operator_audit_event`, by `FOLLOWUP-031`'s job — carried as `FOLLOWUP-026`. Neither table is
+partitioned, so Amendment 2's partition clause (a guard created on every partition) does not arise
+here. And the writers, not this module, keep personal data and erased values out of `detail` and
+`affected` (ADR-0018 §4, §6 point 6): a column cannot enforce that, and no test here claims to.
+
 ---
 
 ## What "tenant isolation" means for a shared database
@@ -137,8 +246,10 @@ role the request path holds (`CatalogPrivilegeTests`, asserted by trying, as the
   tenant or a host resolves by (`tenant.key`, `cluster_id`, `database_name`, `residency_region`;
   `tenant_host.host`, `tenant_id`); cannot delete or truncate any catalog row, because nothing on
   the request path deletes one — §11.4 tombstones a tenant, a subscription closes with `valid_to`,
-  `DROP DATABASE` is `aurora_admin`'s; and cannot call a function in `catalog` that no migration
-  opened to it by name. Those limits are what stop a request holding the role from rebinding another
+  `DROP DATABASE` is `aurora_admin`'s; can add to the two append-only trails and never rewrite or
+  remove a row of either, by grant and by a guard that refuses the owner too; and cannot call a
+  function in `catalog` that no migration opened to it by name. Those limits are what stop a
+  request holding the role from rebinding another
   tenant's hostname, sending one tenant's requests at another tenant's database, creating a routing
   row of its own, or repointing a cluster's `host` so the resolver dials an attacker carrying the
   real cluster credentials — the writes two security re-reviews made against earlier grants, and
