@@ -54,12 +54,19 @@ security. Choose the agent: `senior-developer` for anything under `src/`, `tests
 `scripts/`; `senior-reviewer` or `security-reviewer` for review; never the author for
 its own review.
 
-Every brief carries these four parts. The last two are not optional — they are what
+Every brief carries these **five** parts. The last two are not optional — they are what
 turns one silent 50-minute run into two 25-minute runs with feedback in between.
 
 1. **The bounded deliverable** — the acceptance criteria, quoted, and the tier.
 2. **Where to work** — the worktree or branch, and `source scripts/dev-env.sh` before
    any `dotnet`.
+2b. **Point the agent at `docs/DEVELOPER_BRIEF.md` first**, by name, as the first thing
+   it reads — then name the specific sections its task needs. `docs/` is ~91 000 words
+   and `DEVELOPER_BRIEF.md` exists solely to route an agent out of it in about three
+   minutes. A brief that lists documents without sending the agent there first makes
+   every agent either over-read (the product owner's stated cost concern) or guess.
+   This step was missed on B-09's dispatch, which is why it is a numbered part here
+   rather than something to remember.
 3. **The scope cap**, verbatim:
    > Deliver exactly these. **If a further improvement, hardening or abstraction
    > suggests itself, do not build it — name it in your summary as a follow-up.**
