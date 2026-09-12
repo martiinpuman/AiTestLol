@@ -64,6 +64,19 @@ public sealed class SqlScannerTests
     [InlineData("ALTER TABLE sales.invoice NO FORCE ROW LEVEL SECURITY;", "NO FORCE ROW LEVEL SECURITY")]
     [InlineData("ALTER TABLE sales.invoice DETACH PARTITION sales.invoice_2024;", "DETACH PARTITION")]
     [InlineData("ALTER TABLE catalog.operator_audit_event ENABLE REPLICA TRIGGER trg_append_only;", "ENABLE REPLICA TRIGGER")]
+    [InlineData("ALTER TABLE catalog.operator_audit_event ENABLE TRIGGER trg_append_only;", "ENABLE TRIGGER (tgenabled 'O', a reduction from ALWAYS)")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE RULE r_guard;", "ENABLE RULE (tgenabled 'O', a reduction from ALWAYS)")]
+    [InlineData("ALTER EVENT TRIGGER evt_guard DISABLE;", "ALTER EVENT TRIGGER … DISABLE")]
+    [InlineData("ALTER EVENT TRIGGER evt_guard ENABLE;", "ALTER EVENT TRIGGER … ENABLE (a reduction from ALWAYS)")]
+    [InlineData("ALTER EVENT TRIGGER evt_guard ENABLE REPLICA;", "ALTER EVENT TRIGGER … ENABLE REPLICA")]
+    [InlineData("ALTER DATABASE aurora SET session_replication_role = 'replica';", "SET session_replication_role")]
+    [InlineData("SELECT pg_catalog.set_config('session_replication_role', 'replica', true);", "SET session_replication_role")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT pk_invoice;", "DROP CONSTRAINT")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT IF EXISTS ck_invoice_total;", "DROP CONSTRAINT")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT uq_invoice_number RESTRICT;", "DROP CONSTRAINT")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT ck_invoice_total, ADD CONSTRAINT fk FOREIGN KEY (party_id) REFERENCES parties.party (id) ON DELETE CASCADE;", "DROP CONSTRAINT")]
+    [InlineData("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'f') THEN CREATE FUNCTION sales.f() RETURNS void LANGUAGE plpgsql AS 'BEGIN DROP TABLE sales.invoice; END'; END IF; END $$;", "DROP TABLE")]
+    [InlineData("DO $$ BEGIN CREATE PROCEDURE sales.p() LANGUAGE sql AS 'DELETE FROM sales.invoice'; END $$;", "DELETE FROM")]
     [InlineData("ALTER TABLE sales.invoice ENABLE REPLICA RULE r_guard;", "ENABLE REPLICA RULE")]
     [InlineData("SET session_replication_role = 'replica';", "SET session_replication_role")]
     [InlineData("SET LOCAL session_replication_role TO replica;", "SET session_replication_role")]
@@ -207,6 +220,113 @@ public sealed class SqlScannerTests
     }
 
     [Fact]
+    public void A_quoted_routine_body_nested_in_a_block_is_read_exactly_as_its_dollar_quoted_twin()
+    {
+        // The third review's N-1: inside a DO block the statement that creates the routine begins
+        // with IF, so a body position decided from the statement's first token was never seen.
+        const string quoted =
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'f') THEN "
+            + "CREATE FUNCTION catalog.refuse_append_only_change() RETURNS trigger LANGUAGE plpgsql AS "
+            + "'BEGIN DROP TABLE catalog.operator_audit_event; RETURN NEW; END'; END IF; END $$;";
+        const string dollar =
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'f') THEN "
+            + "CREATE FUNCTION catalog.refuse_append_only_change() RETURNS trigger LANGUAGE plpgsql AS "
+            + "$fn$ BEGIN DROP TABLE catalog.operator_audit_event; RETURN NEW; END $fn$; END IF; END $$;";
+
+        foreach (string sql in new[] { quoted, dollar })
+        {
+            SqlScanReport report = SqlStatementScanner.Scan(sql);
+
+            SqlStatement inner = report.Statements.Single(static s => s.Findings.Length > 0);
+            inner.Findings.Single().What.ShouldBe("DROP TABLE");
+            inner.Location.ShouldBe("statement 1 › body › statement 1 › body › statement 1");
+            report.BodiesRead.ShouldBe(2, "the DO body and the routine body, whichever way the routine body is quoted");
+            report.Statements.Length.ShouldBe(7, "one top-level statement, three in the DO body, three in the routine body");
+        }
+    }
+
+    [Fact]
+    public void Reports_how_many_bodies_it_read()
+    {
+        SqlStatementScanner.Scan("SELECT 1;").BodiesRead.ShouldBe(0);
+        SqlStatementScanner.Scan("DO $$ BEGIN NULL; END $$; DO 'BEGIN NULL; END';").BodiesRead.ShouldBe(2);
+        SqlStatementScanner.Scan("DO U&'BEGIN NULL; END';").BodiesRead.ShouldBe(0, "a body it could not decode was not read, and is reported as such");
+    }
+
+    [Fact]
+    public void Collects_the_triggers_a_statement_creates_and_the_ones_it_enables_ALWAYS()
+    {
+        SqlScanReport report = SqlStatementScanner.Scan(
+            "CREATE TRIGGER trg_guard BEFORE DELETE ON sales.invoice FOR EACH STATEMENT EXECUTE FUNCTION sales.f(); "
+            + "CREATE CONSTRAINT TRIGGER \"Trg_Two\" AFTER INSERT ON \"Sales\".\"Invoice\" FOR EACH ROW EXECUTE FUNCTION sales.f(); "
+            + "ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_guard; ALTER TABLE ONLY sales.other ENABLE ALWAYS TRIGGER ALL; "
+            + "CREATE EVENT TRIGGER evt ON ddl_command_start EXECUTE FUNCTION sales.f();");
+
+        report.TriggersCreated.Select(static t => (t.Table, t.Name)).ShouldBe([("sales.invoice", "trg_guard"), ("Sales.Invoice", "Trg_Two")]);
+        report.TriggersEnabledAlways.Select(static t => (t.Table, t.Name)).ShouldBe([("sales.invoice", "trg_guard"), ("sales.other", "all")]);
+    }
+
+    /// <summary>
+    /// One probe per suppression row of <c>docs/architecture/postgres-invariant-suppression.md</c>:
+    /// the statement that writes the weakening value. A row is implemented when every probe of it
+    /// is named destructive; the implemented set must equal <see cref="SqlStatementScanner.CoveredSuppressionRows"/>,
+    /// so coverage is measured rather than asserted, and a row covered by accident or uncovered by
+    /// regression is found here and not in a fourth review.
+    /// </summary>
+    private static readonly (string Row, string Sql)[] SuppressionProbes =
+    [
+        ("S1", "ALTER TABLE sales.t DISABLE TRIGGER g;"),
+        ("S1", "ALTER TABLE sales.t ENABLE REPLICA TRIGGER g;"),
+        ("S1", "ALTER TABLE sales.t ENABLE TRIGGER g;"),
+        ("S2", "ALTER TABLE sales.t DISABLE RULE r;"),
+        ("S2", "ALTER TABLE sales.t ENABLE REPLICA RULE r;"),
+        ("S2", "ALTER TABLE sales.t ENABLE RULE r;"),
+        ("S3", "SET session_replication_role = 'replica';"),
+        ("S3", "SET LOCAL session_replication_role = 'replica';"),
+        ("S3", "ALTER ROLE aurora_app SET session_replication_role = 'replica';"),
+        ("S3", "ALTER DATABASE aurora SET session_replication_role = 'replica';"),
+        ("S3", "SELECT set_config('session_replication_role', 'replica', false);"),
+        ("S4", "CREATE OR REPLACE FUNCTION sales.guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;"),
+        ("S4", "CREATE OR REPLACE PROCEDURE sales.p() LANGUAGE sql AS $$ SELECT 1 $$;"),
+        ("S5", "SET search_path = evil, sales;"),
+        ("S6", "ALTER TABLE sales.t DISABLE ROW LEVEL SECURITY;"),
+        ("S6", "ALTER TABLE sales.t NO FORCE ROW LEVEL SECURITY;"),
+        ("S7", "ALTER TABLE sales.t ADD CONSTRAINT ck CHECK (total > 0) NOT VALID;"),
+        ("S8", "SET CONSTRAINTS ALL DEFERRED;"),
+        ("S8", "ALTER TABLE sales.t ALTER CONSTRAINT fk DEFERRABLE INITIALLY DEFERRED;"),
+        ("S10", "ALTER EVENT TRIGGER evt DISABLE;"),
+        ("S10", "ALTER EVENT TRIGGER evt ENABLE REPLICA;"),
+        ("S10", "ALTER EVENT TRIGGER evt ENABLE;"),
+        ("S11", "GRANT DELETE ON sales.t TO aurora_app;"),
+        ("S11", "ALTER TABLE sales.t OWNER TO aurora_app;"),
+        ("S11", "ALTER ROLE aurora_app BYPASSRLS;"),
+        ("S12", "DROP TRIGGER g ON sales.t;"),
+        ("S12", "CREATE OR REPLACE TRIGGER g BEFORE DELETE ON sales.t FOR EACH ROW WHEN (current_setting('x') = 'y') EXECUTE FUNCTION sales.guard();"),
+    ];
+
+    [Fact]
+    public void The_suppression_rows_the_scanner_declares_it_covers_are_exactly_the_ones_it_implements()
+    {
+        // S9 (an invalid index after a failed concurrent build) has no statement to probe: it is
+        // limb B by accident, and MIG4 (B-09.2) is where it is addressed.
+        var implemented = SuppressionProbes
+            .GroupBy(static probe => probe.Row, StringComparer.Ordinal)
+            .Where(static group => group.All(probe => Destructive(SqlStatementScanner.Scan(probe.Sql)).Length > 0))
+            .Select(static group => group.Key)
+            .ToImmutableHashSet(StringComparer.Ordinal);
+
+        implemented.ShouldBe(
+            SqlStatementScanner.CoveredSuppressionRows.ToImmutableHashSet(StringComparer.Ordinal),
+            "the rows the scanner declares it covers must be exactly the rows whose every probe it names destructive; "
+            + $"implemented: {string.Join(", ", implemented.Order(StringComparer.Ordinal))}");
+
+        SuppressionProbes
+            .Where(static probe => !SqlStatementScanner.CoveredSuppressionRows.Contains(probe.Row))
+            .Where(static probe => Destructive(SqlStatementScanner.Scan(probe.Sql)).Length > 0)
+            .ShouldBeEmpty("a probe of an undeclared row is named destructive: declare the row, or the coverage is undocumented");
+    }
+
+    [Fact]
     public void Names_a_TRUNCATE_inside_a_conditional_branch_of_a_body()
     {
         SqlScanReport report = SqlStatementScanner.Scan(
@@ -222,15 +342,15 @@ public sealed class SqlScannerTests
     [InlineData("INSERT INTO sales.note (text) VALUES ('BEGIN DROP TABLE sales.invoice; END');")]
     [InlineData("COMMENT ON TABLE sales.invoice IS 'BEGIN DROP TABLE sales.invoice; END';")]
     [InlineData("CREATE FUNCTION sales.f() RETURNS void LANGUAGE 'sql' AS $$ SELECT 1 $$;")]
-    [InlineData("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_append_only, ENABLE TRIGGER trg_other, ENABLE ALWAYS RULE r_guard;")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_append_only, ENABLE ALWAYS RULE r_guard;")]
+    [InlineData("ALTER EVENT TRIGGER evt_guard ENABLE ALWAYS;")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE ROW LEVEL SECURITY;")]
     [InlineData("INSERT INTO sales.note (text) VALUES ('a' || 'DROP TABLE sales.invoice');")]
     [InlineData("INSERT INTO sales.note (text) VALUES ('BEGIN '\n'DROP TABLE sales.invoice; END');")]
     [InlineData("SET search_path = sales, public;")]
     [InlineData("CREATE FUNCTION sales.guard_replacement() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;")]
     [InlineData("ALTER TABLE sales.invoice ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;")]
     [InlineData("ALTER TABLE sales.invoice ATTACH PARTITION sales.invoice_2025 FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');")]
-    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT uq_invoice_number RESTRICT;")]
-    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT ck_invoice_total, ADD CONSTRAINT fk FOREIGN KEY (party_id) REFERENCES parties.party (id) ON DELETE CASCADE;")]
     [InlineData("SELECT N'not a prefix in PostgreSQL';")]
     [InlineData("INSERT INTO sales.note VALUES ('it''s not a DROP TABLE');")]
     [InlineData("INSERT INTO sales.note VALUES (E'a backslash-escaped \\' quote, then DROP TABLE x');")]
@@ -238,7 +358,6 @@ public sealed class SqlScannerTests
     [InlineData("-- DROP TABLE sales.invoice\nSELECT 1;")]
     [InlineData("/* DROP TABLE /* nested */ sales.invoice */ SELECT 1;")]
     [InlineData("SELECT \"DROP TABLE\" FROM sales.invoice;")]
-    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT ck_invoice_total;")]
     [InlineData("ALTER TABLE sales.invoice ALTER COLUMN region DROP NOT NULL, ALTER COLUMN total DROP DEFAULT;")]
     [InlineData("ALTER TABLE sales.invoice ALTER COLUMN id DROP IDENTITY IF EXISTS, ALTER COLUMN x DROP EXPRESSION;")]
     [InlineData("CREATE TABLE sales.invoice (id int NOT NULL, note text NOT NULL);")]
@@ -278,6 +397,9 @@ public sealed class SqlScannerTests
     [InlineData("DO $$ BEGIN EXECUTE 'DROP TABLE sales.invoice'; END $$;", "EXECUTE")]
     [InlineData("DO $$ BEGIN EXECUTE format('DROP TABLE %I', 'invoice'); END $$;", "EXECUTE")]
     [InlineData("DO 'BEGIN EXECUTE ''DROP TABLE sales.invoice''; END';", "EXECUTE")]
+    [InlineData("DO $$ BEGIN CREATE FUNCTION sales.f() RETURNS void LANGUAGE plpgsql AS 'BEGIN EXECUTE ''DROP TABLE x''; END'; END $$;", "EXECUTE")]
+    [InlineData("DO $$ BEGIN CREATE FUNCTION sales.f() RETURNS void LANGUAGE sql AS U&'DROP TABLE sales.invoice'; END $$;", "does not decode")]
+    [InlineData("DO $$ BEGIN CREATE FUNCTION sales.f() RETURNS void LANGUAGE sql AS 'SELECT sales.rebuild_everything()'; END $$;", "calls sales.rebuild_everything(…)")]
     [InlineData("CREATE FUNCTION sales.purge() RETURNS void LANGUAGE plpgsql AS 'BEGIN EXECUTE ''DROP TABLE x''; END';", "EXECUTE")]
     [InlineData("DO U&'BEGIN DROP TABLE sales.invoice; END';", "does not decode")]
     [InlineData("DO E'BEGIN DROP TABLE sales.invoice; \\x41 END';", "does not decode")]

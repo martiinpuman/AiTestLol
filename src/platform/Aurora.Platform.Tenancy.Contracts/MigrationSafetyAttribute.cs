@@ -14,8 +14,9 @@ namespace Aurora.Platform.Tenancy.Contracts;
 /// <para>
 /// A <see cref="MigrationCategory.Contract"/> names the Expand it contracts in
 /// <see cref="Contracts"/>, by the migration id EF assigns (<c>20260911172124_InitialCatalog</c>).
-/// The release gate (<b>MIG3</b>) reads that link and refuses a contract shipping in the same
-/// release as its expand. An Expand or DataOnly migration leaves it unset.
+/// MIG1 checks today that the link names an existing Expand; the release gate (<b>MIG3</b>, B-09.3,
+/// not yet built) will read it and refuse a contract shipping in the same release as its expand.
+/// An Expand or DataOnly migration leaves it unset.
 /// </para>
 /// </remarks>
 [AttributeUsage(AttributeTargets.Class, AllowMultiple = false, Inherited = false)]

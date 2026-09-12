@@ -11,6 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
 namespace Aurora.Architecture.Tests.MigrationSafety;
 
@@ -22,7 +23,19 @@ namespace Aurora.Architecture.Tests.MigrationSafety;
 /// how the runner knows to - Npgsql sets it from the <c>Npgsql:CreatedConcurrently</c> annotation,
 /// and <c>Sql(…, suppressTransaction: true)</c> sets it for raw SQL.
 /// </param>
-internal sealed record GeneratedCommand(string CommandText, bool TransactionSuppressed);
+/// <param name="Operation">
+/// The <see cref="MigrationOperation"/> whose own generation produced exactly this command text,
+/// or <c>null</c> when none did (ADR-0037 §3.2). An unattributed command is judged on its text
+/// alone, which is the destructive direction.
+/// </param>
+internal sealed record GeneratedCommand(string CommandText, bool TransactionSuppressed, MigrationOperation? Operation);
+
+/// <summary>A check constraint as EF's model snapshot declares it: schema, table and constraint name.</summary>
+internal sealed record CheckConstraintReference(string? Schema, string Table, string Name)
+{
+    /// <summary>The table as the scanner names it: <c>schema.table</c>, lower-cased.</summary>
+    public string TableKey => (Schema is null ? Table : Schema + "." + Table).ToLowerInvariant();
+}
 
 /// <summary>
 /// One migration and the SQL its <c>Up()</c> generates for PostgreSQL - or the reason that SQL
@@ -46,6 +59,17 @@ internal sealed record ScannedMigration(
 
     /// <summary>How the category reads in a message.</summary>
     public string CategoryDisplay => Category?.ToString() ?? "unannotated";
+
+    /// <summary>This migration's target model, runtime-initialised; the next migration's source model.</summary>
+    public IModel? TargetModel { get; init; }
+
+    /// <summary>
+    /// The check constraints of the schema this migration starts from: the target model of the
+    /// migration immediately before it in the same assembly, by id (ADR-0037 §3.2). Empty for the
+    /// first migration of an assembly. Read from EF's snapshot, never from a database, so a
+    /// constraint created by raw SQL is never here and a drop of it is always destructive.
+    /// </summary>
+    public ImmutableArray<CheckConstraintReference> SourceCheckConstraints { get; init; } = [];
 }
 
 /// <summary>
@@ -64,6 +88,13 @@ internal sealed record ScannedMigration(
 /// raw strings and generated statements alike, one <see cref="GeneratedCommand"/> per command.
 /// </para>
 /// <para>
+/// <b>Attribution (ADR-0037 §3.2).</b> Beside the batch generation, every operation is generated
+/// on its own, and a batch command whose text one operation's own generation produced is
+/// attributed to that operation. Batch generation stays authoritative for what is scanned;
+/// per-operation generation answers only which operation produced a command. A command nothing
+/// accounts for is unattributed, and MIG2 judges it on its text alone.
+/// </para>
+/// <para>
 /// <b>How the population is found.</b> From <see cref="SolutionLayout.ProductionTypes"/> - the
 /// same unfiltered every-project-under-<c>src/</c> population every other rule uses - every
 /// non-abstract type whose base chain reaches <see cref="MigrationBaseType"/>. Only then is the
@@ -79,7 +110,8 @@ internal sealed record ScannedMigration(
 /// kept with <see cref="ScannedMigration.GenerationFailure"/> set and no commands, and MIG2 reports
 /// it. A hand-written data operation (<c>InsertData</c>, <c>UpdateData</c>, <c>DeleteData</c>)
 /// that names no column types in a migration with no target model is such a failure - EF cannot
-/// generate it either - and is reported, not skipped.
+/// generate it either - and is reported, not skipped. The source model is EF's snapshot of the
+/// previous migration, not the database: what raw SQL created, it does not know.
 /// </para>
 /// </remarks>
 internal static class MigrationPopulation
@@ -92,12 +124,34 @@ internal static class MigrationPopulation
 
     private static readonly Lazy<ImmutableArray<ScannedMigration>> LazyProduction = new(ReadProduction);
 
-    /// <summary>Every migration declared by every project under <c>src/</c>, ordered by id.</summary>
+    /// <summary>Every migration declared by every project under <c>src/</c>, ordered by id, each knowing the schema it starts from.</summary>
     public static ImmutableArray<ScannedMigration> Production => LazyProduction.Value;
 
-    /// <summary>The given migration types, read exactly as production ones are.</summary>
-    public static ImmutableArray<ScannedMigration> Of(IEnumerable<Type> migrationTypes) =>
-        [.. migrationTypes.Select(Read).OrderBy(static migration => migration.Id, StringComparer.Ordinal)];
+    /// <summary>
+    /// The given migration types, read exactly as production ones are: ordered by id, and each
+    /// handed the check constraints of the previous migration's model in the same assembly.
+    /// </summary>
+    public static ImmutableArray<ScannedMigration> Of(IEnumerable<Type> migrationTypes)
+    {
+        ImmutableArray<ScannedMigration> ordered =
+            [.. migrationTypes.Select(Read).OrderBy(static migration => migration.Id, StringComparer.Ordinal)];
+
+        ImmutableArray<ScannedMigration>.Builder withSources = ImmutableArray.CreateBuilder<ScannedMigration>(ordered.Length);
+        var previousByAssembly = new Dictionary<string, ScannedMigration>(StringComparer.Ordinal);
+
+        foreach (ScannedMigration migration in ordered)
+        {
+            ImmutableArray<CheckConstraintReference> source =
+                previousByAssembly.TryGetValue(migration.AssemblyName, out ScannedMigration? previous)
+                    ? CheckConstraintsOf(previous.TargetModel)
+                    : [];
+
+            withSources.Add(migration with { SourceCheckConstraints = source });
+            previousByAssembly[migration.AssemblyName] = migration;
+        }
+
+        return withSources.ToImmutable();
+    }
 
     public static ScannedMigration Read(Type migrationType)
     {
@@ -110,8 +164,15 @@ internal static class MigrationPopulation
             var migration = (Migration)Activator.CreateInstance(migrationType)!;
             migration.ActiveProvider = ActiveProvider;
 
+            using var context = new SqlGenerationContext();
+            IModel model = context.GetService<IModelRuntimeInitializer>().Initialize(migration.TargetModel);
+            IMigrationsSqlGenerator generator = context.GetService<IMigrationsSqlGenerator>();
+
             return new ScannedMigration(
-                id, migrationType.FullName!, assemblyName, safety, Generate(migration), GenerationFailure: null);
+                id, migrationType.FullName!, assemblyName, safety, Generate(migration, model, generator), GenerationFailure: null)
+            {
+                TargetModel = model,
+            };
         }
         catch (Exception failure) when (failure is not OutOfMemoryException)
         {
@@ -125,23 +186,43 @@ internal static class MigrationPopulation
     }
 
     /// <summary>
-    /// What <c>Migrator.GenerateUpSql</c> does: the operations, against the migration's own target
-    /// model (the Designer's <c>BuildTargetModel</c>) after runtime initialization, through the
-    /// provider's generator. Data operations without column types resolve them from that model, so
-    /// a scaffolded <c>InsertData</c> generates the same here as in the runner.
+    /// What <c>Migrator.GenerateUpSql</c> does - the operations, against the migration's own target
+    /// model after runtime initialisation, through the provider's generator - plus the per-operation
+    /// generation that attributes each batch command to the operation whose own output matches it.
     /// </summary>
-    private static ImmutableArray<GeneratedCommand> Generate(Migration migration)
+    private static ImmutableArray<GeneratedCommand> Generate(Migration migration, IModel model, IMigrationsSqlGenerator generator)
     {
-        using var context = new SqlGenerationContext();
-        IModel model = context.GetService<IModelRuntimeInitializer>().Initialize(migration.TargetModel);
-        IMigrationsSqlGenerator generator = context.GetService<IMigrationsSqlGenerator>();
+        IReadOnlyList<MigrationOperation> operations = migration.UpOperations;
+        var producedBy = new Dictionary<string, MigrationOperation>(StringComparer.Ordinal);
+
+        foreach (MigrationOperation operation in operations)
+        {
+            foreach (MigrationCommand own in generator.Generate([operation], model))
+            {
+                producedBy.TryAdd(own.CommandText, operation);
+            }
+        }
 
         return
         [
-            .. generator.Generate(migration.UpOperations, model)
-                .Select(static command => new GeneratedCommand(command.CommandText, command.TransactionSuppressed)),
+            .. generator.Generate(operations, model).Select(command => new GeneratedCommand(
+                command.CommandText,
+                command.TransactionSuppressed,
+                producedBy.GetValueOrDefault(command.CommandText))),
         ];
     }
+
+    private static ImmutableArray<CheckConstraintReference> CheckConstraintsOf(IModel? model) =>
+        model is null
+            ? []
+            :
+            [
+                .. model.GetEntityTypes().SelectMany(entity =>
+                    entity.GetCheckConstraints().Select(constraint => new CheckConstraintReference(
+                        entity.GetSchema() ?? model.GetDefaultSchema(),
+                        entity.GetTableName() ?? entity.ShortName(),
+                        constraint.Name ?? constraint.ModelName))),
+            ];
 
     private static ImmutableArray<ScannedMigration> ReadProduction()
     {

@@ -1,5 +1,6 @@
 using System;
 using Aurora.Platform.Tenancy.Contracts;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 // The migration fixtures for MIG1 and MIG2. Each is a real EF Core Migration carrying the real
@@ -367,8 +368,10 @@ internal sealed class ExpandNamingAnExpand : Migration
 /// The shapes a real Expand has - the catalog's and the audit trail's - every one of which only
 /// looks destructive: a trigger on <c>DELETE OR TRUNCATE</c>, a <c>GRANT … DELETE</c>, an
 /// <c>ON DELETE RESTRICT</c>, a <c>DROP NOT NULL</c>, a <c>DROP CONSTRAINT</c>, a trigger bound
-/// with <c>EXECUTE FUNCTION</c>, a function body that raises, and text saying <c>DROP TABLE</c>
-/// in a literal and in a comment.
+/// with <c>EXECUTE FUNCTION</c> and enabled <c>ALWAYS</c>, a function body that raises, and text
+/// saying <c>DROP TABLE</c> in a literal and in a comment. No <c>DROP CONSTRAINT</c>: under
+/// ADR-0037 §3.2 a raw-SQL drop is destructive whatever it drops, and the §3.2 fixtures carry
+/// that story.
 /// </summary>
 /// <remarks>
 /// <b>Deliberately compliant fixture (MIG1, MIG2).</b> Silence on this one is what proves the
@@ -414,7 +417,7 @@ internal sealed class CompliantExpand : Migration
         migrationBuilder.AddColumn<string>(name: "region", schema: "sales", table: "invoice", type: "text", nullable: false, defaultValue: "none");
 
         migrationBuilder.Sql("CREATE TABLE IF NOT EXISTS sales.note (id integer NOT NULL, text text NOT NULL);");
-        migrationBuilder.Sql("ALTER TABLE sales.invoice ALTER COLUMN note DROP NOT NULL, DROP CONSTRAINT ck_invoice_number_well_formed;");
+        migrationBuilder.Sql("ALTER TABLE sales.invoice ALTER COLUMN note DROP NOT NULL, ALTER COLUMN total DROP DEFAULT;");
         migrationBuilder.Sql(
             "ALTER TABLE sales.invoice ADD CONSTRAINT ex_invoice_no_overlap "
             + "EXCLUDE USING gist (party_id WITH =, daterange(valid_from, valid_to, '[)') WITH &&);");
@@ -424,6 +427,7 @@ internal sealed class CompliantExpand : Migration
         migrationBuilder.Sql(
             "CREATE TRIGGER trg_invoice_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON sales.invoice "
             + "FOR EACH STATEMENT EXECUTE FUNCTION sales.refuse_change();");
+        migrationBuilder.Sql("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_invoice_append_only;");
         migrationBuilder.Sql("GRANT SELECT, INSERT, DELETE, TRUNCATE ON sales.invoice TO aurora_app; -- not a DROP TABLE");
         migrationBuilder.Sql("INSERT INTO sales.note (id, text) VALUES (1, 'DROP TABLE sales.invoice');");
     }
@@ -463,3 +467,260 @@ internal sealed class DataOnlyBackfill : Migration
         migrationBuilder.Sql("UPDATE sales.invoice SET region = 'none' WHERE region IS NULL;");
     }
 }
+
+/// <summary>
+/// The third review's N-1: the ordinary conditional-create idiom, with the routine's body a quoted
+/// literal nested inside a <c>DO</c> block - a statement that begins with <c>IF</c>, not <c>CREATE</c>.
+/// </summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b> Read when dollar-quoted, and reported clean when quoted, before rework 3.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: hides a DROP TABLE in a quoted routine body nested in a DO block.")]
+internal sealed class ExpandHidingADropInANestedQuotedBody : Migration
+{
+    public const string Id = "20990101000030_ExpandHidingADropInANestedQuotedBody";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql(
+            "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'refuse_append_only_change') THEN "
+            + "CREATE FUNCTION catalog.refuse_append_only_change() RETURNS trigger LANGUAGE plpgsql AS "
+            + "'BEGIN DROP TABLE catalog.operator_audit_event; RETURN NEW; END'; END IF; END $$;");
+}
+
+/// <summary>A target model that declares one check constraint on <c>sales.invoice</c>, the way a Designer file does.</summary>
+/// <remarks>
+/// The source model ADR-0037 §3.2 reads is the <i>previous</i> migration's target model, so the
+/// fixtures that drop the constraint stand immediately after one that declares it, by id.
+/// </remarks>
+internal abstract class DeclaresInvoiceCheckInModel : Migration
+{
+    public const string ConstraintName = "ck_invoice_total_positive";
+
+    protected override void BuildTargetModel(ModelBuilder modelBuilder) =>
+        modelBuilder.Entity("Aurora.Architecture.Tests.Fixtures.Violations.Invoice", entity =>
+        {
+            entity.Property<int>("Id");
+            entity.Property<decimal>("Total");
+            entity.HasKey("Id");
+            entity.ToTable("invoice", "sales", table => table.HasCheckConstraint(ConstraintName, "total > 0"));
+        });
+}
+
+/// <summary>Creates <c>sales.invoice</c> with its check constraint; its target model declares the constraint.</summary>
+/// <remarks><b>Deliberately compliant fixture (MIG2)</b>, and the predecessor whose model the next fixture reads.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: creates a table whose check constraint the model declares.")]
+internal sealed class ExpandDeclaringACheckConstraintInItsModel : DeclaresInvoiceCheckInModel
+{
+    public const string Id = "20990101000040_ExpandDeclaringACheckConstraintInItsModel";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.CreateTable(
+            name: "invoice",
+            schema: "sales",
+            columns: table => new
+            {
+                id = table.Column<int>(type: "integer", nullable: false),
+                total = table.Column<decimal>(type: "numeric(19,4)", nullable: false),
+            },
+            constraints: table =>
+            {
+                table.PrimaryKey("pk_invoice", x => x.id);
+                table.CheckConstraint(ConstraintName, "total > 0");
+            });
+}
+
+/// <summary>Drops the check through <c>DropCheckConstraint()</c>: attributed to a typed operation and corroborated by the source model.</summary>
+/// <remarks>
+/// <b>Deliberately compliant fixture (MIG2, ADR-0037 §3.2).</b> Its own target model still
+/// declares the constraint, so the raw-SQL fixture after it reads the same source model.
+/// </remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: widens by dropping a CHECK through the typed EF operation.")]
+internal sealed class ExpandDroppingACheckConstraintByOperation : DeclaresInvoiceCheckInModel
+{
+    public const string Id = "20990101000041_ExpandDroppingACheckConstraintByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.DropCheckConstraint(name: ConstraintName, schema: "sales", table: "invoice");
+}
+
+/// <summary>The same constraint, the same source model, dropped through raw SQL: unattributed, so destructive.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2, ADR-0037 §3.2).</b> The name is the one the previous fixture is allowed; the operation is not.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: drops a CHECK through raw SQL.")]
+internal sealed class ExpandDroppingACheckConstraintByRawSql : Migration
+{
+    public const string Id = "20990101000042_ExpandDroppingACheckConstraintByRawSql";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("alter table sales.invoice drop constraint " + DeclaresInvoiceCheckInModel.ConstraintName + ";");
+}
+
+/// <summary>Drops a primary key through <c>DropPrimaryKey()</c>: the SQL is the same shape, the operation is not a check-constraint drop.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2, ADR-0037 §3.2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: drops a primary key through the typed EF operation.")]
+internal sealed class ExpandDroppingAPrimaryKeyByOperation : Migration
+{
+    public const string Id = "20990101000043_ExpandDroppingAPrimaryKeyByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.DropPrimaryKey(name: "pk_invoice", schema: "sales", table: "invoice");
+}
+
+/// <summary>Drops a unique constraint through <c>DropUniqueConstraint()</c>: destructive, whatever the name.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2, ADR-0037 §3.2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: drops a unique constraint through the typed EF operation.")]
+internal sealed class ExpandDroppingAUniqueConstraintByOperation : Migration
+{
+    public const string Id = "20990101000044_ExpandDroppingAUniqueConstraintByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.DropUniqueConstraint(name: "ck_invoice_number", schema: "sales", table: "invoice");
+}
+
+/// <summary><c>varchar(50)</c> to <c>varchar(100)</c> through <c>AlterColumn()</c>: ADR-0037 §4's first allowed shape.</summary>
+/// <remarks><b>Deliberately compliant fixture (MIG2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: widens a varchar through the typed EF operation.")]
+internal sealed class ExpandWideningAVarcharByOperation : Migration
+{
+    public const string Id = "20990101000045_ExpandWideningAVarcharByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.AlterColumn<string>(
+            name: "region", schema: "sales", table: "invoice", type: "character varying(100)", nullable: true,
+            oldClrType: typeof(string), oldType: "character varying(50)", oldNullable: true);
+}
+
+/// <summary><c>varchar(50)</c> to <c>text</c> through <c>AlterColumn()</c>: the second allowed shape.</summary>
+/// <remarks><b>Deliberately compliant fixture (MIG2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: widens a varchar to text through the typed EF operation.")]
+internal sealed class ExpandWideningToTextByOperation : Migration
+{
+    public const string Id = "20990101000046_ExpandWideningToTextByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.AlterColumn<string>(
+            name: "region", schema: "sales", table: "invoice", type: "text", nullable: true,
+            oldClrType: typeof(string), oldType: "character varying(50)", oldNullable: true);
+}
+
+/// <summary><c>varchar(100)</c> to <c>varchar(50)</c>: a narrowing, through the same operation.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: narrows a varchar through the typed EF operation.")]
+internal sealed class ExpandNarrowingAVarcharByOperation : Migration
+{
+    public const string Id = "20990101000047_ExpandNarrowingAVarcharByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.AlterColumn<string>(
+            name: "region", schema: "sales", table: "invoice", type: "character varying(50)", nullable: true,
+            oldClrType: typeof(string), oldType: "character varying(100)", oldNullable: true);
+}
+
+/// <summary><c>numeric(12,2)</c> to <c>numeric(18,2)</c>: excluded from the allowlist for want of verified evidence (ADR-0037 §4).</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: changes a numeric's precision through the typed EF operation.")]
+internal sealed class ExpandChangingANumericByOperation : Migration
+{
+    public const string Id = "20990101000048_ExpandChangingANumericByOperation";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.AlterColumn<decimal>(
+            name: "total", schema: "sales", table: "invoice", type: "numeric(18,2)", nullable: false,
+            oldClrType: typeof(decimal), oldType: "numeric(12,2)", oldNullable: false);
+}
+
+/// <summary>The same widening as the first allowed shape, written as raw SQL: unattributed, so the old type is unknown and it is destructive.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: widens a varchar through raw SQL.")]
+internal sealed class ExpandWideningAVarcharByRawSql : Migration
+{
+    public const string Id = "20990101000049_ExpandWideningAVarcharByRawSql";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("ALTER TABLE sales.invoice ALTER COLUMN region TYPE character varying(100);");
+}
+
+/// <summary>A guard trigger created and never enabled <c>ALWAYS</c>: born at <c>tgenabled = 'O'</c>.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2, ADR-0037 §2.6).</b> Nothing was suppressed, so no suppression statement betrays it.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: creates a guard trigger without ENABLE ALWAYS.")]
+internal sealed class ExpandCreatingAGuardBornWeak : Migration
+{
+    public const string Id = "20990101000050_ExpandCreatingAGuardBornWeak";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql(
+            "CREATE TRIGGER trg_invoice_guard BEFORE DELETE ON sales.invoice FOR EACH STATEMENT EXECUTE FUNCTION sales.refuse_change();");
+}
+
+/// <summary>ADR-0037 §2.6 step 1: the replacement guard function, created beside the old one, pointed at by nothing yet.</summary>
+/// <remarks><b>Deliberately compliant fixture (MIG2).</b></remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: creates the v2 guard function; nothing references it yet.")]
+internal sealed class ExpandCreatingGuardV2 : Migration
+{
+    public const string Id = "20990101000051_ExpandCreatingGuardV2";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql(
+            "CREATE FUNCTION sales.refuse_change_v2() RETURNS trigger LANGUAGE plpgsql AS $$ "
+            + "BEGIN RAISE EXCEPTION 'sales.invoice is append-only' USING ERRCODE = '42501'; END $$;");
+}
+
+/// <summary>ADR-0037 §2.6 step 2: re-point the trigger at v2, re-apply <c>ENABLE ALWAYS</c>, drop v1.</summary>
+/// <remarks><b>Deliberately compliant fixture (MIG2).</b> Its drops are permitted, and its re-created trigger is enabled ALWAYS.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Contract, "Fixture: re-points the append-only guard at v2 and drops v1.", Contracts = ExpandCreatingGuardV2.Id)]
+internal sealed class ContractRepointingGuardToV2 : Migration
+{
+    public const string Id = "20990101000052_ContractRepointingGuardToV2";
+
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.Sql("DROP TRIGGER trg_invoice_append_only ON sales.invoice;");
+        migrationBuilder.Sql(
+            "CREATE TRIGGER trg_invoice_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON sales.invoice "
+            + "FOR EACH STATEMENT EXECUTE FUNCTION sales.refuse_change_v2();");
+        migrationBuilder.Sql("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_invoice_append_only;");
+        migrationBuilder.Sql("DROP FUNCTION sales.refuse_change();");
+    }
+}
+
+/// <summary>The same Contract with the <c>ENABLE ALWAYS</c> forgotten: the guard it re-creates is weaker than the one it replaced.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2, ADR-0037 §2.6).</b> A Contract may drop; it may not build a guard born weak.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Contract, "Fixture: re-points the guard at v2 but forgets ENABLE ALWAYS.", Contracts = ExpandCreatingGuardV2.Id)]
+internal sealed class ContractRepointingGuardWithoutEnableAlways : Migration
+{
+    public const string Id = "20990101000053_ContractRepointingGuardWithoutEnableAlways";
+
+    protected override void Up(MigrationBuilder migrationBuilder)
+    {
+        migrationBuilder.Sql("DROP TRIGGER trg_invoice_append_only ON sales.invoice;");
+        migrationBuilder.Sql(
+            "CREATE TRIGGER trg_invoice_append_only BEFORE UPDATE OR DELETE OR TRUNCATE ON sales.invoice "
+            + "FOR EACH STATEMENT EXECUTE FUNCTION sales.refuse_change_v2();");
+        migrationBuilder.Sql("DROP FUNCTION sales.refuse_change();");
+    }
+}
+
+/// <summary>A plain <c>ENABLE TRIGGER</c> on a guard: <c>tgenabled = 'O'</c>, a reduction from <c>ALWAYS</c> (ADR-0037 §2.4, the overturned call).</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b> Reads like an enabling; it is the four ENABLE ALWAYS statements of B-19 undone by one word.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: re-enables a guard trigger plainly.")]
+internal sealed class ExpandReEnablingAGuardTrigger : Migration
+{
+    public const string Id = "20990101000054_ExpandReEnablingAGuardTrigger";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("ALTER TABLE catalog.operator_audit_event ENABLE TRIGGER trg_operator_audit_event_append_only;");
+}
+

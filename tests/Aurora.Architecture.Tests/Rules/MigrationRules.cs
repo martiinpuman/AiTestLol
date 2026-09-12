@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Text.RegularExpressions;
 using Aurora.Architecture.Tests.MigrationSafety;
 using Aurora.Platform.Tenancy.Contracts;
+using Microsoft.EntityFrameworkCore.Migrations.Operations;
 
 namespace Aurora.Architecture.Tests.Rules;
 
@@ -20,8 +22,8 @@ namespace Aurora.Architecture.Tests.Rules;
 /// Contract that names nothing, a Contract that names a migration not in the population or one
 /// that is not an Expand, and an Expand or DataOnly that names anything are each a violation.
 /// Two migrations with one id produce one violation, on the migration that lost the tie for the
-/// id - the release gate (MIG3) links migrations by id, and the survivor is the one it would link
-/// to, so the loser is what has to change.
+/// id - the release gate (MIG3, B-09.3, not yet built) will link migrations by id, and the
+/// survivor is the one it would link to, so the loser is what has to change.
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> whether the reason is true. That is what MIG2 holds the generated
@@ -92,28 +94,59 @@ internal static class MigrationAnnotationRule
         new(migration.TypeFullName, ViolationSite.Annotation, detail);
 }
 
-/// <summary>What one run of MIG2 read, so a test can hold the count to a floor, not only the verdict.</summary>
+/// <summary>
+/// What one run of MIG2 read and decided, so a test can hold the counts to floors, not only the
+/// verdict: a scan that reports success must be able to say how much it looked at.
+/// </summary>
+/// <param name="Migrations">Migrations examined.</param>
+/// <param name="StatementsParsed">Statements read, top level and inside bodies.</param>
+/// <param name="BodiesRead">Procedural bodies decoded and read again as code.</param>
+/// <param name="DestructiveStatementsPermittedInContracts">Destructive findings a Contract was allowed.</param>
+/// <param name="DropConstraintsExamined">Bare <c>DROP CONSTRAINT</c> findings judged under ADR-0037 §3.2.</param>
+/// <param name="DropConstraintsAttributedToCheck">Of those, attributed to a <c>DropCheckConstraintOperation</c> corroborated by the source model, and cleared.</param>
+/// <param name="TypeChangesExamined"><c>ALTER COLUMN … TYPE</c> findings judged under ADR-0037 §4.</param>
+/// <param name="TypeChangesWidening">Of those, attributed to an <c>AlterColumnOperation</c> on the two-shape allowlist, and cleared.</param>
+/// <param name="TriggersCreated">Triggers created, each of which must be followed by <c>ENABLE ALWAYS</c> (ADR-0037 §2.6).</param>
+/// <param name="Violations">What was reported.</param>
 internal sealed record MigrationScan(
     int Migrations,
     int StatementsParsed,
+    int BodiesRead,
     int DestructiveStatementsPermittedInContracts,
+    int DropConstraintsExamined,
+    int DropConstraintsAttributedToCheck,
+    int TypeChangesExamined,
+    int TypeChangesWidening,
+    int TriggersCreated,
     ImmutableArray<RuleViolation> Violations);
 
 /// <summary>
 /// Fitness rule <b>MIG2</b> - a destructive statement appears only in a <c>Contract</c>
-/// migration; a <c>DataOnly</c> migration is plain data statements; nothing a migration runs is
-/// something the scanner could not read (ADR-0007 §7.2 rule 2, <c>testing-strategy.md</c> §5.7).
+/// migration; a <c>DataOnly</c> migration is plain data statements; a trigger a migration creates
+/// is enabled <c>ALWAYS</c>; nothing a migration runs is something the scanner could not read
+/// (ADR-0007 §7.2 rule 2 as amended by ADR-0037 §2–§4, <c>testing-strategy.md</c> §5.7).
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>What the mechanism inspects:</b> the SQL Npgsql's own generator emits from each migration's
 /// <c>UpOperations</c> (<see cref="MigrationPopulation"/>), every command, every statement, top
-/// level and inside every dollar-quoted body, through <see cref="SqlStatementScanner"/>. A
-/// destructive finding is a violation unless the migration is a Contract. An unscannable finding
-/// is a violation whatever the category - a migration the scanner cannot read is not clean, it
-/// is unread. A migration whose SQL could not be generated at all is a violation for the same
-/// reason. A DataOnly migration is additionally held to top-level statements that begin with one
-/// of <see cref="DataOnlyHeads"/> and carry no procedural body.
+/// level and inside every body, through <see cref="SqlStatementScanner"/>. A destructive finding
+/// is a violation unless the migration is a Contract - or unless the command that carries it is
+/// attributed to an EF operation that proves it a widening: a bare <c>DROP CONSTRAINT</c> whose
+/// command a <c>DropCheckConstraintOperation</c> produced, naming the same schema, table and
+/// constraint, where that constraint is a check constraint in the migration's source model
+/// (ADR-0037 §3.2); or an <c>ALTER COLUMN … TYPE</c> whose command an <c>AlterColumnOperation</c>
+/// produced, from <c>varchar(n)</c> to a wider <c>varchar(m)</c> or from <c>varchar</c> to
+/// <c>text</c>, standing alone with no <c>USING</c> and no <c>COLLATE</c> (ADR-0037 §4). The
+/// constraint's <i>name</i> is never evidence; the operation's CLR type and EF's snapshot are.
+/// An unscannable finding is a violation whatever the category. A migration whose SQL could not be
+/// generated is a violation for the same reason. A DataOnly migration is additionally held to
+/// top-level statements that begin with one of <see cref="DataOnlyHeads"/> and carry no
+/// procedural body. And every trigger a migration creates must be followed, in the same migration,
+/// by <c>ALTER TABLE … ENABLE ALWAYS TRIGGER</c> for that trigger (or <c>ALL</c>) on that table:
+/// <c>CREATE TRIGGER</c> produces <c>tgenabled = 'O'</c>, which <c>session_replication_role</c>
+/// suppresses, so a guard created without it is born weak and no suppression statement betrays it
+/// (ADR-0037 §2.6, <c>postgres-invariant-suppression.md</c> S1).
 /// </para>
 /// <para>
 /// <b>What it treats an unannotated migration as:</b> the strictest category. MIG1 reports the
@@ -121,16 +154,18 @@ internal sealed record MigrationScan(
 /// </para>
 /// <para>
 /// <b>What it cannot see:</b> what the scanner cannot - stated on <see cref="SqlStatementScanner"/>.
-/// And it does not yet judge index concurrency (MIG4) or the release the migration ships in
-/// (MIG3); those are separate rules.
+/// Whether a cleared <c>CHECK</c> replacement actually widens is a human's call at Full tier
+/// (ADR-0037 §3.3); this rule proves only the kind. The source model is EF's snapshot, not the
+/// database. And it does not yet judge index concurrency (MIG4, B-09.2) or the release the
+/// migration ships in (MIG3, B-09.3).
 /// </para>
 /// </remarks>
-internal static class MigrationSafetyRule
+internal static partial class MigrationSafetyRule
 {
     public const string Id = "MIG2";
 
     public const string Name =
-        "Destructive SQL only in a Contract; a DataOnly migration is plain data statements; nothing the scanner cannot read";
+        "Destructive SQL only in a Contract; a DataOnly migration is plain data statements; a created trigger is enabled ALWAYS; nothing the scanner cannot read";
 
     /// <summary>The statement heads a DataOnly migration may run at the top level of its script.</summary>
     public static readonly ImmutableHashSet<string> DataOnlyHeads =
@@ -143,15 +178,14 @@ internal static class MigrationSafetyRule
         return RuleOutcome.From(
             Id,
             Name,
-            FormattableString.Invariant($"migrations ({scan.StatementsParsed} SQL statements parsed)"),
+            FormattableString.Invariant($"migrations ({scan.StatementsParsed} SQL statements parsed, {scan.BodiesRead} bodies read, {scan.DropConstraintsAttributedToCheck}/{scan.DropConstraintsExamined} DROP CONSTRAINT attributed, {scan.TypeChangesWidening}/{scan.TypeChangesExamined} type changes widening, {scan.TriggersCreated} triggers created)"),
             scan.Migrations,
             scan.Violations);
     }
 
     public static MigrationScan Scan(ImmutableArray<ScannedMigration> migrations)
     {
-        int statements = 0;
-        int permitted = 0;
+        var totals = new Totals();
         List<RuleViolation> violations = [];
 
         foreach (ScannedMigration migration in migrations)
@@ -164,10 +198,17 @@ internal static class MigrationSafetyRule
                 continue;
             }
 
+            List<TriggerReference> created = [];
+            List<TriggerReference> enabledAlways = [];
+
             for (int c = 0; c < migration.Commands.Length; c++)
             {
-                SqlScanReport report = SqlStatementScanner.Scan(migration.Commands[c].CommandText);
-                statements += report.Statements.Length;
+                GeneratedCommand command = migration.Commands[c];
+                SqlScanReport report = SqlStatementScanner.Scan(command.CommandText);
+                totals.Statements += report.Statements.Length;
+                totals.Bodies += report.BodiesRead;
+                created.AddRange(report.TriggersCreated);
+                enabledAlways.AddRange(report.TriggersEnabledAlways);
 
                 foreach (SqlStatement statement in report.Statements)
                 {
@@ -175,20 +216,10 @@ internal static class MigrationSafetyRule
 
                     foreach (SqlFinding finding in statement.Findings)
                     {
-                        if (finding.Kind == SqlFindingKind.Unscannable)
+                        RuleViolation? violation = Judge(migration, command, statement, finding, where, totals);
+                        if (violation is not null)
                         {
-                            violations.Add(Violation(migration, $"{where}: «{statement.Excerpt}» {finding.What}; a migration the scanner cannot read is not clean, it is unread"));
-                        }
-                        else if (migration.Category == MigrationCategory.Contract)
-                        {
-                            permitted++;
-                        }
-                        else
-                        {
-                            violations.Add(Violation(
-                                migration,
-                                $"{where}: {finding.What} in «{statement.Excerpt}» is allowed only in a Contract migration, "
-                                + $"and this one is {migration.CategoryDisplay} (ADR-0007 §7.2)"));
+                            violations.Add(violation);
                         }
                     }
 
@@ -202,11 +233,196 @@ internal static class MigrationSafetyRule
                     }
                 }
             }
+
+            totals.TriggersCreated += created.Count;
+            violations.AddRange(BornWeak(migration, created, enabledAlways));
         }
 
-        return new MigrationScan(migrations.Length, statements, permitted, [.. violations]);
+        return new MigrationScan(
+            migrations.Length,
+            totals.Statements,
+            totals.Bodies,
+            totals.Permitted,
+            totals.DropConstraintsExamined,
+            totals.DropConstraintsAttributed,
+            totals.TypeChangesExamined,
+            totals.TypeChangesWidening,
+            totals.TriggersCreated,
+            [.. violations]);
     }
+
+    private static RuleViolation? Judge(
+        ScannedMigration migration, GeneratedCommand command, SqlStatement statement, SqlFinding finding, string where, Totals totals)
+    {
+        if (finding.Kind == SqlFindingKind.Unscannable)
+        {
+            return Violation(migration, $"{where}: «{statement.Excerpt}» {finding.What}; a migration the scanner cannot read is not clean, it is unread");
+        }
+
+        if (migration.Category == MigrationCategory.Contract)
+        {
+            totals.Permitted++;
+            return null;
+        }
+
+        if (finding.What == "DROP CONSTRAINT")
+        {
+            totals.DropConstraintsExamined++;
+            if (IsAttributedCheckConstraintDrop(migration, command, finding))
+            {
+                totals.DropConstraintsAttributed++;
+                return null;
+            }
+
+            return Violation(
+                migration,
+                $"{where}: DROP CONSTRAINT in «{statement.Excerpt}» is allowed only in a Contract migration, and this one is "
+                + $"{migration.CategoryDisplay}; a CHECK dropped through migrationBuilder.DropCheckConstraint() whose constraint "
+                + "the previous migration's model declares is the one exception (ADR-0037 §3.2)");
+        }
+
+        if (finding.What == "ALTER COLUMN … TYPE")
+        {
+            totals.TypeChangesExamined++;
+            if (IsAttributedWidening(command, finding))
+            {
+                totals.TypeChangesWidening++;
+                return null;
+            }
+
+            return Violation(
+                migration,
+                $"{where}: ALTER COLUMN … TYPE in «{statement.Excerpt}» is allowed only in a Contract migration, and this one is "
+                + $"{migration.CategoryDisplay}; a varchar widened, or a varchar to text, through migrationBuilder.AlterColumn() "
+                + "with no USING, no COLLATE and no other action is the one exception (ADR-0037 §4)");
+        }
+
+        return Violation(
+            migration,
+            $"{where}: {finding.What} in «{statement.Excerpt}» is allowed only in a Contract migration, "
+            + $"and this one is {migration.CategoryDisplay} (ADR-0007 §7.2, ADR-0037 §2)");
+    }
+
+    /// <summary>
+    /// ADR-0037 §3.2, link by link: the command was produced by a <see cref="DropCheckConstraintOperation"/>;
+    /// its schema, table and name are the ones the statement names; and the source model - EF's
+    /// snapshot of the previous migration, never the database - declares that constraint as a
+    /// check constraint. Any link missing, the drop is destructive.
+    /// </summary>
+    private static bool IsAttributedCheckConstraintDrop(ScannedMigration migration, GeneratedCommand command, SqlFinding finding)
+    {
+        if (command.Operation is not DropCheckConstraintOperation operation || finding.Table is null || finding.Name is null)
+        {
+            return false;
+        }
+
+        string operationTable = (operation.Schema is null ? operation.Table : operation.Schema + "." + operation.Table).ToLowerInvariant();
+
+        return string.Equals(operationTable, finding.Table, StringComparison.Ordinal)
+            && string.Equals(operation.Name.ToLowerInvariant(), finding.Name, StringComparison.Ordinal)
+            && migration.SourceCheckConstraints.Any(constraint =>
+                string.Equals(constraint.TableKey, finding.Table, StringComparison.Ordinal)
+                && string.Equals(constraint.Name, operation.Name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// ADR-0037 §4: the command was produced by an <see cref="AlterColumnOperation"/> naming the
+    /// column the statement alters, the operation's old and new store types are one of the two
+    /// allowed shapes, and the statement stands alone with no <c>USING</c> and no <c>COLLATE</c>.
+    /// </summary>
+    private static bool IsAttributedWidening(GeneratedCommand command, SqlFinding finding)
+    {
+        if (command.Operation is not AlterColumnOperation operation || finding.Table is null || finding.Name is null || !finding.StandsAlone)
+        {
+            return false;
+        }
+
+        string operationTable = (operation.Schema is null ? operation.Table : operation.Schema + "." + operation.Table).ToLowerInvariant();
+
+        return string.Equals(operationTable, finding.Table, StringComparison.Ordinal)
+            && string.Equals(operation.Name.ToLowerInvariant(), finding.Name, StringComparison.Ordinal)
+            && IsWideningTextType(operation.OldColumn.ColumnType, operation.ColumnType);
+    }
+
+    /// <summary>
+    /// The two shapes ADR-0037 §4 allows: <c>varchar(n)</c> to <c>varchar(m)</c> with <c>m &gt; n</c>,
+    /// and <c>varchar[(n)]</c> to <c>text</c>. Everything else - every <c>numeric</c> change, every
+    /// narrowing, an unknown old type - is not a widening.
+    /// </summary>
+    public static bool IsWideningTextType(string? oldType, string? newType)
+    {
+        (string Base, int? Length)? old = ParseTextType(oldType);
+        (string Base, int? Length)? @new = ParseTextType(newType);
+
+        if (old is null || @new is null || old.Value.Base != "varchar")
+        {
+            return false;
+        }
+
+        return @new.Value.Base switch
+        {
+            "text" => true,
+            "varchar" => old.Value.Length is int n && @new.Value.Length is int m && m > n,
+            _ => false,
+        };
+    }
+
+    private static (string Base, int? Length)? ParseTextType(string? storeType)
+    {
+        if (storeType is null)
+        {
+            return null;
+        }
+
+        Match match = TextType().Match(storeType.Trim());
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        string @base = match.Groups["base"].Value.Equals("text", StringComparison.OrdinalIgnoreCase) ? "text" : "varchar";
+        int? length = match.Groups["length"].Success ? int.Parse(match.Groups["length"].Value, System.Globalization.CultureInfo.InvariantCulture) : null;
+        return (@base, length);
+    }
+
+    [GeneratedRegex(@"^(?<base>text|varchar|character\s+varying)\s*(\(\s*(?<length>\d+)\s*\))?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+    private static partial Regex TextType();
+
+    /// <summary>
+    /// ADR-0037 §2.6's positive rule: a trigger a migration creates must be enabled <c>ALWAYS</c>
+    /// on the same table in the same migration, by name or by <c>ALL</c>; otherwise it was born at
+    /// <c>tgenabled = 'O'</c> and nothing in the destructive set will ever betray it.
+    /// </summary>
+    private static IEnumerable<RuleViolation> BornWeak(ScannedMigration migration, List<TriggerReference> created, List<TriggerReference> enabledAlways) =>
+        created
+            .Where(trigger => !enabledAlways.Any(enabled =>
+                string.Equals(enabled.Table, trigger.Table, StringComparison.Ordinal)
+                && (string.Equals(enabled.Name, trigger.Name, StringComparison.Ordinal) || string.Equals(enabled.Name, "all", StringComparison.Ordinal))))
+            .Select(trigger => Violation(
+                migration,
+                $"{trigger.Location}: trigger {trigger.Name} on {trigger.Table} is created and never enabled ALWAYS in this migration; "
+                + "CREATE TRIGGER produces tgenabled = 'O', which session_replication_role = 'replica' suppresses, so the guard is born "
+                + $"weak - follow it with ALTER TABLE {trigger.Table} ENABLE ALWAYS TRIGGER {trigger.Name} (ADR-0037 §2.6, S1)"));
 
     private static RuleViolation Violation(ScannedMigration migration, string detail) =>
         new(migration.TypeFullName, ViolationSite.Statement, $"[{migration.Id}] {detail}");
+
+    private sealed class Totals
+    {
+        public int Statements { get; set; }
+
+        public int Bodies { get; set; }
+
+        public int Permitted { get; set; }
+
+        public int DropConstraintsExamined { get; set; }
+
+        public int DropConstraintsAttributed { get; set; }
+
+        public int TypeChangesExamined { get; set; }
+
+        public int TypeChangesWidening { get; set; }
+
+        public int TriggersCreated { get; set; }
+    }
 }

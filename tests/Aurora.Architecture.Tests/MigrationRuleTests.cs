@@ -132,11 +132,24 @@ public sealed class MigrationRuleTests
     }
 
     [Fact]
+    public void MIG2_reports_the_bodies_it_read_from_each_production_migration()
+    {
+        // The count a passing run walks, so "no violations" comes with how much was read: the two
+        // DO $EF$ blocks Npgsql emits for InitialCatalog's EnsureSchema and extension, and
+        // AppendOnlyTrails' one trigger-function body. Measured on B-09 rework 3.
+        foreach ((string id, int bodies) in new[] { (CatalogMigrationId, 2), (AppendOnlyTrailsMigrationId, 1) })
+        {
+            MigrationScan scan = MigrationSafetyRule.Scan([Production.Single(m => m.Id == id)]);
+            scan.BodiesRead.ShouldBe(bodies, $"{id}: parsed {scan.StatementsParsed} statements, read {scan.BodiesRead} bodies");
+        }
+    }
+
+    [Fact]
     public void Every_fixture_migration_is_in_the_fixture_population()
     {
         // A fixture that fails to load would vanish from the population and its test would assert
         // over its absence; the count is what stops that.
-        Fixtures.Length.ShouldBe(31, string.Join(Environment.NewLine, Fixtures.Select(static migration => migration.Id)));
+        Fixtures.Length.ShouldBe(47, string.Join(Environment.NewLine, Fixtures.Select(static migration => migration.Id)));
 
         // Unique but for the one pair that exists to share an id.
         Fixtures.Select(static migration => migration.Id)
@@ -235,6 +248,118 @@ public sealed class MigrationRuleTests
     }
 
     [Fact]
+    public void MIG2_fires_on_a_DROP_TABLE_in_a_quoted_routine_body_nested_in_a_DO_block()
+    {
+        // The third review's N-1, through the rule and not the scanner alone: reported clean before.
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+
+        RuleViolation violation = RuleAssert.Reports(outcome, nameof(ExpandHidingADropInANestedQuotedBody), ViolationSite.Statement);
+        violation.Detail.ShouldContain("DROP TABLE");
+        violation.Detail.ShouldContain("statement 1 › body › statement 1 › body › statement 1");
+    }
+
+    [Theory]
+    [InlineData(nameof(ExpandDroppingACheckConstraintByRawSql), "DROP CONSTRAINT")]
+    [InlineData(nameof(ExpandDroppingAPrimaryKeyByOperation), "DROP CONSTRAINT")]
+    [InlineData(nameof(ExpandDroppingAUniqueConstraintByOperation), "DROP CONSTRAINT")]
+    [InlineData(nameof(ExpandNarrowingAVarcharByOperation), "ALTER COLUMN … TYPE")]
+    [InlineData(nameof(ExpandChangingANumericByOperation), "ALTER COLUMN … TYPE")]
+    [InlineData(nameof(ExpandWideningAVarcharByRawSql), "ALTER COLUMN … TYPE")]
+    [InlineData(nameof(ExpandReEnablingAGuardTrigger), "ENABLE TRIGGER (tgenabled 'O'")]
+    public void MIG2_fires_where_the_operation_or_its_absence_proves_no_widening(string fixture, string expectedDetail)
+    {
+        // ADR-0037 §3.2 and §4: the name of a constraint is never evidence; the EF operation's
+        // type, the source model and the operation's old and new store types are. Raw SQL has no
+        // operation, and a primary key or a unique constraint is not a check. And §2.4's overturned
+        // call: a plain ENABLE TRIGGER writes 'O', a reduction from ALWAYS.
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, fixture, ViolationSite.Statement).Detail.ShouldContain(expectedDetail);
+    }
+
+    [Fact]
+    public void MIG2_clears_a_CHECK_dropped_through_the_typed_operation_that_the_source_model_declares_and_counts_it()
+    {
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+        MigrationScan scan = MigrationSafetyRule.Scan(Fixtures);
+
+        outcome.Violations.Where(static v => IsOneOf(v, nameof(ExpandDroppingACheckConstraintByOperation))).ShouldBeEmpty(outcome.Describe());
+
+        // Four DROP CONSTRAINT statements were judged: the check by operation (cleared), the same
+        // check by raw SQL, the primary key and the unique constraint (all three destructive).
+        scan.DropConstraintsExamined.ShouldBe(4);
+        scan.DropConstraintsAttributedToCheck.ShouldBe(1);
+
+        ScannedMigration byOperation = Fixtures.Single(static m => m.Id == ExpandDroppingACheckConstraintByOperation.Id);
+        byOperation.SourceCheckConstraints.Select(static c => (c.TableKey, c.Name))
+            .ShouldBe([("sales.invoice", DeclaresInvoiceCheckInModel.ConstraintName)], "the source model is the previous fixture's target model");
+    }
+
+    [Fact]
+    public void MIG2_clears_the_two_widening_shapes_through_the_typed_operation_and_counts_them()
+    {
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+        MigrationScan scan = MigrationSafetyRule.Scan(Fixtures);
+
+        outcome.Violations
+            .Where(static v => IsOneOf(v, nameof(ExpandWideningAVarcharByOperation), nameof(ExpandWideningToTextByOperation)))
+            .ShouldBeEmpty(outcome.Describe());
+
+        // Six type changes were judged: two widenings by operation (cleared), a narrowing, a numeric
+        // change, a raw-SQL widening, and ExpandThatNarrowsAColumn's TYPE (all four destructive).
+        scan.TypeChangesExamined.ShouldBe(6);
+        scan.TypeChangesWidening.ShouldBe(2);
+    }
+
+    [Theory]
+    [InlineData("character varying(50)", "character varying(100)", true)]
+    [InlineData("varchar(50)", "varchar(100)", true)]
+    [InlineData("character varying(50)", "text", true)]
+    [InlineData("character varying", "text", true)]
+    [InlineData("character varying(100)", "character varying(50)", false)]
+    [InlineData("character varying(50)", "character varying(50)", false)]
+    [InlineData("character varying", "character varying(100)", false)]
+    [InlineData("text", "character varying(100)", false)]
+    [InlineData("numeric(12,2)", "numeric(18,2)", false)]
+    [InlineData(null, "character varying(100)", false)]
+    [InlineData("character varying(50)", null, false)]
+    public void The_widening_allowlist_is_exactly_ADR_0037_s_two_shapes(string? oldType, string? newType, bool widening)
+    {
+        MigrationSafetyRule.IsWideningTextType(oldType, newType).ShouldBe(widening);
+    }
+
+    [Theory]
+    [InlineData(nameof(ExpandCreatingAGuardBornWeak), "trg_invoice_guard on sales.invoice is created and never enabled ALWAYS")]
+    [InlineData(nameof(ContractRepointingGuardWithoutEnableAlways), "trg_invoice_append_only on sales.invoice is created and never enabled ALWAYS")]
+    public void MIG2_fires_on_a_guard_created_and_not_enabled_ALWAYS_whatever_the_category(string fixture, string expectedDetail)
+    {
+        // ADR-0037 §2.6: CREATE TRIGGER produces tgenabled = 'O'; a guard born there is weaker than
+        // the ENABLE ALWAYS one B-19 paid for, and no suppression statement betrays it - a Contract
+        // re-creating a guard is held to it as much as an Expand creating one.
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+
+        RuleAssert.Reports(outcome, fixture, ViolationSite.Statement).Detail.ShouldContain(expectedDetail);
+    }
+
+    [Fact]
+    public void MIG2_accepts_the_v2_path_for_changing_a_guard_function_and_counts_the_triggers_it_saw()
+    {
+        // ADR-0037 §2.6: Expand creates _v2; Contract drops the trigger, re-creates it on _v2,
+        // re-applies ENABLE ALWAYS, drops _v1. Every drop is permitted and the re-created guard is
+        // enabled ALWAYS, so neither migration is reported.
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+
+        outcome.Violations
+            .Where(static v => IsOneOf(v, nameof(ExpandCreatingGuardV2), nameof(ContractRepointingGuardToV2)))
+            .ShouldBeEmpty(outcome.Describe());
+
+        MigrationScan contract = MigrationSafetyRule.Scan([.. Fixtures.Where(static m => m.Id == ContractRepointingGuardToV2.Id)]);
+        contract.TriggersCreated.ShouldBe(1);
+        contract.DestructiveStatementsPermittedInContracts.ShouldBe(2, "DROP TRIGGER and DROP FUNCTION");
+        contract.Violations.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void MIG2_fires_on_a_guard_trigger_switched_to_replica_mode()
     {
         // The second review's N-1: ENABLE REPLICA is DISABLE by another spelling for a guard.
@@ -324,7 +449,8 @@ public sealed class MigrationRuleTests
         outcome.SubjectsExamined.ShouldBe(Fixtures.Length);
         outcome.Violations
             .Where(static v => IsOneOf(
-                v, nameof(CompliantExpand), nameof(CompliantContract), nameof(DataOnlyBackfill), nameof(ExpandWithAProceduralLookAlikeInData)))
+                v, nameof(CompliantExpand), nameof(CompliantContract), nameof(DataOnlyBackfill), nameof(ExpandWithAProceduralLookAlikeInData),
+                nameof(ExpandDeclaringACheckConstraintInItsModel)))
             .ShouldBeEmpty(outcome.Describe());
 
         // Silence is only meaningful if the SQL was read. The compliant Expand alone is twelve

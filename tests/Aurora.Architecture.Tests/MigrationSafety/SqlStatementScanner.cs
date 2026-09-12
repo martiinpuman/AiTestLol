@@ -9,7 +9,7 @@ namespace Aurora.Architecture.Tests.MigrationSafety;
 /// <summary>What a finding is: something a category must justify, or something the scanner could not read.</summary>
 internal enum SqlFindingKind
 {
-    /// <summary>A statement ADR-0007 §7.2 allows only in a <c>Contract</c> migration.</summary>
+    /// <summary>A statement ADR-0037 §2 classes as destructive, which only a <c>Contract</c> may run - unless MIG2 attributes it to an operation that proves it a widening.</summary>
     Destructive,
 
     /// <summary>Code the scanner does not read, so the statement can hide anything.</summary>
@@ -17,7 +17,20 @@ internal enum SqlFindingKind
 }
 
 /// <summary>One finding: what was matched and how it reads.</summary>
-internal sealed record SqlFinding(SqlFindingKind Kind, string What);
+internal sealed record SqlFinding(SqlFindingKind Kind, string What)
+{
+    /// <summary>For a <c>DROP CONSTRAINT</c> or an <c>ALTER COLUMN … TYPE</c>: the table the statement names, lower-cased where unquoted.</summary>
+    public string? Table { get; init; }
+
+    /// <summary>For a <c>DROP CONSTRAINT</c>: the constraint; for an <c>ALTER COLUMN … TYPE</c>: the column. Lower-cased where unquoted.</summary>
+    public string? Name { get; init; }
+
+    /// <summary>
+    /// For an <c>ALTER COLUMN … TYPE</c>: the three conditions ADR-0037 §4 attaches to a widening -
+    /// no <c>USING</c>, no <c>COLLATE</c>, and no other action in the same <c>ALTER TABLE</c>.
+    /// </summary>
+    public bool StandsAlone { get; init; }
+}
 
 /// <summary>
 /// One SQL statement as the scanner saw it: where it is, how it starts, and what was found in it.
@@ -36,8 +49,22 @@ internal sealed record SqlStatement(
     bool HasProceduralBody,
     ImmutableArray<SqlFinding> Findings);
 
-/// <summary>Every statement of one command text, top level and inside bodies, in document order.</summary>
-internal sealed record SqlScanReport(ImmutableArray<SqlStatement> Statements)
+/// <summary>A trigger a statement creates, or enables <c>ALWAYS</c>: the table and the trigger name, lower-cased where unquoted (<c>all</c> for <c>ENABLE ALWAYS TRIGGER ALL</c>).</summary>
+internal sealed record TriggerReference(string Table, string Name, string Location);
+
+/// <summary>
+/// Every statement of one command text, top level and inside bodies, in document order - with
+/// what was walked to get there, so a scan can say how much it read and not only what it found.
+/// </summary>
+/// <param name="Statements">Every statement, top level and nested, in document order.</param>
+/// <param name="BodiesRead">How many procedural bodies - dollar-quoted or literal runs - were decoded and read again as code.</param>
+/// <param name="TriggersCreated">Every <c>CREATE [CONSTRAINT] TRIGGER … ON table</c>, for ADR-0037 §2.6's born-weak check.</param>
+/// <param name="TriggersEnabledAlways">Every <c>ALTER TABLE … ENABLE ALWAYS TRIGGER name|ALL</c>.</param>
+internal sealed record SqlScanReport(
+    ImmutableArray<SqlStatement> Statements,
+    int BodiesRead,
+    ImmutableArray<TriggerReference> TriggersCreated,
+    ImmutableArray<TriggerReference> TriggersEnabledAlways)
 {
     public int TopLevelStatements => Statements.Count(static statement => statement.IsTopLevel);
 }
@@ -47,34 +74,44 @@ internal sealed record SqlScanReport(ImmutableArray<SqlStatement> Statements)
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What it matches, on tokens, anywhere in a statement and inside every body:</b> <c>DROP</c> of
-/// anything but a default, <c>NOT NULL</c>, identity or expression, and <c>DROP CONSTRAINT</c>
-/// only with <c>CASCADE</c>; <c>TRUNCATE</c> of a table; <c>DELETE FROM</c> and
-/// <c>MERGE … THEN DELETE</c>; any <c>RENAME</c>; <c>ALTER [COLUMN] … TYPE</c>;
-/// <c>ALTER [COLUMN] … SET NOT NULL</c>; <c>SET SCHEMA</c>; <c>ADD [COLUMN] … NOT NULL</c> with no
-/// <c>DEFAULT</c> and no <c>GENERATED</c>; the statements that switch an enforced invariant off -
-/// <c>DISABLE TRIGGER</c>, <c>DISABLE RULE</c>, <c>ENABLE REPLICA TRIGGER</c>,
-/// <c>ENABLE REPLICA RULE</c> (a replica-mode trigger never fires for an ordinary write, which for
-/// a guard is <c>DISABLE</c> by another spelling), <c>DISABLE ROW LEVEL SECURITY</c>,
-/// <c>NO FORCE ROW LEVEL SECURITY</c>, <c>DETACH PARTITION</c>, and
-/// <c>SET session_replication_role</c> in any spelling including <c>set_config(…)</c>, which
-/// suppresses ordinary triggers for the session that runs the migration; and
-/// <c>CREATE OR REPLACE</c> of anything, because <c>OR REPLACE</c> exists to overwrite an object
-/// that may already be there, and a body replaced is a body the scanner cannot compare with the
-/// one it displaces. Matching on tokens is what makes case, whitespace, newlines, comments and
-/// string literals irrelevant: <c>drop /* x */ table</c> and <c>DROP TABLE</c> are the same three
-/// tokens, and <c>'DROP TABLE'</c> is one literal.
+/// <b>The rule it applies (ADR-0037 §2.1):</b> a statement is destructive when, from some prior
+/// state the migration does not control, it narrows what the schema offers (limb A, removal -
+/// visible, with a widening exception) or reduces the set of executions in which a declared
+/// invariant is enforced (limb B, suppression - the object stays named and defined, and no widening
+/// exception). Spelling is evidence of effect and never a substitute for it.
 /// </para>
 /// <para>
-/// <b>What it reads again as code:</b> every dollar-quoted body, and a string literal in the two
-/// positions where PostgreSQL reads a literal as code - the body of a <c>DO</c> and the body after
-/// <c>AS</c> of a <c>CREATE [OR REPLACE] FUNCTION</c>/<c>PROCEDURE</c>. <c>DO $$…$$</c> and
-/// <c>DO '…'</c> are the same statement; a quoted function body is the original spelling. Adjacent
-/// string constants are one constant to PostgreSQL (its lexer joins constants separated by a
-/// newline before the grammar sees them), so a run of literals in a body position is decoded and
-/// joined before it is read - a body split across two literals is read whole, not half. A body in
-/// a literal the tokenizer cannot decode (<c>U&amp;'…'</c>, a bit string, an <c>E'…'</c> with a
-/// numeric escape) is reported as unscannable.
+/// <b>Limb A, matched on tokens anywhere in a statement and inside every body:</b> <c>DROP</c> of
+/// anything but a default, <c>NOT NULL</c>, identity or expression; <c>DROP CONSTRAINT</c> - bare
+/// or with <c>CASCADE</c> - which MIG2 may attribute to a typed check-constraint operation and clear
+/// (ADR-0037 §3.2), never on the constraint's name; <c>TRUNCATE</c> of a table; <c>DELETE FROM</c>
+/// and <c>MERGE … THEN DELETE</c>; any <c>RENAME</c>; <c>ALTER [COLUMN] … TYPE</c>, which MIG2 may
+/// attribute to an <c>AlterColumnOperation</c> on ADR-0037 §4's two-shape allowlist and clear;
+/// <c>ALTER [COLUMN] … SET NOT NULL</c>; <c>SET SCHEMA</c>; <c>ADD [COLUMN] … NOT NULL</c> with no
+/// <c>DEFAULT</c> and no <c>GENERATED</c>; <c>DETACH PARTITION</c>.
+/// </para>
+/// <para>
+/// <b>Limb B, by the catalog column that records "in force"</b> (<c>postgres-invariant-suppression.md</c>,
+/// rows <see cref="CoveredSuppressionRows"/>): <c>pg_trigger.tgenabled</c> and
+/// <c>pg_rewrite.ev_enabled</c> - <c>DISABLE</c> (<c>D</c>), <c>ENABLE REPLICA</c> (<c>R</c>), and
+/// plain <c>ENABLE</c> (<c>O</c>, a reduction from <c>A</c>, the one mode that cannot reduce), for
+/// triggers, rules and event triggers; the <c>session_replication_role</c> GUC in every spelling
+/// (<c>SET</c>, <c>SET LOCAL</c>, <c>ALTER ROLE|DATABASE … SET</c>, <c>set_config(…)</c>); the
+/// body a trigger executes, through <c>CREATE OR REPLACE</c> of anything (ADR-0037 §2.5: a
+/// migration runs once under an advisory lock, so <c>OR REPLACE</c> buys no idempotence it needs,
+/// only a meaning that depends on state it does not control, where <c>CREATE</c> fails loudly);
+/// row-level security through <c>DISABLE ROW LEVEL SECURITY</c> and <c>NO FORCE ROW LEVEL SECURITY</c>;
+/// and trigger scope through <c>DROP TRIGGER</c> and <c>CREATE OR REPLACE TRIGGER</c>.
+/// </para>
+/// <para>
+/// <b>What it reads again as code:</b> every dollar-quoted body, and a string literal where
+/// PostgreSQL reads a literal as code - after <c>DO [LANGUAGE name]</c>, and after <c>AS</c> in a
+/// statement that defines a <c>FUNCTION</c> or <c>PROCEDURE</c> - judged from the tokens around
+/// the literal and not from how the statement begins, because inside a procedural block a
+/// statement begins with <c>BEGIN</c>, <c>IF</c> or <c>DECLARE</c> and the routine it creates is
+/// nested. Adjacent string constants are one constant to PostgreSQL, so a run of literals is
+/// decoded and joined before it is read. A body in a literal the tokenizer cannot decode
+/// (<c>U&amp;'…'</c>, a bit string, an <c>E'…'</c> with a numeric escape) is reported as unscannable.
 /// </para>
 /// <para>
 /// <b>What it refuses to read, and reports as unscannable rather than clean:</b> dynamic SQL
@@ -82,28 +119,34 @@ internal sealed record SqlScanReport(ImmutableArray<SqlStatement> Statements)
 /// <c>EXECUTE</c> privilege of a <c>GRANT</c>/<c>REVOKE</c>); a call to a schema-qualified
 /// function or procedure outside <c>pg_catalog</c>, whose body was written elsewhere; and any text
 /// the tokenizer cannot finish. A function <i>defined</i>, <i>dropped</i>, bound to a trigger or
-/// named as a column default is a reference, not a call, and is not one of these; a
-/// schema-qualified name before a parenthesis after <c>ON</c> is a table only when the nearest
-/// statement verb before it is <c>CREATE</c>, <c>ALTER</c> or <c>DROP</c> - after a
-/// <c>SELECT</c>, <c>JOIN</c> or a DML verb it is a join condition and the call is reported.
+/// named as a column default is a reference, not a call; a schema-qualified name before a
+/// parenthesis after <c>ON</c> is a table only when the nearest statement verb before it is
+/// <c>CREATE</c>, <c>ALTER</c> or <c>DROP</c>.
 /// </para>
 /// <para>
 /// <b>What it cannot see, stated:</b> a call to an <i>unqualified</i> user function is read as a
-/// built-in. That holds only while every function a migration creates is schema-qualified, which
-/// every migration on this project is (schemas own their objects, ADR-0007 §7.1); a migration
-/// creating an unqualified function is the case that would break it. A bare
-/// <c>DROP CONSTRAINT</c> is not judged: by name alone the scanner cannot tell a <c>CHECK</c>,
-/// whose replacement is a widening, from a <c>PRIMARY KEY</c>, <c>UNIQUE</c> or <c>EXCLUDE</c>,
-/// whose removal is not. Whether a <c>CREATE OR REPLACE</c> actually displaces an existing object
-/// is not known either - every one needs a <c>Contract</c>, and a new object is created without
-/// <c>OR REPLACE</c>. And it reads the SQL of a migration's <c>Up</c>: <c>Down</c> is never run in
-/// production (ADR-0007 §7.4, "rollback is not a database operation") and is where an Expand's
-/// own drops legitimately live.
+/// built-in, which holds only while every function a migration creates is schema-qualified. A
+/// <c>CREATE RULE … DO INSTEAD NOTHING</c> on an existing table is <c>DISABLE RULE</c> from the
+/// other side and is not judged - the architect's ruling on it is pending, and creating an object
+/// is otherwise the additive direction. Suppression rows the scanner does not cover are named by
+/// their absence from <see cref="CoveredSuppressionRows"/>. And it reads a migration's <c>Up</c>:
+/// <c>Down</c> is never run in production (ADR-0007 §7.4).
 /// </para>
 /// </remarks>
 internal static class SqlStatementScanner
 {
-    /// <summary>The <c>DROP</c> targets that widen or tidy rather than remove: not destructive. <c>CONSTRAINT</c> is judged separately, on <c>CASCADE</c>.</summary>
+    /// <summary>
+    /// The rows of <c>docs/architecture/postgres-invariant-suppression.md</c> whose statements this
+    /// scanner names as destructive. Declared here and asserted equal to what the scanner implements
+    /// by <c>SqlScannerTests</c>, so that coverage is measured and not asserted: S1 trigger firing
+    /// mode, S2 rule firing mode, S3 the replication-role GUC, S4 the body a trigger executes, S6
+    /// the two row-level-security switches (not <c>OWNER TO</c>), S10 event-trigger firing mode,
+    /// S12 trigger scope through re-creation. Not covered: S5 (search-path shadowing), S7
+    /// (<c>NOT VALID</c>), S8 (deferral), S9 (an invalid index), S11 (ACLs and ownership).
+    /// </summary>
+    public static readonly ImmutableArray<string> CoveredSuppressionRows = ["S1", "S2", "S3", "S4", "S6", "S10", "S12"];
+
+    /// <summary>The <c>DROP</c> targets that widen or tidy rather than remove: not destructive. <c>CONSTRAINT</c> is judged separately.</summary>
     private static readonly ImmutableHashSet<string> NonDestructiveDropTargets =
         Keywords("DEFAULT", "NOT", "IDENTITY", "EXPRESSION");
 
@@ -131,12 +174,24 @@ internal static class SqlStatementScanner
 
     public static SqlScanReport Scan(string sql)
     {
-        List<SqlStatement> statements = [];
-        ScanText(sql, "statement", isTopLevel: true, statements);
-        return new SqlScanReport([.. statements]);
+        var walk = new Walk();
+        ScanText(sql, "statement", isTopLevel: true, walk);
+        return new SqlScanReport([.. walk.Statements], walk.BodiesRead, [.. walk.TriggersCreated], [.. walk.TriggersEnabledAlways]);
     }
 
-    private static void ScanText(string sql, string locationPrefix, bool isTopLevel, List<SqlStatement> into)
+    /// <summary>What one scan accumulates across every nesting level.</summary>
+    private sealed class Walk
+    {
+        public List<SqlStatement> Statements { get; } = [];
+
+        public List<TriggerReference> TriggersCreated { get; } = [];
+
+        public List<TriggerReference> TriggersEnabledAlways { get; } = [];
+
+        public int BodiesRead { get; set; }
+    }
+
+    private static void ScanText(string sql, string locationPrefix, bool isTopLevel, Walk walk)
     {
         ImmutableArray<SqlToken> tokens;
         try
@@ -145,7 +200,7 @@ internal static class SqlStatementScanner
         }
         catch (UnscannableSqlException unreadable)
         {
-            into.Add(new SqlStatement(
+            walk.Statements.Add(new SqlStatement(
                 locationPrefix,
                 Head: string.Empty,
                 Excerpt: Excerpt(sql),
@@ -162,7 +217,7 @@ internal static class SqlStatementScanner
             string location = FormattableString.Invariant($"{locationPrefix} {ordinal}");
             ImmutableArray<ImmutableArray<SqlToken>> bodies = Bodies(statement);
 
-            into.Add(new SqlStatement(
+            walk.Statements.Add(new SqlStatement(
                 location,
                 Head: statement[0].Kind == SqlTokenKind.Word ? statement[0].Text.ToUpperInvariant() : string.Empty,
                 Excerpt: Excerpt(statement),
@@ -170,13 +225,15 @@ internal static class SqlStatementScanner
                 HasProceduralBody: !bodies.IsEmpty,
                 [.. Findings(statement)]));
 
+            CollectTriggers(statement, location, walk);
+
             foreach (ImmutableArray<SqlToken> body in bodies)
             {
                 string? code = Code(body);
 
                 if (code is null)
                 {
-                    into.Add(new SqlStatement(
+                    walk.Statements.Add(new SqlStatement(
                         location + " › body",
                         Head: string.Empty,
                         Excerpt: string.Join(' ', body.Select(static token => token.Display)),
@@ -186,7 +243,8 @@ internal static class SqlStatementScanner
                 }
                 else
                 {
-                    ScanText(code, location + " › body › statement", isTopLevel: false, into);
+                    walk.BodiesRead++;
+                    ScanText(code, location + " › body › statement", isTopLevel: false, walk);
                 }
             }
         }
@@ -194,18 +252,19 @@ internal static class SqlStatementScanner
 
     /// <summary>
     /// The runs of tokens PostgreSQL reads as code: every dollar-quoted body, and a string literal
-    /// where a literal is a body - after a statement-leading <c>DO</c> (its <c>LANGUAGE</c> name
-    /// excepted), and after <c>AS</c> in a <c>CREATE [OR REPLACE] FUNCTION</c>/<c>PROCEDURE</c>, a
-    /// second literal after a comma there being the link symbol of a C function. A literal body
-    /// takes every literal adjacent to it into its run, because PostgreSQL joins adjacent string
-    /// constants into one before the grammar sees them.
+    /// where a literal is a body - directly after <c>DO</c> or after <c>DO LANGUAGE name</c>, and
+    /// after <c>AS</c> where the statement defines a <c>FUNCTION</c> or <c>PROCEDURE</c> (a second
+    /// literal after a comma there being the link symbol of a C function). Decided from the tokens
+    /// around the literal and never from the statement's first token: inside a procedural block the
+    /// statement that creates a routine begins with <c>IF</c> or <c>BEGIN</c>, which is what let a
+    /// nested quoted body go unread (PR #16, third review). A literal body takes every literal
+    /// adjacent to it into its run, because PostgreSQL joins adjacent string constants into one
+    /// before the grammar sees them.
     /// </summary>
     private static ImmutableArray<ImmutableArray<SqlToken>> Bodies(ImmutableArray<SqlToken> t)
     {
         ImmutableArray<ImmutableArray<SqlToken>>.Builder bodies = ImmutableArray.CreateBuilder<ImmutableArray<SqlToken>>();
-        bool isDo = t[0].Is("DO");
-        bool isRoutineDefinition = t[0].Is("CREATE")
-            && t.Take(5).Any(static token => token.Is("FUNCTION") || token.Is("PROCEDURE"));
+        bool definesARoutine = t.Any(static token => token.Is("FUNCTION") || token.Is("PROCEDURE"));
 
         for (int i = 0; i < t.Length; i++)
         {
@@ -218,10 +277,11 @@ internal static class SqlStatementScanner
             else if (token.Kind == SqlTokenKind.Literal)
             {
                 SqlToken before = At(t, i - 1);
+                bool afterDo = before.Is("DO") || (At(t, i - 3).Is("DO") && At(t, i - 2).Is("LANGUAGE"));
                 bool afterAs = before.Is("AS")
                     || (before.IsPunctuation(",") && At(t, i - 2).Kind == SqlTokenKind.Literal && At(t, i - 3).Is("AS"));
 
-                if ((isDo && !before.Is("LANGUAGE")) || (isRoutineDefinition && afterAs))
+                if (afterDo || (definesARoutine && afterAs))
                 {
                     int end = i;
                     while (At(t, end + 1).Kind == SqlTokenKind.Literal)
@@ -290,6 +350,9 @@ internal static class SqlStatementScanner
 
     private static IEnumerable<SqlFinding> Findings(ImmutableArray<SqlToken> t)
     {
+        string? alteredTable = AlteredTable(t);
+        bool eventTrigger = IsEventTriggerStatement(t);
+
         for (int i = 0; i < t.Length; i++)
         {
             SqlToken token = t[i];
@@ -301,10 +364,15 @@ internal static class SqlStatementScanner
 
                 if (target.Is("CONSTRAINT"))
                 {
-                    if (HasCascadeBeforeNextAction(t, i + 1))
+                    int nameAt = t.IndexOf(target) + 1;
+                    if (At(t, nameAt).Is("IF") && At(t, nameAt + 1).Is("EXISTS"))
                     {
-                        yield return Destructive("DROP CONSTRAINT … CASCADE");
+                        nameAt += 2;
                     }
+
+                    yield return HasCascadeBeforeNextAction(t, i + 1)
+                        ? Destructive("DROP CONSTRAINT … CASCADE")
+                        : Destructive("DROP CONSTRAINT") with { Table = alteredTable, Name = NameOf(At(t, nameAt)) };
                 }
                 else if (!(target.Kind == SqlTokenKind.Word && NonDestructiveDropTargets.Contains(target.Text)))
                 {
@@ -347,14 +415,17 @@ internal static class SqlStatementScanner
                 yield return Destructive("SET session_replication_role");
             }
 
-            if (token.Is("DISABLE") && next is not null && (next.Is("TRIGGER") || next.Is("RULE")))
+            if (token.Is("DISABLE") && (next is null || (next.Is("TRIGGER") || next.Is("RULE")) || eventTrigger))
             {
-                yield return Destructive("DISABLE " + next.Text.ToUpperInvariant());
+                yield return Destructive(eventTrigger ? "ALTER EVENT TRIGGER … DISABLE" : "DISABLE " + next!.Text.ToUpperInvariant());
             }
 
-            if (token.Is("ENABLE") && next is not null && next.Is("REPLICA"))
+            if (token.Is("ENABLE"))
             {
-                yield return Destructive("ENABLE REPLICA " + At(t, i + 2).Text.ToUpperInvariant());
+                foreach (SqlFinding finding in EnableFindings(t, i, eventTrigger))
+                {
+                    yield return finding;
+                }
             }
 
             if (token.Is("DISABLE") && next is not null && next.Is("ROW"))
@@ -374,7 +445,7 @@ internal static class SqlStatementScanner
 
             if (token.Is("ALTER"))
             {
-                foreach (SqlFinding finding in AlterColumnFindings(t, i + 1))
+                foreach (SqlFinding finding in AlterColumnFindings(t, i + 1, alteredTable))
                 {
                     yield return finding;
                 }
@@ -399,8 +470,38 @@ internal static class SqlStatementScanner
     }
 
     /// <summary>
+    /// The firing-mode lattice of <c>pg_trigger.tgenabled</c> (S1), <c>pg_rewrite.ev_enabled</c> (S2)
+    /// and <c>pg_event_trigger.evtenabled</c> (S10): <c>ALWAYS</c> is the top and the only mode that
+    /// cannot reduce from an unknown prior state; <c>REPLICA</c> never fires for an ordinary write;
+    /// plain <c>ENABLE</c> writes <c>O</c>, a reduction from <c>A</c> (ADR-0037 §2.4).
+    /// <c>ENABLE ROW LEVEL SECURITY</c> is not a firing mode and is clean.
+    /// </summary>
+    private static IEnumerable<SqlFinding> EnableFindings(ImmutableArray<SqlToken> t, int i, bool eventTrigger)
+    {
+        SqlToken next = At(t, i + 1);
+
+        if (next.Is("ALWAYS") || next.Is("ROW"))
+        {
+            yield break;
+        }
+
+        if (next.Is("REPLICA"))
+        {
+            yield return Destructive(eventTrigger ? "ALTER EVENT TRIGGER … ENABLE REPLICA" : "ENABLE REPLICA " + At(t, i + 2).Text.ToUpperInvariant());
+        }
+        else if (next.Is("TRIGGER") || next.Is("RULE"))
+        {
+            yield return Destructive("ENABLE " + next.Text.ToUpperInvariant() + " (tgenabled 'O', a reduction from ALWAYS)");
+        }
+        else if (eventTrigger && next.Text.Length == 0)
+        {
+            yield return Destructive("ALTER EVENT TRIGGER … ENABLE (a reduction from ALWAYS)");
+        }
+    }
+
+    /// <summary>
     /// <c>SET [LOCAL|SESSION] session_replication_role</c>, the same setting through
-    /// <c>ALTER ROLE|DATABASE … SET</c>, and <c>set_config('session_replication_role', …)</c>.
+    /// <c>ALTER ROLE|DATABASE … SET</c>, and <c>[pg_catalog.]set_config('session_replication_role', …)</c>.
     /// </summary>
     private static bool SetsTheReplicationRole(ImmutableArray<SqlToken> t, int i)
     {
@@ -419,7 +520,7 @@ internal static class SqlStatementScanner
     }
 
     /// <summary><c>ALTER [COLUMN] name [SET DATA] TYPE …</c> and <c>ALTER [COLUMN] name SET NOT NULL</c>.</summary>
-    private static IEnumerable<SqlFinding> AlterColumnFindings(ImmutableArray<SqlToken> t, int j)
+    private static IEnumerable<SqlFinding> AlterColumnFindings(ImmutableArray<SqlToken> t, int j, string? alteredTable)
     {
         if (At(t, j).Is("COLUMN"))
         {
@@ -431,6 +532,7 @@ internal static class SqlStatementScanner
             yield break;
         }
 
+        SqlToken column = t[j];
         j++;
 
         if (At(t, j).Is("SET") && At(t, j + 1).Is("DATA"))
@@ -440,7 +542,15 @@ internal static class SqlStatementScanner
 
         if (At(t, j).Is("TYPE"))
         {
-            yield return Destructive("ALTER COLUMN … TYPE");
+            bool qualified = ActionTokens(t, j).Any(static token => token.Is("USING") || token.Is("COLLATE"));
+            bool alone = !HasTopLevelComma(t);
+
+            yield return Destructive("ALTER COLUMN … TYPE") with
+            {
+                Table = alteredTable,
+                Name = NameOf(column),
+                StandsAlone = alone && !qualified,
+            };
         }
         else if (At(t, j).Is("SET") && At(t, j + 1).Is("NOT") && At(t, j + 2).Is("NULL"))
         {
@@ -476,7 +586,7 @@ internal static class SqlStatementScanner
 
         foreach (SqlToken token in ActionTokens(t, j + 1))
         {
-            notNull |= token.Is("NOT") && At(t, IndexOf(t, token) + 1).Is("NULL");
+            notNull |= token.Is("NOT") && At(t, t.IndexOf(token) + 1).Is("NULL");
             hasDefault |= token.Is("DEFAULT") || token.Is("GENERATED");
         }
 
@@ -516,7 +626,111 @@ internal static class SqlStatementScanner
         }
     }
 
-    private static int IndexOf(ImmutableArray<SqlToken> t, SqlToken token) => t.IndexOf(token);
+    private static bool HasTopLevelComma(ImmutableArray<SqlToken> t)
+    {
+        int depth = 0;
+
+        foreach (SqlToken token in t)
+        {
+            if (token.IsPunctuation("("))
+            {
+                depth++;
+            }
+            else if (token.IsPunctuation(")"))
+            {
+                depth--;
+            }
+            else if (depth == 0 && token.IsPunctuation(","))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>The table an <c>ALTER TABLE [IF EXISTS] [ONLY] name</c> statement names, or <c>null</c>.</summary>
+    private static string? AlteredTable(ImmutableArray<SqlToken> t)
+    {
+        if (!(t[0].Is("ALTER") && At(t, 1).Is("TABLE")))
+        {
+            return null;
+        }
+
+        int j = 2;
+        if (At(t, j).Is("IF") && At(t, j + 1).Is("EXISTS"))
+        {
+            j += 2;
+        }
+
+        if (At(t, j).Is("ONLY"))
+        {
+            j++;
+        }
+
+        return QualifiedNameAt(t, j);
+    }
+
+    private static bool IsEventTriggerStatement(ImmutableArray<SqlToken> t) =>
+        t[0].Is("ALTER") && At(t, 1).Is("EVENT") && At(t, 2).Is("TRIGGER");
+
+    /// <summary>
+    /// <c>CREATE [OR REPLACE] [CONSTRAINT] TRIGGER name … ON table</c> and
+    /// <c>ALTER TABLE table ENABLE ALWAYS TRIGGER name|ALL|USER</c>, for ADR-0037 §2.6's rule that a
+    /// trigger a migration creates is followed by <c>ENABLE ALWAYS</c> - <c>CREATE TRIGGER</c>
+    /// produces <c>tgenabled = 'O'</c>, a guard born weak, which no suppression statement betrays.
+    /// </summary>
+    private static void CollectTriggers(ImmutableArray<SqlToken> t, string location, Walk walk)
+    {
+        for (int i = 1; i < t.Length; i++)
+        {
+            if (!t[i].Is("TRIGGER"))
+            {
+                continue;
+            }
+
+            SqlToken before = t[i - 1];
+
+            if ((before.Is("CREATE") || before.Is("REPLACE") || before.Is("CONSTRAINT")) && At(t, i + 1).IsName && !At(t, i - 1).Is("EVENT"))
+            {
+                int on = i + 2;
+                while (on < t.Length && !t[on].Is("ON"))
+                {
+                    on++;
+                }
+
+                string? table = QualifiedNameAt(t, on + 1);
+                if (table is not null)
+                {
+                    walk.TriggersCreated.Add(new TriggerReference(table, NameOf(t[i + 1]), location));
+                }
+            }
+            else if (before.Is("ALWAYS") && At(t, i - 2).Is("ENABLE") && At(t, i + 1).IsName)
+            {
+                string? table = AlteredTable(t);
+                if (table is not null)
+                {
+                    walk.TriggersEnabledAlways.Add(new TriggerReference(table, NameOf(t[i + 1]), location));
+                }
+            }
+        }
+    }
+
+    /// <summary>A possibly schema-qualified name at <paramref name="j"/>, lower-cased where unquoted.</summary>
+    private static string? QualifiedNameAt(ImmutableArray<SqlToken> t, int j)
+    {
+        if (!At(t, j).IsName)
+        {
+            return null;
+        }
+
+        return At(t, j + 1).IsPunctuation(".") && At(t, j + 2).IsName
+            ? NameOf(t[j]) + "." + NameOf(t[j + 2])
+            : NameOf(t[j]);
+    }
+
+    /// <summary>How PostgreSQL stores an identifier: an unquoted one folded to lower case, a quoted one as written.</summary>
+    private static string NameOf(SqlToken token) => token.Kind == SqlTokenKind.Word ? token.Text.ToLowerInvariant() : token.Text;
 
     /// <summary>
     /// <c>EXECUTE FUNCTION</c>/<c>EXECUTE PROCEDURE</c> binds a trigger, and <c>EXECUTE ON</c> or
