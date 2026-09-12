@@ -31,6 +31,7 @@ public sealed class CatalogHoldsNoTenantBusinessDataTests
     private static readonly IReadOnlyDictionary<string, IReadOnlySet<string>> Allowlist =
         CatalogSchemaAllowlist.Columns
             .Concat(CatalogSchemaAllowlist.InfrastructureColumns)
+            .Concat(CatalogSchemaAllowlist.AppendOnlyColumns)
             .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
 
     private readonly CatalogDatabaseFixture _catalog;

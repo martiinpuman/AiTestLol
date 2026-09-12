@@ -76,17 +76,61 @@ function requestCompanySwitch(name, hasUnsaved) {
 // ---------------------------------------------------------------------------
 // Modal / dialog helpers
 // ---------------------------------------------------------------------------
+// DESIGN-001 added the focus trap and the focus restore below. components.md
+// §14 requires both ("Focus is trapped inside the dialog (Tab cycles within
+// it)" and "Closing: focus returns to the element that opened the dialog"),
+// and until now no prototype implemented either: focus tabbed straight out of
+// an open dialog into the page behind the scrim (WCAG 2.2 SC 2.4.3 Focus
+// Order, SC 4.1.2 Name/Role/Value), and closing a dialog dropped focus onto
+// <body> (SC 2.4.3). The re-authentication dialog in sign-in.html and the
+// company-switch dialog in shell.html both inherit the fix.
+var MODAL_FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]),' +
+  ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function modalFocusables(el) {
+  return Array.prototype.filter.call(el.querySelectorAll(MODAL_FOCUSABLE), function (n) {
+    return !n.hasAttribute("hidden") && (n.offsetWidth > 0 || n.offsetHeight > 0 || n === document.activeElement);
+  });
+}
+
 function openModal(id) {
   var el = document.getElementById(id);
   if (!el) return;
+  el.auroraOpener = document.activeElement;
   el.removeAttribute("hidden");
-  var focusable = el.querySelector("input, button, [tabindex]");
-  if (focusable) focusable.focus();
+  var first = el.querySelector("[data-autofocus]") || modalFocusables(el)[0];
+  if (first) first.focus();
 }
 function closeModal(id) {
   var el = document.getElementById(id);
-  if (el) el.setAttribute("hidden", "");
+  if (!el) return;
+  el.setAttribute("hidden", "");
+  var opener = el.auroraOpener;
+  el.auroraOpener = null;
+  if (opener && document.contains(opener) && typeof opener.focus === "function") opener.focus();
 }
+
+// Tab / Shift+Tab cycle within the topmost open overlay, never out of it.
+document.addEventListener("keydown", function (e) {
+  if (e.key !== "Tab") return;
+  var overlays = document.querySelectorAll(".modal-overlay:not([hidden])");
+  if (!overlays.length) return;
+  var open = overlays[overlays.length - 1];
+  var items = modalFocusables(open);
+  if (!items.length) return;
+  var first = items[0];
+  var last = items[items.length - 1];
+  var inside = open.contains(document.activeElement);
+  if (e.shiftKey && (!inside || document.activeElement === first)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (!inside || document.activeElement === last)) {
+    e.preventDefault();
+    first.focus();
+  }
+});
+
 document.addEventListener("keydown", function (e) {
   if (e.key === "Escape") {
     // components.md #14: "Esc closes it UNLESS it represents an in-progress,
@@ -99,7 +143,7 @@ document.addEventListener("keydown", function (e) {
     // confirmation.
     document.querySelectorAll(".modal-overlay:not([hidden])").forEach(function (m) {
       if (m.dataset.modalBlocking === "true") return;
-      m.setAttribute("hidden", "");
+      closeModal(m.id); // via closeModal, so Esc restores focus to the opener too
     });
   }
   // Command palette shortcut
@@ -115,14 +159,51 @@ document.addEventListener("keydown", function (e) {
 // ---------------------------------------------------------------------------
 // Toasts
 // ---------------------------------------------------------------------------
+// DESIGN-001 added announce()/ensureLiveRegion(). components.md §15 already
+// required it ("a screen-reader-only live region announces the message
+// regardless of the visual toast") but no prototype had one, so every toast
+// in every prototype was a visual-only notification — WCAG 2.2 SC 4.1.3
+// Status Messages. Polite for success/info; assertive for an error, which
+// interrupts because an unread error is the one that costs the user work.
+function ensureLiveRegion(assertive) {
+  var id = assertive ? "aurora-live-assertive" : "aurora-live-polite";
+  var el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement("div");
+    el.id = id;
+    el.className = "visually-hidden";
+    el.setAttribute("role", assertive ? "alert" : "status");
+    el.setAttribute("aria-live", assertive ? "assertive" : "polite");
+    el.setAttribute("aria-atomic", "true");
+    document.body.appendChild(el);
+  }
+  return el;
+}
+function announce(message, assertive) {
+  var el = ensureLiveRegion(!!assertive);
+  el.textContent = "";
+  window.setTimeout(function () { el.textContent = message; }, 30);
+}
+
 function showToast(kind, message, actionLabel, actionFn) {
   var stack = document.querySelector(".toast-stack");
   if (!stack) return;
   var el = document.createElement("div");
   el.className = "toast " + kind;
   var icon = kind === "success" ? "✓" : kind === "danger" ? "⚠" : "ℹ";
-  el.innerHTML =
-    '<span class="ic">' + icon + '</span><span class="msg">' + message + '</span>';
+  // textContent, not innerHTML: a toast message can carry user-entered data
+  // (a company name), and the prototype must not model string concatenation
+  // into markup as the normal way to do this.
+  var ic = document.createElement("span");
+  ic.className = "ic";
+  ic.setAttribute("aria-hidden", "true");
+  ic.textContent = icon;
+  var msg = document.createElement("span");
+  msg.className = "msg";
+  msg.textContent = message;
+  el.appendChild(ic);
+  el.appendChild(msg);
+  announce(message, kind === "danger");
   if (actionLabel) {
     var btn = document.createElement("button");
     btn.className = "action";
@@ -142,29 +223,60 @@ function showToast(kind, message, actionLabel, actionFn) {
 // app-shell.md. In the real app this reflects Blazor Server's actual
 // SignalR circuit state; here it's a manual cycle for visual review.
 // ---------------------------------------------------------------------------
+// setConnectionState was extracted from cycleConnectionDemo by DESIGN-001 so a
+// screen can drive one specific transition (e.g. "the circuit drops mid-submit
+// and then comes back") instead of only cycling. Its three strings went
+// through t() at the same time: they were the last hard-coded user-facing
+// English left in the prototypes, which CLAUDE.md forbids outright.
+function setConnectionState(state) {
+  var banner = document.getElementById("conn-banner");
+  if (!banner) return;
+  banner.dataset.state = state;
+  banner.className = "conn-banner";
+  if (state === "reconnecting") {
+    banner.classList.add("show", "warning");
+    banner.textContent = "";
+    var spin = document.createElement("span");
+    spin.className = "spin";
+    spin.setAttribute("aria-hidden", "true");
+    banner.appendChild(spin);
+    banner.appendChild(document.createTextNode(" " + t("shell.reconnecting")));
+    freezeInputs(true);
+  } else if (state === "failed") {
+    banner.classList.add("show", "danger");
+    banner.textContent = t("shell.connectionLost") + " ";
+    var reload = document.createElement("button");
+    reload.className = "link";
+    reload.textContent = t("shell.reloadPage");
+    reload.onclick = function () { setConnectionState("connected"); };
+    banner.appendChild(reload);
+    freezeInputs(true);
+  } else {
+    banner.classList.remove("show");
+    banner.textContent = "";
+    freezeInputs(false);
+  }
+}
+
 function cycleConnectionDemo() {
   var banner = document.getElementById("conn-banner");
   if (!banner) return;
   var state = banner.dataset.state || "connected";
-  var next = { connected: "reconnecting", reconnecting: "failed", failed: "connected" }[state];
-  banner.dataset.state = next;
-  banner.className = "conn-banner";
-  if (next === "reconnecting") {
-    banner.classList.add("show", "warning");
-    banner.innerHTML = '<span class="spin"></span> Reconnecting… changes made in the last few seconds may not be saved.';
-    freezeInputs(true);
-  } else if (next === "failed") {
-    banner.classList.add("show", "danger");
-    banner.innerHTML = 'Connection lost. Editing is disabled until the page is reloaded. <button class="link" onclick="cycleConnectionDemo()">Reload page (demo: click to reset)</button>';
-    freezeInputs(true);
-  } else {
-    banner.classList.remove("show");
-    freezeInputs(false);
-  }
+  setConnectionState({ connected: "reconnecting", reconnecting: "failed", failed: "connected" }[state]);
 }
+// app-shell.md's reconnection rule ("all editable controls in the content area
+// become disabled... the user's in-progress data stays visible, just frozen")
+// is implemented with readOnly + aria-disabled rather than the native `disabled`
+// attribute, for the same reason components.md §1 made that correction for
+// buttons: `disabled` on the element that currently HAS focus drops focus to
+// <body> (WCAG 2.2 SC 2.4.3), and a circuit drop is precisely the moment a user
+// is mid-keystroke in a field. readOnly keeps focus, the caret and the value.
+// The selector covers the create dialog too, so the claim holds on a screen
+// whose only editable control lives in a dialog.
 function freezeInputs(frozen) {
-  document.querySelectorAll(".line-editor .cell-input, .info-grid .input").forEach(function (el) {
-    el.disabled = frozen;
+  document.querySelectorAll(".line-editor .cell-input, .info-grid .input, .dialog .input").forEach(function (el) {
+    el.readOnly = frozen;
+    if (frozen) { el.setAttribute("aria-disabled", "true"); } else { el.removeAttribute("aria-disabled"); }
   });
 }
 

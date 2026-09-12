@@ -130,3 +130,67 @@ Roughly 5–10 minutes per run, per push.
 > **Proceeding without CI** unless the product owner says otherwise — the orchestrator re-runs
 > `verify.sh` on the merge commit before every merge, and records the verbatim result in
 > `docs/ITERATION_LOG.md`, which is the best mechanism available without spending anything.
+
+---
+
+## 2026-09-12 — Two questions the Company screen forced (OPEN, not blocking)
+
+Both come out of `DESIGN-001`. Neither blocks: a decision is recorded for each and the team proceeds on it.
+
+**Q12. When a command's outcome is genuinely unknown, do we tell the user, or do we retry?**
+
+`SPEC-002` omitted an idempotency key on "create company", reasoning that the button's loading and
+disabled state prevents double submission. That holds for a double-click. It does **not** hold for a
+dropped Blazor circuit mid-submit, where the browser cannot know whether the command committed.
+
+> **Proceeding on:** tell the user the outcome is unknown, name the company they typed, and **never
+> auto-retry**. A duplicate company is a data-correctness problem in an ERP; a clear "we don't know,
+> check the list" is an annoyance. If that trade is wrong for you, the idempotency-key decision needs
+> revisiting before B-15.2, and `CLAUDE.md` already requires idempotency keys on commands that create
+> financial documents — this is the first row that tests where that line sits.
+
+**Q13. Should the API return the same status for "you lack permission" and "this tenant doesn't have
+the module"?**
+
+The UI collapses them regardless — that is settled and is now a binding rule in `components.md` §17,
+because a screen that distinguishes the two becomes an oracle for what exists in other tenants. The
+open question is whether `GET /api/v1/companies` should also collapse them, or whether the API may be
+more precise than the UI it serves.
+
+> **Proceeding on:** the API collapses them too. An API that is more precise than its UI leaks the same
+> information to anyone with a terminal, and the UI's caution would be decorative. Recorded as an
+> ADR-0010/ADR-0013 question for the architect.
+
+---
+
+## 2026-09-12 — Three questions from ADR-0033 (OPEN, not blocking)
+
+ADR-0033 records that **the tenancy trust boundary is the process**: a Country Package assembly runs
+in-process, and .NET provides no in-process privilege boundary against loaded managed code. This was
+executed, not reasoned about — a hostile assembly minted a valid `TenantScope` for an arbitrary tenant
+without ever binding the target assembly by name, so the package loader's name-based guard never fired.
+
+The control is therefore **admission** (only first-party-signed packages load in a tenant-routing
+process), not confinement. The residual is accepted and written down. These three questions decide how
+long that acceptance holds, and each is cheaper to answer now than to discover later.
+
+**Q14. Is admitting a partner-authored Country Package on the roadmap within roughly 12 months?**
+
+> **Proceeding on: no.** If yes, ADR-0033 §5.4 makes it the trigger for an out-of-process package host —
+> a large item that changes the extension-point contract surface, because contracts must become
+> marshallable. Knowing now decides whether the contracts are kept marshallable deliberately from the
+> start, or the cost is paid as a rewrite later.
+
+**Q15. Will any Country Package ever need to evaluate customer-authored expressions** — a report
+formula, a tax-rule DSL, a scripting hook?
+
+> **Proceeding on: no.** This is the condition ADR-0033 flags as the one that *arrives by accident*,
+> through a feature nobody would describe as "loading code". A formula field in a report designer is
+> exactly this. If it is ever on the roadmap, say so before it is built rather than after.
+
+**Q16. Is a compliance commitment planned — SOC 2, ISO 27001, or a customer DPA — that would state
+that extension code cannot reach another tenant's data?**
+
+> **Proceeding on: not yet.** Under ADR-0033 §5.4 such a statement would be **false today**, and making
+> it is what ends the accepted risk. This is the one of the three with a legal edge: the answer changes
+> what may be signed, not just what gets built.
