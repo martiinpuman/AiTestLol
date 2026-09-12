@@ -185,6 +185,76 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
     }
 
     [Fact]
+    public async Task A_stamped_database_the_app_role_can_no_longer_read_is_a_routing_violation_not_a_driver_error()
+    {
+        // A database provisioned by a build older than the grant, restored from a backup taken
+        // before it, or hit by a REVOKE during an incident: the stamp is there and the request-path
+        // role cannot read it. That is "cannot prove", and it must reach the caller as the one type
+        // the alert and the SchemaBlocked reaction key on - not as SQLSTATE 42501 from the driver,
+        // which fails the request closed and fires nothing else. Both grant shapes are revoked in
+        // turn, because the role loses the read either way.
+        TenantId tenant = TenantId.Create();
+        await using TenantDatabase database = await TenantDatabase.CreateAsync(catalog, Unique.Identifier("aurora_t_stamp"));
+        await database.StampAsync(tenant, Unique.TenantKey());
+
+        (string What, string Revoke)[] revocations =
+        [
+            ("select on the table revoked", "revoke select on platform.tenant_identity from aurora_app"),
+            ("usage on the schema revoked", "revoke usage on schema platform from aurora_app"),
+        ];
+        int refusals = 0;
+        foreach ((string what, string revoke) in revocations)
+        {
+            await using (NpgsqlConnection owner = await database.OpenAsMigratorAsync())
+            {
+                await Execute(owner, revoke);
+            }
+
+            await using NpgsqlConnection asApp = await database.OpenAsAppAsync();
+            TenantRoutingViolationException refused = await Should.ThrowAsync<TenantRoutingViolationException>(
+                () => TenantIdentityStamp.AssertAsync(asApp, tenant, CancellationToken.None), what);
+
+            refused.Expected.ShouldBe(tenant, what);
+            refused.Found.ShouldBeNull(what);
+            refused.DatabaseName.ShouldBe(database.Name, what);
+            refused.Message.ShouldContain(InsufficientPrivilege, Case.Sensitive, what);
+            refusals++;
+        }
+
+        refusals.ShouldBe(revocations.Length, "both revocations were tried and refused as routing violations");
+    }
+
+    [Fact]
+    public async Task A_pre_existing_table_of_another_shape_holding_two_rows_proves_nothing()
+    {
+        // "create table if not exists" is right for a replayed step 4 and blind to a table that was
+        // already there in another shape - no key, no check, and therefore room for two rows. The
+        // single-answer property must then be the assertion's, not the table's: the first row of an
+        // unordered scan is not a verdict, even when - as here - it happens to name the expected
+        // tenant.
+        TenantId tenant = TenantId.Create();
+        await using TenantDatabase database = await TenantDatabase.CreateAsync(
+            catalog, Unique.Identifier("aurora_t_stamp"), withStampTable: false);
+        await using NpgsqlConnection owner = await database.OpenAsMigratorAsync();
+        await Execute(owner, "create schema platform");
+        await Execute(owner, "create table platform.tenant_identity (tenant_id uuid not null, tenant_key text not null)");
+        await Execute(owner, TenantIdentityStamp.CreateSql);
+        await Execute(
+            owner,
+            "insert into platform.tenant_identity (tenant_id, tenant_key) values (@first, 'first'), (@second, 'second')",
+            ("first", tenant.Value), ("second", Guid.NewGuid()));
+        ((long)(await Scalar(owner, "select count(*) from platform.tenant_identity"))!).ShouldBe(2L, "the DDL accepted the foreign table as it was");
+
+        TenantRoutingViolationException refused = await Should.ThrowAsync<TenantRoutingViolationException>(
+            () => TenantIdentityStamp.AssertAsync(owner, tenant, CancellationToken.None));
+
+        refused.Expected.ShouldBe(tenant);
+        refused.Found.ShouldBeNull();
+        refused.DatabaseName.ShouldBe(database.Name);
+        refused.Message.ShouldContain("more than one row");
+    }
+
+    [Fact]
     public async Task An_already_cancelled_assertion_stops_before_it_asks_the_database()
     {
         await using NpgsqlConnection connection = await catalog.OpenAppConnectionAsync();
@@ -241,7 +311,13 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
 
         public string Name { get; }
 
-        public static async Task<TenantDatabase> CreateAsync(CatalogDatabaseFixture catalog, string name)
+        /// <param name="catalog">The fixture whose cluster the database is created on.</param>
+        /// <param name="name">The database name, as step 2 would choose it.</param>
+        /// <param name="withStampTable">
+        /// Whether to run step 4's DDL. <see langword="false"/> leaves a database in the state
+        /// between steps 2 and 4, for a test that wants to shape the table itself.
+        /// </param>
+        public static async Task<TenantDatabase> CreateAsync(CatalogDatabaseFixture catalog, string name, bool withStampTable = true)
         {
             await using (NpgsqlConnection admin = await catalog.OpenAdminMaintenanceConnectionAsync())
             {
@@ -250,8 +326,12 @@ public sealed class TenantIdentityStampTests(CatalogDatabaseFixture catalog)
             }
 
             TenantDatabase database = new(catalog, name);
-            await using NpgsqlConnection migrator = await database.OpenAsMigratorAsync();
-            await CatalogDatabaseFixture.ExecuteAsync(migrator, TenantIdentityStamp.CreateSql);
+            if (withStampTable)
+            {
+                await using NpgsqlConnection migrator = await database.OpenAsMigratorAsync();
+                await CatalogDatabaseFixture.ExecuteAsync(migrator, TenantIdentityStamp.CreateSql);
+            }
+
             return database;
         }
 
