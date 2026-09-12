@@ -99,6 +99,18 @@ wasted round trip.
 The general rule behind all three: **a mechanism that cannot fail is not a check**, and the more
 universal its name sounds, the more it will be trusted. Demonstrate the failure, do not assert it.
 
+**The generalisation, earned across eight executed bypasses of one mechanism:** every break so far
+has lived on **a link nothing was reading** — the privilege, the trigger's presence, its `tgparentid`,
+its function body, its `WHEN` clause, the function it actually calls. A check is only as good as the
+last link it follows to the behaviour it claims. So when you write a check, name the chain from what
+you assert to what you want to be true, and ask which link you stopped at.
+
+The forms this has taken here, each invisible to the check that caught the previous one:
+a test that cannot fail · a **demonstration** that cannot fail · a floor set below the narrowing it
+detects · a correction that re-introduces what it fixed · a test that passes **for the wrong reason** ·
+a check that verifies **presence** where only **effect** matters · a parser that reads a subset of its
+input and reports as though it read all of it.
+
 Two more, learned the same way:
 - **`decimal` is exact until it is not, and it does not tell you.** Multiplication and division round
   silently past 28–29 significant digits. Any money algorithm that multiplies an amount by a
