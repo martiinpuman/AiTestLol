@@ -400,19 +400,35 @@ one connection string. With it the composition is a proof: `cluster_id → (host
 `fk_tenant_cluster_in_region` makes it total for every non-deleted tenant,
 `ux_tenant_cluster_id_database_name` makes `(cluster_id, database_name)` unique, so
 `(host, port, database_name)` — the triple the resolver composes — is unique across `catalog.tenant`.
+Beside it, in the same migration, `ck_database_cluster_host_lower_case` (`host = lower(host)`;
+PR #18 M-2) holds the host to its canonical spelling as `tenant_host` already was, and
+`DatabaseCluster.Register` refuses any other: a host name is case-insensitive, so `PG.INTERNAL`
+beside `pg.internal` would be two rows on one endpoint that the index takes for two.
 
 **The acceptance criterion is the property, not the index** (ADR-0034 §3.3), because an assertion
 that the index exists would have caught none of the three variants. `CatalogRoutingUniquenessTests`
-asks the catalog, as the owner, to store every executed shape — variant 1 and variant 3 — records
-whether each was admitted or refused with `23505`, then resolves every non-deleted tenant through
-the real `ITenantConnectionResolver` from the production registration and compares every pair of
-physical endpoints, printing tenants resolved, pairs compared and collisions and failing on zero of
-the first two. Run before the migration it failed — `variant 3: ADMITTED`, `pairs compared: 3;
-collisions: 1` — and a fourth variant the catalog admits fails it the same way, whichever index it
-walked around. The comparison is over host, port and database read back out of the resolved string,
+asks the catalog, as the owner, to store every executed shape — variant 1; variant 3 with an
+`Active` attacker and with a `Provisioning` one (PR #18 M-3); variant 3 with the host in another
+case (M-1) — records whether each was admitted or refused by a constraint, then takes an endpoint
+for every non-deleted tenant from the production registration: through the real
+`ITenantConnectionResolver` where the application path may connect, and from the routing row the
+resolver reads (`ITenantRoutingReader`, same scope) where it refuses, with the two required to
+agree on every tenant that has both — so a `Provisioning` row, the one B-07.1's adoption rule acts
+on, is compared rather than skipped. It compares every pair, printing tenants, pairs compared and
+collisions, and fails on zero of either. Run before the migration it failed — `variant 3:
+ADMITTED`, `pairs compared: 3; collisions: 1`. The comparison is over host (folded to lower case,
+because a host name is case-insensitive), port and database read back out of the resolved string —
 not the whole string: the composer stamps the tenant key into `Application Name`, so whole strings
-never collide and a property over them could never fail. This test replaced B-06.1's inertness
-guard, deleted rather than repaired the day the hole closed, as its message directed. The model's
+never collide, and a property over them could never fail (executed both ways over one catalog in
+PR #18's review: endpoints `collisions: 1`, whole strings `collisions: 0`). **What that
+establishes:** no two non-deleted tenants name the same host in any spelling, port and database, so
+a further variant that differs in none of those fails here whichever index it walked around. **What
+it does not:** that no two tenants reach the same server. `localhost` beside `127.0.0.1` — an IP
+literal beside a host name, a CNAME, a second DNS record, a failover alias — are different strings
+here and different rows in the catalog (executed in the same review: three rows, one database,
+`collisions: 0`), and no comparison of stored names can close that; `TenantIdentityStamp` is the
+control (ADR-0034 §4). This test replaced B-06.1's inertness guard, deleted rather than repaired
+the day the hole closed, as its message directed. The model's
 own declaration of the index (`CatalogModelTests`) and the SQL the migration emits
 (`ClusterEndpointUniquenessMigrationTests`, unit) are checked in stage 6 with Docker stopped; both
 are tripwires on the configuration and say so, and neither stands in for the property.
@@ -423,7 +439,10 @@ the state before this migration, seeds two rows on one endpoint and runs the mig
 `23505`, `could not create unique index "ux_database_cluster_host_port"`, `Key (host, port)=(…) is
 duplicated` — and, because the migration is transactional, no index, no history row, both rows
 intact and the migration still pending for the runner to retry once an operator has resolved the
-duplicate. Transactional on purpose: `CONCURRENTLY` cannot run in a transaction and leaves an
+duplicate. A mixed-case host at the same state fails it with `23514`, `check constraint
+"ck_database_cluster_host_lower_case" of relation "database_cluster" is violated by some row` — and
+the index created a statement earlier is rolled back with it, the row left as it was spelled.
+Transactional on purpose: `CONCURRENTLY` cannot run in a transaction and leaves an
 `INVALID` index behind on failure, and ADR-0007 §7.2 reserves it for tables a live tenant writes to,
 which the catalog's operator seed data is not. Rows on distinct endpoints — one host on two ports,
 two hosts on one port — migrate, keep every row and re-run as a no-op. Npgsql redacts a `DETAIL`
@@ -433,7 +452,8 @@ operator sees.
 
 **What the index does not and cannot cover, stated rather than left to be inferred** (ADR-0034 §2,
 §3.2). Two names for one server — a CNAME, a second DNS record, a failover alias, an IP literal
-beside a host name, a host spelled in another case. The catalog stores what it was told; a
+beside a host name. (A host spelled in another case was on this list until PR #18 M-1/M-2; the
+check and the folding close that half, and only that half.) The catalog stores what it was told; a
 constraint over a name narrows what can be stored and never establishes identity.
 `TenantIdentityStamp` is the control for that (ADR-0034 §4), on every physical connection, and it
 is in effect on no path until B-06.2 and B-07.1 wire it. Two shapes the index is wrong for if they

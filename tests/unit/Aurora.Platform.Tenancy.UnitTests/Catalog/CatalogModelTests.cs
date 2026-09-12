@@ -3,6 +3,7 @@ using System.Linq;
 using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Tests;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Shouldly;
 using Xunit;
@@ -62,7 +63,8 @@ public sealed class CatalogModelTests
         // against PostgreSQL (ADR-0034 §3.3). What this catches with Docker stopped is the index
         // being taken out of DatabaseClusterConfiguration with a migration scaffolded to match, which
         // the snapshot check above would let through.
-        IEntityType cluster = context.Model.FindEntityType(typeof(DatabaseCluster))!;
+        // The design-time model: EF's read-optimised runtime model drops check constraints.
+        IEntityType cluster = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(DatabaseCluster))!;
         IIndex endpoint = cluster.GetIndexes().Single(index => index.GetDatabaseName() == "ux_database_cluster_host_port");
 
         endpoint.IsUnique.ShouldBeTrue();
