@@ -193,10 +193,22 @@ for line in open('docs/BACKLOG.md'):
 def unmet(deps):
     return [d for d in re.findall(r'B-[0-9.]+[a-z]?', deps) if rows.get(d, ('', ''))[1] != 'done']
 
+# An explicit marker holds a row whatever else its notes say. The phrase list below
+# can only hold a row that NAMES an in-flight B- row, so a hold waiting on an
+# architecture decision, an ADR or anything outside the B- namespace was invisible to
+# it -- B-07.1 is held on task/ARCH-SCOPE-RUNTIME and would have read dispatchable the
+# moment its three dependencies merged. This marker needs no row id and no phrasing.
+HOLD_MARKER = 'held - do not dispatch'   # compared against _norm(), which lowercases
+
+def _norm(text):
+    return text.replace('\u2014', '-').replace('\u2013', '-').replace('**', '').lower()
+
 def held_by(row):
     # Only the sentences carrying a hold phrase are read for row ids: the notes cell
     # as a whole names every neighbour, so scanning all of it would hold every row.
     text = notes.get(row, '')
+    if HOLD_MARKER in _norm(text):
+        return ['an explicit HELD marker in its own row']
     blockers = set()
     for sentence in re.split(r'(?<=[.;])\s+', text):
         low = sentence.lower()
@@ -216,7 +228,10 @@ print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none
 for r in started:
     print(f"  already started: {r} — {started_by.get(r, 'in flight')}")
 for r, b in held:
-    print(f"  {r} held — its row forbids running concurrently with {', '.join(b)}, in flight")
+    if b == ['an explicit HELD marker in its own row']:
+        print(f"  {r} held — its row carries an explicit HELD marker")
+    else:
+        print(f"  {r} held — its row forbids running concurrently with {', '.join(b)}, in flight")
 for r, u in broken:
     print(f"  {r} is done but depends on un-done {', '.join(sorted(set(u)))}")
 
@@ -224,7 +239,7 @@ scanned = sum(1 for r in rows if notes.get(r))
 unread = sum(1 for l in open('docs/BACKLOG.md')
              if re.match(r'\|\s*B-', l) and not re.match(r'\|\s*B-[0-9.]+[a-z]?\s*\|', l))
 print(f"  {len(rows)} row(s) read" + (f", {unread} row id(s) the parser could not read" if unread else ""))
-print(f"  {scanned} notes cell(s) scanned for a concurrency hold, matching only: {'; '.join(HOLD_PHRASES)}")
+print(f"  {scanned} notes cell(s) scanned for a hold: the marker '{HOLD_MARKER}', or a sentence matching {'; '.join(HOLD_PHRASES)}")
 print(f"  a hold worded any other way is not seen here — FOLLOWUP-042 asks for a machine-readable field")
 sys.exit(1 if broken else 0)
 READY
