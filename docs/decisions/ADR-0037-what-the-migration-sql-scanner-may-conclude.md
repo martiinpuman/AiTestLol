@@ -57,6 +57,8 @@ An insert that succeeded before the migration fails after it. Expand migrations 
 
 **Limb B — suppression.** The object remains, its name remains, its definition remains, and something *outside* its definition decides it does not take effect. Limb B is **always destructive, with no widening exception**, and the reason is not the size of the change but its **invisibility**: after a limb-B statement the catalog still shows the guard, `information_schema` still shows the guard, a reviewer reading the migration that created it still sees a guard — and it does not fire. B-19 spent four statements closing one limb-B hole; one limb-B statement reopens it and nothing that reads names can tell.
 
+**Limb C — silent data rewrite.** The schema shape is unchanged — every catalog column identical before and after — no invariant is suppressed, and **every stored row changes**. `ALTER COLUMN … SET EXPRESSION AS (…)` is the executed example (§2.1.1): `attgenerated` stays `'s'` while the stored values go from `2,2` to `0,0`. Limb C is always destructive, and it is listed as a third limb rather than folded into limb A because **it is invisible to the catalog-column audit method**: there is no column whose state records that a rewrite happened. The destructive set already contained limb-C statements — `TRUNCATE`, `DELETE FROM`, `MERGE … THEN DELETE` — without naming the limb; naming it is a correction, not an invention.
+
 **This is why `DROP NOT NULL` is clean and `ENABLE REPLICA TRIGGER` is not**, although both reduce enforcement. The first removes a claim; the second keeps the claim and removes the enforcement. A schema that no longer claims something is honest. A schema that claims something it no longer does is the failure mode this project has met more than any other.
 
 ### 2.2 What this does *not* license
@@ -72,13 +74,48 @@ The rule decides membership of the destructive set. It does not decide that a de
 > **For every invariant the schema can declare, and for every mechanism that supplies a value a writer does not, find the catalog column that records it, enumerate that column's states, and only then enumerate the statements that write it.**
 >
 > - **Limb B** — `tgenabled` has four values and only one is `D`. Reasoning from the statement (`DISABLE TRIGGER`) finds one; reasoning from the column finds all four.
-> - **Limb A** — three columns record "this column gets a value without the writer supplying one": `pg_attribute.atthasdef` (with `pg_attrdef`), `pg_attribute.attidentity`, `pg_attribute.attgenerated`. Reasoning from the statement finds `DROP DEFAULT`; reasoning from the columns finds all three, and finds them before a reviewer executes them.
+> - **Limb A** — three columns record "this column gets a value without the writer supplying one": `pg_attribute.atthasdef` (with `pg_attrdef`), `pg_attribute.attidentity`, `pg_attribute.attgenerated`. Reasoning from the statement finds `DROP DEFAULT`; reasoning from the columns finds all three, and finds them before a reviewer executes them — including `SET DEFAULT NULL`, which moves `atthasdef` without containing the word `DROP` (§2.1.1).
+> - **Limb C has no column, and that is the method's boundary.** `SET EXPRESSION AS` rewrites every row while `attgenerated` stays `'s'`; there is no catalog state to walk. **Limb C is reachable only by §2.1.1's inverted default**, which is why that default is keyed on the sub-action grammar rather than on any catalog column.
 
-**For limb A the default is also inverted, which is the mechanism rather than a longer list.** A longer list leaves a fourth spelling to be found:
+### 2.1.1 The inverted default, keyed on the sub-action and not on a token
 
-> **Every `ALTER [COLUMN] … DROP <x>` is destructive unless `<x>` is on a named clean list, and the clean list is exactly `NOT NULL`.** `DROP NOT NULL` widens the permitted states and no statement that used to succeed starts failing. `DROP CONSTRAINT` is not on the list and is not governed by it — §3.2 decides it on the operation that produced it.
+An earlier draft keyed the inverted default on the word `DROP`: *"every `ALTER [COLUMN] … DROP <x>` is destructive unless `<x>` is `NOT NULL`"*. **That was a deny-list wearing an allow-list's clothes** — it enumerated the admitted members of a set chosen by *spelling*, which §2.1's own principle forbids in its second sentence. Two statements executed on PostgreSQL 17.11 walk around it, and neither contains the word `DROP`:
+
+```sql
+-- (1) removes the default, without the token the rule was keyed on
+create table sd(id int primary key, n int not null default 7);
+insert into sd(id) values (1);                    -- INSERT 0 1
+select atthasdef from pg_attribute …;             -- true
+alter table sd alter column n set default null;
+select atthasdef from pg_attribute …;             -- false
+insert into sd(id) values (2);
+-- ERROR: null value in column "n" violates not-null constraint   (23502)
+
+-- (2) rewrites every stored row, and the catalog column does not move
+create table se(id int primary key, a int not null default 1,
+                n int generated always as (a*2) stored);
+insert into se(id) values (1),(2);                -- n = 2,2   attgenerated = 's'
+alter table se alter column n set expression as (0);
+--                                                   n = 0,0   attgenerated = 's'
+```
+
+**The rule is now keyed on the sub-action, and the enumerated set is the admitted one:**
+
+> **Every `ALTER TABLE … ALTER [COLUMN] …` sub-action is destructive unless it is on the clean list below.** Each member is on it because of a stated effect, not because nobody has complained about it:
 >
-> So `DROP DEFAULT`, `DROP IDENTITY` and `DROP EXPRESSION` are destructive **because they are not on the list**, not because someone thought of them — and so is a spelling nobody has thought of. That is the property §7.1 option A claims for the whole design, and until this change it was true only of limb B.
+> | Clean sub-action | Why |
+> |---|---|
+> | `DROP NOT NULL` | Widens the permitted states, narrows no statement, rewrites no row |
+> | `SET STATISTICS` | Planner metadata; no data, no contract |
+> | `SET ( … )` / `RESET ( … )` | Per-attribute planner options; same |
+>
+> Everything else in that grammar — `SET DEFAULT`, `DROP DEFAULT`, `SET NOT NULL`, `SET DATA TYPE`, `SET EXPRESSION`, `DROP EXPRESSION`, `ADD GENERATED`, `SET GENERATED`, `DROP IDENTITY`, `RESTART` — is destructive. **`SET STORAGE` and `SET COMPRESSION` are deliberately absent from the clean list**: they are probably safe and were not verified here, and the same stance is taken in §4 for `numeric`. An unverified member is not a clean member.
+>
+> **The same inversion applies to `ALTER TABLE`'s table-level sub-actions**, whose clean list is `ADD CONSTRAINT … NOT VALID`, `VALIDATE CONSTRAINT`, `ENABLE ALWAYS TRIGGER`, `ENABLE ALWAYS RULE`, `ATTACH PARTITION`, `ADD COLUMN` (still conditioned on `NOT NULL` needing a default), and an `ALTER [COLUMN]` whose sub-action is clean above. `SET UNLOGGED`, `SET ACCESS METHOD`, `OWNER TO` and the rest are destructive.
+>
+> **A sub-action against a table the same migration's `Up` created is not destructive**, whatever it is: there are no existing rows to rewrite, no existing readers, and no prior state to narrow. That is decidable from the statement stream, and it is what keeps `InitialCatalog`'s `ADD CONSTRAINT … EXCLUDE` on a table it creates three statements earlier from needing a `Contract`.
+
+**Why this is not another deny-list, stated so the next reviewer can test it.** The set being enumerated is what the rule **admits**; membership of the destructive side is the default and requires no foresight. The test is whether a sub-action *nobody involved had heard of* is caught, and there is a real one: **`ALTER COLUMN … SET EXPRESSION AS` is new in PostgreSQL 17.** A rule enumerating the destructive members could not have contained it before it existed, and did not contain it after. A rule enumerating the clean members refuses it on sight, in the version it appears, without anyone reading a release note. **That is the property §7.1 option A claims for the whole design, and until this change it was true of neither limb.**
 
 The enumeration lives in **`docs/architecture/postgres-invariant-suppression.md`**, not in this ADR and not in a review thread, because three different mechanisms need it — MIG2's destructive set, B-19's runtime guard assertions, and whatever checks a tenant database's guards after a restore — and a fact three mechanisms need belongs where all three can find it. It carries **both** limbs: suppression rows `S1…Sn` and value-supply rows `V1…Vn`, each with its catalog column, the states that weaken it, and the statements that write it.
 
@@ -96,7 +133,8 @@ The enumeration lives in **`docs/architecture/postgres-invariant-suppression.md`
 | `SET search_path`, plain `CREATE FUNCTION` clean | **Confirmed** | Neither removes nor suppresses. (`search_path` *can* change what an identifier in a function body resolves to — but a function's own `SET search_path` is part of its definition, which `pg_get_functiondef` renders and B-19's runtime check compares) |
 | `DROP NOT NULL`, `ATTACH PARTITION`, `DROP CONSTRAINT … RESTRICT` clean | **Confirmed**, with §2.1's obligation stated in `Reason` | **A, widening.** `DROP CONSTRAINT` is refined by §3, not by this row |
 | `DROP DEFAULT` clean | **Overturned — destructive** unless the migration discharges §2.1's obligation | **A, and not a widening.** Executed: an insert omitting the column succeeds before and fails `23502` after. A default exists so writers can omit the column; removing it narrows the set of permitted statements |
-| `DROP IDENTITY`, `DROP EXPRESSION` — never named, therefore **clean by omission** | **Destructive**, by §2.1's inverted default rather than by being listed | **A.** The same effect as `DROP DEFAULT` in two spellings the first two drafts did not name. Both executed; see §2.4.1 |
+| `DROP IDENTITY`, `DROP EXPRESSION` — never named, therefore **clean by omission** | **Destructive**, by §2.1.1's inverted default rather than by being listed | **A.** The same effect as `DROP DEFAULT` in two spellings the first two drafts did not name. Both executed; see §2.4.1 |
+| `SET DEFAULT NULL`, `SET EXPRESSION AS` — reached by neither the token-keyed default nor the catalog audit | **Destructive**, by §2.1.1's sub-action default | **A** and **C** respectively, both executed in §2.1.1. `SET DEFAULT NULL` is `DROP DEFAULT` without the token; `SET EXPRESSION AS` rewrites every row with the catalog unchanged |
 | `CREATE … IF NOT EXISTS` clean | **Confirmed**, and see §2.5's *proves too much* test | It cannot displace an existing object, so it is neither limb. `CREATE EXTENSION IF NOT EXISTS "btree_gist"` is emitted by Npgsql from `CatalogDbContext.cs:99`'s `HasPostgresExtension` and this repository cannot spell it otherwise |
 
 ### 2.4.1 The two spellings, executed — and the one that raises nothing
@@ -160,7 +198,7 @@ The same holds for `CREATE OR REPLACE VIEW` (readers see different rows under an
 Since `CREATE OR REPLACE` is destructive and §6's gate requires a `Contract` to name the `Expand` it contracts, "annotate it `Contract`" is not an escape — there would be no Expand to name. The legitimate path is the expand/contract discipline ADR-0007 §7.2 already mandates for columns, applied to a routine:
 
 1. **Expand release, schema version N.** `CREATE FUNCTION catalog.refuse_append_only_change_v2() …`. Nothing points at it yet. Purely additive; no destructive finding.
-2. **Contract release, schema version N+1**, annotated `Contract` with `ContractOf` naming the migration from step 1. In one transaction: `DROP TRIGGER …`; `CREATE TRIGGER … EXECUTE FUNCTION catalog.refuse_append_only_change_v2()`; `ALTER TABLE … ENABLE ALWAYS TRIGGER …`; `DROP FUNCTION catalog.refuse_append_only_change()`.
+2. **Contract release, schema version N+1**, annotated `Contract` with `Contracts` naming the migration from step 1. In one transaction: `DROP TRIGGER …`; `CREATE TRIGGER … EXECUTE FUNCTION catalog.refuse_append_only_change_v2()`; `ALTER TABLE … ENABLE ALWAYS TRIGGER …`; `DROP FUNCTION catalog.refuse_append_only_change()`.
 
 Two properties this buys that `CREATE OR REPLACE` does not. The change is **visible to anything comparing names** — a new `pg_proc` entry, a re-pointed `tgfoid` — rather than hidden in a body. And the old and the new body **coexist for one release**, so code running against schema N is never surprised, which is the whole point of the discipline.
 
@@ -258,9 +296,9 @@ ADR-0007 §7.2 rule 3 says the gate "reads the migration manifest". No such arte
 | Member of `MigrationSafetyAttribute` | On which migrations | Meaning |
 |---|---|---|
 | `SchemaVersion` (int) | **Every** migration | The schema version this migration belongs to. Many migrations share one; it is the release ordinal |
-| `ContractOf` (string) | **Exactly** the `Contract` ones | The EF migration id of the `Expand` this migration contracts |
+| `Contracts` (string) | **Exactly** the `Contract` ones | The EF migration id of the `Expand` this migration contracts. **This member exists on `task/B-09` and is spelled `Contracts`** — an earlier draft of this record called it `ContractOf`, which would not compile. The shipped spelling wins (`FOLLOWUP-065`) |
 
-B-09 has already built `ContractOf`'s rule (*"must name the Expand it contracts, which must exist and be an Expand"*, README §7). This record confirms it and adds the version ordinal that makes rule 3's *separation in time* checkable rather than only its *existence*.
+B-09 has already built `Contracts`' rule (*"must name the Expand it contracts, which must exist and be an Expand"*, README §7). This record confirms it and adds the version ordinal that makes rule 3's *separation in time* checkable rather than only its *existence*.
 
 **Why the schema version and not a separate release number.** ADR-0007 §7.5 already gates every scope open on `CoreSchemaVersion.Current` and `MinimumSupported`, with `Current − MinimumSupported ≤ 1` — which *is* the statement "code runs against this release and the one before". Rule 3's "one release apart" and §7.5's "one version apart" are the same interval. Two numbers for one interval is two clocks that can disagree, silently. One number, and it is the one the runtime already fails closed on.
 
@@ -269,8 +307,8 @@ B-09 has already built `ContractOf`'s rule (*"must name the Expand it contracts,
 | | Check |
 |---|---|
 | G1 | Every migration carries `[MigrationSafety]` — MIG1, built |
-| G2 | `ContractOf` is set **if and only if** `Category == Contract` |
-| G3 | `ContractOf` names a migration id present in the same assembly's population — built |
+| G2 | `Contracts` is set **if and only if** `Category == Contract` |
+| G3 | `Contracts` names a migration id present in the same assembly's population — built |
 | G4 | The named migration's `Category` is `Expand` — built |
 | G5 | `Contract.SchemaVersion > Expand.SchemaVersion` — this is rule 3, and it is the new one |
 | G6 | Schema versions are non-decreasing in migration-id order |
@@ -284,6 +322,7 @@ It reports **migrations examined, `Contract` migrations examined, and Expand/Con
 
 - **`CoreSchemaVersion` is on `task/B-06.1a` (PR #13) and is not merged.** Until it merges, G7 has nothing to read and must not be written as though it does.
 - **`CoreSchemaVersion.Current` is `0` and no tenant-database migration exists.** Every migration in the repository today is a *catalog* migration, and the catalog has **no** schema-version constant and no skew gate. For catalog migrations G7 does not apply and G6 is the only ordering check there is. A catalog skew gate would need its own constant and is a new decision, not an extension of this one.
+- **`SchemaVersion` does not exist.** `MigrationSafetyAttribute` on `task/B-09` has `Category`, `Reason` and `Contracts` and nothing else, so G5, G6 and G7 are a specification for B-09.3 and **G2–G4 are the only checks this table describes that anything can run today**. Written in the present tense because an earlier draft described the whole table as though the member existed.
 - **G7's stronger form** — `CoreSchemaVersion.Current` equals the highest ordinal across registered `IModuleSchemaMigrator`s — **is B-08.3's** (ADR-0027 §4), and no migrator is registered. G7 as written checks declarations against the constant; it does not check the constant against reality.
 
 ---
@@ -330,7 +369,7 @@ ADR-0007 §7.2 rule 4 makes `CREATE INDEX CONCURRENTLY` "mandatory for any index
 
 | Option | Pros | Cons |
 |---|---|---|
-| **A. Classify by effect, in two limbs, both enumerated by catalog column, with limb A's `DROP` family defaulting to destructive** *(chosen)* | Covers spellings nobody has thought of yet **in both limbs** — the audit walks columns rather than statements, and an unnamed `DROP <x>` is destructive by default rather than clean by omission; explains `DROP NOT NULL` clean and `ENABLE REPLICA` destructive with one rule | Completeness still rests on human knowledge; naming the method is a mitigation, not a fix. The inverted default will red a migration whose `DROP <x>` is genuinely harmless, and that migration must argue for itself |
+| **A. Classify by effect, in three limbs, with the `ALTER TABLE` sub-action grammar defaulting to destructive** *(chosen)* | Covers sub-actions nobody involved had heard of — `SET EXPRESSION` is new in PostgreSQL 17 and is caught without anyone reading a release note; explains `DROP NOT NULL` clean, `ENABLE REPLICA` destructive and `SET EXPRESSION` destructive with one rule | The *catalog-column* audit's completeness still rests on human knowledge, and limb C has no audit at all. The inverted default reds sub-actions that are genuinely harmless, and each must argue for itself |
 | B. Classify by spelling — a list of statements | Simple, exact, no judgement | It is the defect. Three reviews found three spellings of one effect, one at a time. The list is complete only against the imagination of whoever last edited it |
 | C. Classify by effect but enumerate by *statement family* rather than catalog column | Closer to how the SQL reads | `tgenabled` is the counter-example: the `DISABLE`/`ENABLE` family reads as two states and has four. Enumerating statements finds what the statements say; enumerating columns finds what the database records |
 | D. Read the live catalog and diff before/after | The only thing that actually measures effect | No deployment exists; a build-time gate that needs a database is not a build-time gate. It is, however, the right shape for an *install-time* check, which ADR-0008 §4.1 already does for package migrations |
@@ -362,9 +401,10 @@ Every blocker found in this record's first draft was a sentence claiming more th
 
 | Rule | Last link it follows | What is on the other side of that link, unchecked |
 |---|---|---|
-| §2.1 limb A, the `DROP <x>` family | An **inverted default**: destructive unless `<x>` is `NOT NULL`. Mechanical, and it covers unnamed spellings | Nothing, for membership. The *justification* for claiming the exception stops one row down |
-| §2.1 limb A, the exception once claimed | The migration's `Reason`, read by a reviewer at Full tier | **A human knowing which readers and writers exist.** `DROP DEFAULT`, `DROP IDENTITY` and `DROP EXPRESSION` are the executed proof that "widens the permitted states" and "breaks no writer" are different claims — and nullable `DROP EXPRESSION` proves some of them break nothing *loudly*. No mechanism enumerates a column's writers |
-| §2.1 limb B, suppression | The token stream, plus §2.3's table of catalog columns | **Human knowledge of PostgreSQL.** §2.3's table is incomplete by construction in both limbs; the audit method is the mitigation, and limb A's inverted default is what stops its incompleteness being silent. Limb B has no such backstop |
+| §2.1.1 the `ALTER TABLE` sub-action family | An **inverted default over the sub-action grammar**: destructive unless the sub-action is on a stated clean list. Mechanical, and it covers sub-actions that did not exist when it was written — `SET EXPRESSION` is new in PostgreSQL 17 | **The grammar itself.** A sub-action in a syntactic position the tokeniser does not recognise is *unscannable*, not clean — §3.2's loud direction |
+| §2.1 limb A, the exception once claimed | The migration's `Reason`, read by a reviewer at Full tier | **A human knowing which readers and writers exist.** `DROP DEFAULT`, `DROP IDENTITY`, `DROP EXPRESSION` and `SET DEFAULT NULL` are the executed proof that "widens the permitted states" and "breaks no writer" are different claims — and nullable `DROP EXPRESSION` proves some of them break nothing *loudly*. No mechanism enumerates a column's writers |
+| §2.1 limb C, data rewrite | §2.1.1's sub-action default, plus the existing `TRUNCATE` / `DELETE FROM` / `MERGE` matches | **The catalog, which records nothing.** There is no audit method for limb C and this record does not claim one |
+| §2.1 limb B, suppression | The token stream, plus §2.3's table of catalog columns | **Human knowledge of PostgreSQL.** §2.3's table is incomplete by construction. An earlier draft claimed here that *"limb A's inverted default is what stops its incompleteness being silent"* — **executed-false and withdrawn**: that default was keyed on `DROP` and reached neither `SET DEFAULT NULL` nor `SET EXPRESSION`. §2.1.1's sub-action default is the backstop, and it backstops all three limbs **inside `ALTER TABLE`** and nothing outside it |
 | §2.5 `CREATE OR REPLACE` | Whether the statement *can displace* — a property of the spelling, decidable on tokens | Nothing. This one is closed, which is why `IF NOT EXISTS` falls out of it cleanly instead of needing an exemption |
 | §3.2 `DROP CONSTRAINT` | EF's model snapshot for the preceding migration | **The live database.** A constraint created by raw SQL is not in the model, is never attributed, and stays destructive — the loud direction |
 | §3.3 "is this `CHECK` replacement a widening" | The migration's `Reason`, read by a reviewer | **Predicate implication**, which is undecidable and which this project will not approximate |
@@ -389,7 +429,8 @@ Every blocker found in this record's first draft was a sentence claiming more th
 - **`MigrationPopulation` grows a second generation pass** (per operation, for attribution). More of the scanner's surface depends on EF internals — specifically on per-operation generation producing command texts that appear in the batch output. Where it does not, the command is unattributed and therefore destructive, so the failure is loud; the coupling is still real.
 - **Four of these decisions stop at a human**, and §8 names each: whether a limb-A widening breaks a writer (§2.1), whether a `CHECK` replacement widens (§3.3), whether a transactionally built index is small enough (§6.2), and whether §2.3's table is complete. All four are written at that size rather than dressed as mechanisms.
 - **The widening-versus-readers obligation is stated, not mechanised** (§2.1, §4). The gate reads schema and the obligation is on code, so it is discharged in a `Reason` and checked by a reviewer. §8 records that it stops at a human knowing which readers exist.
-- **`DROP DEFAULT` moving to destructive will red a future migration that expected it to be free**, and the migration that wants it must argue for it. That is the intended cost of the correction, and the executed counter-example in §2.1 is why it is not negotiable.
+- **The sub-action default reds more than `DROP DEFAULT` did.** Any `ALTER COLUMN` or `ALTER TABLE` sub-action outside the two clean lists now needs an annotation and a reason, including ones that are probably harmless (`SET STORAGE`, `SET COMPRESSION`). That is the cost of enumerating the admitted side, and §2.1.1's carve-out for tables the migration itself created is what keeps it from being absurd.
+- **Three limbs instead of two.** Limb C is the one with no audit method, and saying so is the honest version of a model that previously implied every effect was catalog-visible.
 - **A `NOT VALID` constraint that never gets validated is limb B with a reason**, and nothing schedules phase 2 (§3.3).
 - **`[MigrationSafety]` grows two members** and every existing migration must supply `SchemaVersion`. Three today; the cost only rises.
 

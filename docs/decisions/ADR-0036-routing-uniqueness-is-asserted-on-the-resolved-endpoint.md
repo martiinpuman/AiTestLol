@@ -97,7 +97,7 @@ The following is added to ADR-0034 §3 as a new §3.4.
 > alter table catalog.database_cluster
 >   add constraint ck_database_cluster_host_lower_case    check (host = lower(host)),
 >   add constraint ck_database_cluster_host_no_root_label check (host not like '%.'),
->   add constraint ck_database_cluster_host_well_formed   check (host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$');
+>   add constraint ck_database_cluster_host_well_formed   check (host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$');
 > ```
 >
 > **A grammar, not a deny-list, and that is the decision.** Three characters were refused one review at a time — `/`, then a dot in the wrong place, then `,`, the multi-host separator that reconstructed variant 3 a second time. **A deny-list grows by one character per finding; it is a list of the attacks somebody has already seen.** An allow-list grammar excludes by construction everything it does not name: a multi-host list, a Unix-socket directory, a scheme, a port suffix, a path, a stray or doubled dot, a hyphen at either end of a label, and every upper-case and non-ASCII character. **This is the same correction ADR-0037 §2.1 makes for `ALTER COLUMN … DROP <x>` — invert the default so an unnamed spelling is refused rather than admitted — reached independently on the same branch in the same two rounds, which is why it is stated as a rule and not as a patch.**
@@ -123,7 +123,50 @@ The following is added to ADR-0034 §3 as a new §3.4.
 >   **The general fact survives and is not discharged by that.** `ck_tenant_host_lower_case` governs a different column under the same collation-dependent `lower()`, and any future case-folding constraint inherits the problem. **The catalog's collation is an input to a constraint's meaning and must be pinned at `createdb` time.** This is deferred to **a backlog row of its own, not to a role**: at the time of writing `docs/BACKLOG.md` contains **zero** occurrences of "collation" or "lc_ctype", so the earlier hand-off to B-07.1 deferred it to a row that does not carry it. Until `docs/BACKLOG.md` holds a row saying *pin the catalog database's `LC_CTYPE` and `LC_COLLATE` at creation and assert them*, **nothing carries this**, in the present tense.
 > - It does **not** generalise to a path — a Unix-socket directory is case-sensitive, and if `database_cluster.host` is ever allowed to carry one, this constraint is wrong and §9 brings whoever changes it back here.
 
-**What demonstrates it:** integration tests in the shape `CatalogConstraintTests` already uses for eleven other constraints, one per case, each asserting `SqlState == "23514"` **and** `ConstraintName` — `DB1.example.com` → `ck_database_cluster_host_lower_case`; `pg.internal.` → `ck_database_cluster_host_no_root_label`; `pg-1.internal,pg-2.internal`, `/var/run/postgresql`, `host:5432`, `-pg.internal` and `pg..internal` → `ck_database_cluster_host_well_formed`. With three constraints on one column, asserting the name stops being a nicety.
+**What demonstrates it — and the first version of this paragraph could not fail.** It listed **seven refusals and no acceptances**, so a grammar that refused everything would have passed it. It was also printed with C#'s escaping (`\\.`) rather than SQL's, and read as SQL that grammar refuses every dotted host. Run as SQL on `postgres:17-alpine` 17.11:
+
+```
+--- the C#-escaped form, read as SQL (what this section printed) ---
+ db1.example.com             | f          <-- a legitimate host, refused
+ 127.0.0.1                   | f          <-- ditto
+ pg                          | t
+ DB1.example.com             | f
+ pg.internal.                | f
+ pg-1.internal,pg-2.internal | f
+```
+
+**Seven refusals, all passing, for the wrong reason.** The corrected grammar, run the same way over both classes:
+
+```
+ host                        | expected | actual | verdict
+-----------------------------+----------+--------+---------
+ 127.0.0.1                   | t        | t      | ok
+ a                           | t        | t      | ok
+ db1.example.com             | t        | t      | ok
+ localhost                   | t        | t      | ok
+ pg                          | t        | t      | ok
+ pg-1.internal               | t        | t      | ok
+ x-y-z.a-b.c                 | t        | t      | ok
+ -pg.internal                | f        | f      | ok
+ /var/run/postgresql         | f        | f      | ok
+ ::1                         | f        | f      | ok
+ DB1.example.com             | f        | f      | ok
+ [::1]                       | f        | f      | ok
+ host:5432                   | f        | f      | ok
+ pg internal                 | f        | f      | ok
+ pg-1.internal,pg-2.internal | f        | f      | ok
+ pg..internal                | f        | f      | ok
+ pg.internal-                | f        | f      | ok
+ pg.internal.                | f        | f      | ok
+ pg.internal..               | f        | f      | ok
+ pgÜ.internal                | f        | f      | ok
+
+ accepted: 7  refused: 13  mismatches: 0
+```
+
+**The rule this earns, which is not about escaping:** a demonstration of a *refusal* rule must exercise both classes and report both counts. Seven refusals and zero acceptances is the vacuous shape this project has now rejected four times, and it is the shape a grammar's demonstration falls into by default, because the interesting cases feel like the bad ones.
+
+**The tests that carry it:** integration tests in the shape `CatalogConstraintTests` already uses for eleven other constraints, one per refusal case, each asserting `SqlState == "23514"` **and** `ConstraintName` — `DB1.example.com` → `ck_database_cluster_host_lower_case`; `pg.internal.` → `ck_database_cluster_host_no_root_label`; the rest → `ck_database_cluster_host_well_formed`. Plus the acceptance cases, which must insert successfully. With three constraints on one column, asserting the name stops being a nicety.
 
 **And the grammar is asserted equal in both places it lives.** The C# predicate and the SQL in the constraint are two implementations of one rule, so one test runs **both** over a single list of cases and requires identical verdicts. Two copies of a grammar that nothing compares is the drift this project has paid for elsewhere; the comparison is what makes "the entity and the constraint agree" a measured claim rather than a stated one.
 
@@ -211,6 +254,7 @@ PostgreSQL cannot rename or drop a database from a session connected to it, so b
 
 - **B-20's branch changes shape after review.** The criterion it was briefed on is not the criterion in this record; the endpoint comparison it wrote is. The branch is closer to correct than the brief was, which is the good direction, but its review round must re-read the acceptance criterion from here rather than from the brief.
 - **ADR-0034 needed amending three hours after it merged, and it was approved first pass.** The lesson: an acceptance criterion phrased over a *serialised* value is suspect by default, because serialisation adds fields the property is not about.
+- **The grammar's own demonstration was vacuous when first written**, in the section arguing that a grammar beats a deny-list: seven refusal cases, zero acceptance cases, printed with C# escaping so that read as SQL it refused every legitimate host and still "passed". **A demonstration of a refusal rule must exercise both classes and report both counts**, and it must be run in the language it will execute in. Added to the conventions note.
 - **Variant 3 has now been reconstructed through this record twice** — a trailing dot, then a multi-host list — and both times the defect was an **allow-by-default** surface: a deny-list of characters, and a comparator that normalised only what someone had thought of. ADR-0037 §2.1 reached the same correction independently, on the same branch, in the same two rounds. **Where a rule decides what is admitted, the unnamed case must be refused, not admitted.** Added to the conventions note.
 - **§3's constraints may surface a `23514` to an operator** before a normalising write path exists. Accepted; the alternative stores two spellings of one machine.
 - **The grammar forbids hosts some deployments will want** — an IPv6 literal, an underscore in a label, a Unix socket. Each becomes a deliberate decision with a canonical-form rule attached. That is the cost of refusing by construction, and it is the right cost: the alternative was found admitting a takeover vector in two consecutive reviews.

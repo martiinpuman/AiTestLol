@@ -61,17 +61,35 @@ D3's assertion becomes:
 
 ## 3. Decision 2 — a development key is refused in Production in the same shape as `AllowUnsigned`
 
-> `TrustedPackageKey` gains a `KeyScope` whose **zero member is `Unstated`**: `Unstated = 0`, `Release = 1`, `DevelopmentOnly = 2`. `CountryPackageHostOptions.Create` **refuses to start** on any key whose scope is `Unstated`, naming the key's thumbprint. `CountryPackageHostOptions.Create` additionally refuses to start when any `DevelopmentOnly` key is configured and `EnvironmentName` is not `Development`, in the same shape, with the same failure mode and for the same reason as the existing `AllowUnsigned` refusal.
+> `TrustedPackageKey` gains a `KeyScope` whose **zero member is `Unstated`**: `Unstated = 0`, `Release = 1`, `DevelopmentOnly = 2`. `CountryPackageHostOptions.Create` **admits a key only when its scope is exactly `Release` or exactly `DevelopmentOnly`, and refuses every other value**, naming the key's thumbprint. `CountryPackageHostOptions.Create` additionally refuses to start when any `DevelopmentOnly` key is configured and `EnvironmentName` is not `Development`, in the same shape, with the same failure mode and for the same reason as the existing `AllowUnsigned` refusal.
 
 **Why the zero member, and why "required and undefaulted" was not enough.** The first draft wrote `DevelopmentOnly` as a `bool` defaulting to `false`, so **omission failed open**: a development key added by someone who never heard of the flag was silently a production-capable trust anchor. The second draft replaced it with a "required, undefaulted `KeyScope`" — and **that is not producible from a two-member enum.** A CLR enum always has a zero value; a missing JSON property, `IConfiguration.Bind` and a non-nullable parameter all land on it. With `Release = 0`, omission yields a production-capable anchor again — the same failure in a new coat, in the section written to end it. **This record committed `CLAUDE.md`'s fourth form twice in three drafts, in the same paragraph.**
 
-**What makes the third version different is that the absent state and the refused state are the same number.** `Unstated = 0` means "no value was supplied" *is* the refused value, so there is no spelling of omission that lands anywhere else. The repository already does this three files away: `PackageTrustLevel.Unsigned = 0`, refused explicitly in `Create`.
+**What makes omission safe is that the absent state and a refused state are the same number.** `Unstated = 0` means "no value was supplied" *is* refused, so there is no spelling of omission that lands anywhere else. The repository already does this three files away: `PackageTrustLevel.Unsigned = 0`, refused explicitly in `Create`. **And one line keeps it that way:** a test asserting `default(KeyScope) == KeyScope.Unstated`, because reordering enum members is exactly the edit nobody reviews as a security change.
 
-**And one line keeps it that way:** a test asserting `default(KeyScope) == KeyScope.Unstated`. Without it a future member reordering re-opens the hole silently, and reordering enum members is exactly the edit nobody reviews as a security change.
+**But the fourth draft's refusal was still deny-by-value, and a CLR enum is not a closed set.** Executed through `IConfiguration` and `Get<T>()` on .NET 10, with `KeyScope { Unstated = 0, Release = 1, DevelopmentOnly = 2 }`:
+
+```
+configuration value          bound   IsDefined   "refuse if Unstated" admits   "accept only Release/DevelopmentOnly" admits
+absent                       (0)     True        no                            no
+"Release"                    (1)     True        yes                           yes
+"DevelopmentOnly"            (2)     True        yes                           yes
+"Release, DevelopmentOnly"   (3)     False       YES  <-- the hole              no
+"3"                          (3)     False       YES  <--                      no
+"99"                         (99)    False       YES  <--                      no
+```
+
+`Enum.TryParse` accepts a comma-separated list and ORs it **even for a non-flags enum**, and a bare integer binds to whatever it says. `(KeyScope)3` is neither `Unstated` — so the scope check does not fire — nor `DevelopmentOnly` — so the environment guard does not fire. **A development key becomes a `FirstParty` trust anchor on a tenant-routing production host.**
+
+**So the check is allow-by-value, and `Enum.IsDefined` is not the fix either.** `IsDefined` rejects `3` and `99` today and would start *accepting* `3` the day someone adds a third member — admitting a key under a scope nobody decided to admit. Accepting exactly the two named members means a new member is refused until somebody adds it to the check, which is a decision rather than a consequence.
+
+**Three coats of one failure, and the shape is now stated rather than patched:** a `bool` defaulting to `false`; then an enum whose zero member was permissive; then a refusal that denied one value out of an open set. Each fix closed the case it was shown. **Where a check decides what is admitted, enumerate the admitted values — never the refused ones.** That is the same correction ADR-0036 §3 makes by replacing a character deny-list with a grammar, and ADR-0037 §2.1.1 makes by defaulting an unlisted `ALTER TABLE` sub-action to destructive: three instances on one branch, in three rounds of review, of one rule.
+
+**What must demonstrate it.** A configuration test over **six** cases — absent, `"Release"`, `"DevelopmentOnly"`, `"Release, DevelopmentOnly"`, `"3"`, `"99"` — asserting that exactly the second and third start the host and the other four refuse it by thumbprint. The three undefined-value rows distinguish allow-by-value from deny-by-value, and they are the rows a test written from the fix rather than from the attack would have left out.
 
 This puts the environment guard on **the credential** rather than on the floor, which is the right place: a floor is not a thing you can accidentally ship, and a key is.
 
-**What it does not do, stated so nobody over-reads it.** A refused zero member stops *omission*; it does not stop a **misdeclaration**. Someone who adds a development key and marks it `Release` gets a production-capable anchor and no refusal. The scope is a declaration by whoever adds the key, and nothing verifies it against the key's provenance. The control against that is ADR-0033 §5.3's: adding a trusted key is an **operator action** recorded in `catalog.operator_audit_event`, with the consequence stated next to the button. **That surface does not exist.** The chain here is: a flag in configuration → a startup refusal → and it stops there. It does not reach "only keys somebody vouched for are configured", and nothing today does.
+**What it does not do, stated so nobody over-reads it.** Refusing everything but two named values stops *omission* and *undefined values*; it does not stop a **misdeclaration**. Someone who adds a development key and marks it `Release` gets a production-capable anchor and no refusal. The scope is a declaration by whoever adds the key, and nothing verifies it against the key's provenance. The control against that is ADR-0033 §5.3's: adding a trusted key is an **operator action** recorded in `catalog.operator_audit_event`, with the consequence stated next to the button. **That surface does not exist.** The chain here is: a flag in configuration → a startup refusal → and it stops there. It does not reach "only keys somebody vouched for are configured", and nothing today does.
 
 ### 3.1 What the development path actually is
 
@@ -202,7 +220,7 @@ No refusal line printed — the override was not invoked — and a handle came b
 | Rule | Last link it follows | What is on the other side, unchecked |
 |---|---|---|
 | §2 the floor is unconditional | `CountryPackageHostOptions.Create`, at startup, on `RoutesTenants` | **Whether a host that routes tenants says so.** `RoutesTenants` is a constructor argument with no default (B-21's choice, and the right one); nothing derives it from the fact that a tenant `DbContext` is registered |
-| §3 `KeyScope.Unstated = 0`, refused | The CLR's own zero value — omission, an absent property and a failed bind all land on the refused member, and one test pins `default(KeyScope) == Unstated` | **Misdeclaration.** A development key marked `Release` is admitted. Provenance is not verified and cannot be, from configuration alone |
+| §3 `KeyScope` admitted by value | An **allow-list of two members**. Omission lands on `Unstated` (pinned by a test); `"Release, DevelopmentOnly"`, `"3"` and `"99"` bind to undefined values and are refused because they are not the two — executed | **Misdeclaration.** A development key marked `Release` is admitted. Provenance is not verified and cannot be, from configuration alone |
 | §3 operator recording of key additions | ADR-0033 §5.3 | **Nothing.** The operator surface that records a key addition does not exist |
 | §4 the closed file set | The manifest's `files` list, inside the existing signature, over the directory tree | **Build ordering** — the manifest must be written after every sibling is built and before the bearing assembly is signed. D11 is the test most likely to catch a break here |
 | §4.2 the loader refusal | A **throw** from `LoadUnmanagedDll` / `Load`. Executed: `IntPtr.Zero` is not a refusal and the code ran | Nothing for the implicit path, *provided* the refusal throws. D13 asserts the exception rather than the call |

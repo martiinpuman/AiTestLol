@@ -33,6 +33,8 @@ This file enumerates **both** limbs — `S1…Sn` for suppression, `V1…Vn` for
 
 The method converts an unanswerable question ("have we thought of everything?") into one with a finite answer somebody can be held to ("which catalog columns have we walked?").
 
+**And it has a boundary: an effect that moves no catalog column is invisible to it.** `ALTER COLUMN … SET EXPRESSION AS (…)` rewrites every stored row with the catalog byte-identical — executed, `attgenerated` stays `'s'` while the values change. **Nothing in this file would ever have found it**, and the mechanism that does is ADR-0037 §2.1.1's inverted default over the `ALTER TABLE` sub-action grammar. See "Limb C" below.
+
 ## 3. The enumeration
 
 **Evidence column:** `executed` — run against `postgres:17-alpine` on this project and the observed behaviour recorded; `documented` — stated in the PostgreSQL manual and cited; `asserted` — believed from knowledge of PostgreSQL, **not** checked here. An `asserted` row is a lead, not a fact. Any row a mechanism relies on should be moved to `executed` by the row that builds that mechanism.
@@ -74,11 +76,17 @@ A limb-A removal is safe when it widens the permitted **states** and does not na
 
 | Id | What records the supply | Removing it | Statement | Evidence |
 |---|---|---|---|---|
-| **V1** | `pg_attribute.atthasdef` + `pg_attrdef` | An insert that omitted the column now supplies `NULL` | `ALTER COLUMN … DROP DEFAULT` | `executed` — `postgres:17-alpine` 17.11, 2026-09-12: the same insert succeeds before and returns `23502` after |
+| **V1** | `pg_attribute.atthasdef` + `pg_attrdef` | An insert that omitted the column now supplies `NULL` | `ALTER COLUMN … DROP DEFAULT` **and `ALTER COLUMN … SET DEFAULT NULL`**, which does the same thing without the token | `executed` — `postgres:17-alpine` 17.11: both move `atthasdef` true → false, and the same insert then returns `23502`. `SET DEFAULT NULL` is why ADR-0037's rule is keyed on the sub-action grammar and not on the word `DROP` |
 | **V2** | `pg_attribute.attidentity` | Same | `ALTER COLUMN … DROP IDENTITY` | `executed` — same image and date: `23502` after, succeeded before |
 | **V3** | `pg_attribute.attgenerated` | **Two outcomes.** On a `NOT NULL` generated column, `23502`. On a **nullable** one, **no error at all**: the column stops being computed and every later write silently stores `NULL` where a derived value used to be | `ALTER COLUMN … DROP EXPRESSION` | `executed` — same image and date, **both** outcomes |
 
 **V3's second outcome is why this table exists rather than a list of statements that raise `23502`.** A rule enumerated by "what fails loudly" finds V1, V2 and half of V3, and misses the half that corrupts data silently.
+
+### Limb C has no table here, and that is the finding
+
+`ALTER COLUMN … SET EXPRESSION AS (…)` **rewrites every stored row and moves no catalog column**. Executed on `postgres:17-alpine` 17.11: stored values went `2,2` → `0,0` while `attgenerated` stayed `'s'` throughout.
+
+There is therefore **no column to walk**, and §2's method does not reach limb C at all. An earlier version of this file and of ADR-0037 §8 claimed that limb A's inverted default backstopped these tables' incompleteness; that claim was **executed-false** and is withdrawn — the default was keyed on the word `DROP`, and neither `SET DEFAULT NULL` nor `SET EXPRESSION AS` contains it. What backstops it now is ADR-0037 §2.1.1's **sub-action default**: inside `ALTER TABLE`, anything not on a stated clean list is destructive, whether or not it moves a catalog column and whether or not anyone had heard of it. **`SET EXPRESSION AS` is new in PostgreSQL 17**, and that is the test of the shape: a rule enumerating the *destructive* members could not have contained it; a rule enumerating the *clean* members refuses it on sight.
 
 **The clean list has one member.** `ALTER COLUMN … DROP NOT NULL` widens the permitted states and narrows no statement: every insert that succeeded still succeeds. `DROP CONSTRAINT` is not governed here — ADR-0037 §3.2 decides it on the EF operation that produced it.
 
@@ -88,7 +96,7 @@ A limb-A removal is safe when it widens the permitted **states** and does not na
 - **It is not complete, and it cannot claim to be.** §2 gives the method that finds the next row; it does not guarantee the last row has been found. The completeness of the table rests on human knowledge of PostgreSQL, which is precisely the link that broke twice. Naming the method is the mitigation, not a fix.
 - **It is not a mechanism.** Nothing executes this file. A check that claims to cover suppression **lists the row ids it covers and asserts that its declared set equals its implemented set** — that makes a check's coverage measurable without pretending the table behind it is complete. A check that covers S1 and S4 and says so is worth more than one that says "suppression".
 - **It is not only MIG2's.** Three mechanisms read it: MIG2's destructive set (ADR-0037 §2), B-19's runtime guard assertions (`CatalogAppendOnlyGuardTests`), and whatever checks a tenant database's guards after a restore or a provisioning run. A fact three mechanisms need lives where all three can find it.
-- **It is not the only thing standing between limb A and a missed spelling.** §3a can be incomplete without being silent, because ADR-0037 §2.1 makes an unnamed `ALTER COLUMN … DROP <x>` destructive by default. **§3 has no such backstop**, which is why its incompleteness is the more dangerous of the two.
+- **It is not the only thing standing between limb A and a missed spelling — *inside `ALTER TABLE`*.** §3a can be incomplete without being silent there, because ADR-0037 §2.1.1 makes an unlisted `ALTER TABLE` sub-action destructive by default. **Outside `ALTER TABLE`, and for §3 entirely, there is no such backstop**, which is where an omission in these tables is still silent.
 
 ## 5. When to come back
 
