@@ -230,17 +230,26 @@ in `TenantAccessConstructionTests`: internal-only constructors on both types; `[
 granted to this assembly and `Aurora.Platform.Tenancy.UnitTests` only, asserted as an exact set; no
 public member of either friend assembly that ships — Contracts and this one — whose signature
 *mentions* a `TenantAccess` anywhere (return, any parameter, generic arguments and constraints, a
-delegate parameter's `Invoke`, an event's handler type) unless named as a sanctioned door or a
-proof-taking member (both lists empty; B-06.3's `ITenantScopeFactory.OpenAsync` and
-`ITenantDbContextFactory<T>.CreateAsync` join them by name), the scan proven against
-`ProofDoorProbes` — a fixture of every door shape including the event and callback parameter the
-PR #13 review walked through an earlier, direction-inferring scan — with its member count printed on
-every run and held to a round-down floor; no parameterless constructor at any accessibility, tried
-through `Activator`, System.Text.Json and `DataContractSerializer`; and, for the one route no
-accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a scope that reads as
-absent on every public property, enumerated by reflection and counted so an added property must be
-shown absent too. Reflection invoking the internal constructor is not blocked and not claimed to be:
-the guarantee is a compile-time one (ADR-0007 §12.3).
+delegate parameter's `Invoke`, an event's handler type), and no public type of either whose base
+chain or interfaces mention one, unless named by exact key — type, member, generic arity and
+parameter list, so one overload is one entry — as a sanctioned door, a proof-taking member, or one
+of the proof types themselves (`TenantScope : TenantAccess` is the one entry today; B-06.3's
+`ITenantScopeFactory.OpenAsync(...)` and `ITenantDbContextFactory<T>.CreateAsync(...)` join the
+first two lists, `TenantDatabaseHandle` the third), each entry required to match exactly one
+mention; the scan proven against `ProofDoorProbes` — a fixture of every door shape, including the
+event and callback parameter PR #13's first review walked through a direction-inferring scan and
+the inheriting collections its second review walked through a declared-members scan — with its
+member count printed on every run and held to a round-down floor; no parameterless constructor at
+any accessibility, tried through `Activator`, System.Text.Json and `DataContractSerializer`; and,
+for the one route no accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a
+scope that reads as absent on every public property, enumerated by reflection and counted, where a
+property that claims an absent reading must actually be read — a throw from it fails, and
+`NullReferenceException` fails by name — and any property designed to refuse by throwing is named
+with its exception. **What the signature scan cannot see, stated so nobody over-trusts it:** a
+member typed `object`, `dynamic` or a non-generic interface whose value is a proof at runtime; a
+proof inside a serialised form (link 4's territory); and every route reflection or
+`GetUninitializedObject` takes (links 4 and 5). Reflection invoking the internal constructor is not
+blocked and not claimed to be: the guarantee is a compile-time one (ADR-0007 §12.3).
 
 **Not built here, on purpose, because the backlog row says so:** the scope factory, and the lease
 that clears `IsActive` and makes a reused scope throw `TenantScopeExpiredException` (ADR-0007 §10.4).

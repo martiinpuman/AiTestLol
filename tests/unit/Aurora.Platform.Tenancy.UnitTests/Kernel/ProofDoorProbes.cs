@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Contracts;
@@ -9,17 +10,17 @@ namespace Aurora.Platform.Tenancy.UnitTests.Kernel;
 internal delegate void ScopeCallback(TenantScope scope);
 
 /// <summary>
-/// Every shape by which a public member can hand a tenant proof to code outside the friend set,
-/// plus the inbound shape and two members that mention no proof at all. Link 3's scan is proven
-/// against this type: each door must be reported, the two negatives must not be.
+/// Every shape by which a public member or a public type can hand a tenant proof to code outside
+/// the friend set, plus the inbound shape and members that mention no proof at all. Link 3's scan
+/// is proven against this type: each door must be reported, the negatives must not be.
 /// </summary>
 /// <remarks>
 /// <para>
 /// <b>Deliberately door-shaped fixture.</b> Nothing calls these; they exist to be scanned. The
-/// first two are the shapes the PR #13 security review walked through the original scan in green:
-/// an event, and a callback parameter. An event's accessors return <c>void</c> and take a non-by-ref
-/// parameter, and a by-value delegate parameter looks inbound to a scan that reads only by-ref
-/// parameters as outbound - yet both hand a live scope to any subscriber or callback.
+/// first two are the shapes PR #13's first security review walked through the original scan in
+/// green: an event, and a callback parameter. The three collections are the second review's
+/// door: types that declare nothing and hand proofs out through what they inherit, which a scan of
+/// declared members cannot see.
 /// </para>
 /// <para>
 /// The rest are the shapes that scan already caught (kept as controls, so a rewrite cannot lose
@@ -63,6 +64,15 @@ internal static class ProofDoorProbes
     /// <summary>A property, whose getter and setter are doors in both directions.</summary>
     public static TenantScope? Current { get; set; }
 
+    /// <summary>
+    /// Second-review probe, member half: a signature that names no proof and returns a type that
+    /// inherits one. The member is silent by design; the type it returns is what the scan reports.
+    /// </summary>
+    public static OpenScopeCollection All() => new();
+
+    /// <summary>The same, through an interface rather than a base type.</summary>
+    public static ExplicitScopeCollection Bag() => new();
+
     /// <summary>Negative control: mentions no proof.</summary>
     public static int Version => 0;
 
@@ -73,5 +83,28 @@ internal static class ProofDoorProbes
     public static class Nested
     {
         public static TenantScope? Held { get; }
+    }
+
+    /// <summary>Second-review probe, type half: declares nothing, inherits every member of a list of scopes.</summary>
+    public class OpenScopeCollection : List<TenantScope>;
+
+    /// <summary>One step further down the chain, so the base walk must not stop at the first base type.</summary>
+    public sealed class DeeperCollection : OpenScopeCollection;
+
+    /// <summary>
+    /// Every interface member implemented explicitly, so the only public member mentions nothing;
+    /// the interface list is the only place the proof appears.
+    /// </summary>
+    public sealed class ExplicitScopeCollection : IReadOnlyCollection<TenantScope>
+    {
+        private readonly List<TenantScope> _scopes = [];
+
+        int IReadOnlyCollection<TenantScope>.Count => _scopes.Count;
+
+        public override string ToString() => "bag";
+
+        IEnumerator<TenantScope> IEnumerable<TenantScope>.GetEnumerator() => _scopes.GetEnumerator();
+
+        IEnumerator IEnumerable.GetEnumerator() => _scopes.GetEnumerator();
     }
 }
