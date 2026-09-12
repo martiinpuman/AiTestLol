@@ -167,9 +167,9 @@ wake-up cannot fire.
 | Id | Rule |
 |---|---|
 | MIG1 | Every migration is annotated `Expand`, `Contract` or `DataOnly` |
-| MIG2 | Generated SQL containing `DROP COLUMN`, `DROP TABLE`, `ALTER COLUMN ... TYPE`, `RENAME`, or `ADD COLUMN ... NOT NULL` without a default appears only in a `Contract` migration |
-| MIG3 | A `Contract` migration and the `Expand` it contracts never ship in the same release (ADR-0007 §7.2) |
-| MIG4 | `CREATE INDEX` on an existing table uses `CONCURRENTLY` with `suppressTransaction: true` |
+| MIG2 | Generated SQL containing a **destructive** statement appears only in a `Contract` migration. Destructive is decided by **effect, not spelling** (ADR-0037 §2): limb A, a removal that narrows what the schema offers — `DROP COLUMN`, `DROP TABLE`, `RENAME`, a non-widening `ALTER COLUMN … TYPE` (ADR-0037 §4), `ADD COLUMN … NOT NULL` without a default, a `DROP CONSTRAINT` not attributable to a `DropCheckConstraintOperation` (ADR-0037 §3.2); and limb B, a **suppression** that leaves the object named and unenforced — `DISABLE`/`ENABLE`/`ENABLE REPLICA TRIGGER` and `RULE`, `SET session_replication_role` in every spelling, `CREATE OR REPLACE` of any object, `DISABLE ROW LEVEL SECURITY`, `NO FORCE ROW LEVEL SECURITY`, `DETACH PARTITION`. Limb B's enumeration is [`postgres-invariant-suppression.md`](postgres-invariant-suppression.md), which the rule names the row ids it covers from |
+| MIG3 | A `Contract` migration and the `Expand` it contracts never ship in the same release (ADR-0007 §7.2). "Release" is the `SchemaVersion` declared on `[MigrationSafety]`; the Contract names its Expand through `ContractOf` and must carry a strictly greater version (ADR-0037 §5). Reports `Contract` migrations examined, which is **0** today — the rule carries an inertness guard until it stops being 0 |
+| MIG4 | `CREATE INDEX` on an existing table uses `CONCURRENTLY` with `suppressTransaction: true`, **unless** the migration carries a `[TransactionalIndexBuild]` naming that exact index and saying why (ADR-0037 §6). Reports indexes created, built concurrently, and exempted by name |
 | MIG5 | A package migration names no schema other than its own (ADR-0008 §4.1 R2) |
 
 ### 5.8 Localization rules
