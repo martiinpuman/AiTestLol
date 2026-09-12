@@ -228,12 +228,19 @@ consumer of tenancy shares (ADR-0027 §1; ADR-0007 §3.4, §7.1, §7.5):
 **What "only `Aurora.Platform.Tenancy` may construct one" rests on** — named and tested link by link
 in `TenantAccessConstructionTests`: internal-only constructors on both types; `[InternalsVisibleTo]`
 granted to this assembly and `Aurora.Platform.Tenancy.UnitTests` only, asserted as an exact set; no
-public member anywhere in Contracts that returns a `TenantAccess` (B-06.3's
-`ITenantScopeFactory.OpenAsync` joins an empty sanctioned list by name); no parameterless constructor
-at any accessibility, tried through `Activator`, System.Text.Json and `DataContractSerializer`; and,
-for the one route no accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a
-scope that reads inactive and nameless on every property. Reflection invoking the internal
-constructor is not blocked and not claimed to be: the guarantee is a compile-time one (ADR-0007 §12.3).
+public member of either friend assembly that ships — Contracts and this one — whose signature
+*mentions* a `TenantAccess` anywhere (return, any parameter, generic arguments and constraints, a
+delegate parameter's `Invoke`, an event's handler type) unless named as a sanctioned door or a
+proof-taking member (both lists empty; B-06.3's `ITenantScopeFactory.OpenAsync` and
+`ITenantDbContextFactory<T>.CreateAsync` join them by name), the scan proven against
+`ProofDoorProbes` — a fixture of every door shape including the event and callback parameter the
+PR #13 review walked through an earlier, direction-inferring scan — with its member count printed on
+every run and held to a round-down floor; no parameterless constructor at any accessibility, tried
+through `Activator`, System.Text.Json and `DataContractSerializer`; and, for the one route no
+accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a scope that reads as
+absent on every public property, enumerated by reflection and counted so an added property must be
+shown absent too. Reflection invoking the internal constructor is not blocked and not claimed to be:
+the guarantee is a compile-time one (ADR-0007 §12.3).
 
 **Not built here, on purpose, because the backlog row says so:** the scope factory, and the lease
 that clears `IsActive` and makes a reused scope throw `TenantScopeExpiredException` (ADR-0007 §10.4).
@@ -248,11 +255,16 @@ check; `SELECT` granted to `aurora_app` and nothing else, so the request-path ro
 on every physical connection and can never re-stamp a database as another tenant) and
 `AssertAsync(NpgsqlConnection, TenantId, ct)`. The assertion throws `TenantRoutingViolationException`
 for a stamp naming another tenant **and** for anything it cannot prove — no `platform` schema or
-table (the catalog, the maintenance database, a foreign database), a table with no row, an all-zero
-id — because "cannot prove it is the right tenant" and "is the wrong tenant" call for the same
-reaction. B-06.2's connection initializer, B-07.1's compensation guard, B-07.2's step 4 and B-08.1
-call this one method; none re-writes the query (ADR-0027 §2: "three hand-written copies is how they
-drift").
+table (the catalog, the maintenance database, a foreign database), a table the connected role cannot
+read (SQLSTATE `42501`: a database provisioned before the grant, a pre-grant restore, an incident
+`REVOKE`), a table with no row, a table with more than one row (it reads `limit 2`, so "a single
+answer" is the assertion's property and not the table's: `create table if not exists` accepts a
+pre-existing table of another shape as it is), an all-zero id — because "cannot prove it is the right
+tenant" and "is the wrong tenant" call for the same reaction, and that reaction keys on the exception
+type. Only those three SQLSTATEs are translated; a connection fault stays a driver exception rather
+than becoming a routing violation. B-06.2's connection initializer, B-07.1's compensation guard,
+B-07.2's step 4 and B-08.1 call this one method; none re-writes the query (ADR-0027 §2: "three
+hand-written copies is how they drift").
 
 `TenantIdentityStampTests` proves it on real PostgreSQL, the mismatch first: a database *named* for
 tenant B exactly as the provisioner would name it, stamped for A, asserted as B — refused, naming
