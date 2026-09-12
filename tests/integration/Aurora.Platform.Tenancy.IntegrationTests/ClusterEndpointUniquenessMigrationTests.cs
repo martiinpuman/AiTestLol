@@ -36,8 +36,8 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// nothing of it survives — not the index, not the history row, and neither duplicate is touched.
 /// The worse outcome ADR-0034 §5.1 names is a fleet with the defect that migrates clean and stays
 /// broken; this is the test that says it cannot. Made non-unique, the index is created over the
-/// duplicates and the first test fails at <c>Should.ThrowAsync</c> — done once before this file was
-/// committed, and recorded in B-20's handback.
+/// duplicates and the first test fails at <c>Should.ThrowAsync</c> — executed once, after these
+/// tests were first green, and recorded in B-20's handback.
 /// </para>
 /// </remarks>
 [Collection(CatalogDatabaseSuite.Name)]
