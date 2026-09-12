@@ -61,13 +61,17 @@ D3's assertion becomes:
 
 ## 3. Decision 2 — a development key is refused in Production in the same shape as `AllowUnsigned`
 
-> `TrustedPackageKey` gains a **required** `KeyScope` — `Release` or `DevelopmentOnly` — with **no default value**. A configured key that does not state its scope is **refused at startup**, naming the key's thumbprint. `CountryPackageHostOptions.Create` additionally refuses to start when any `DevelopmentOnly` key is configured and `EnvironmentName` is not `Development`, in the same shape, with the same failure mode and for the same reason as the existing `AllowUnsigned` refusal.
+> `TrustedPackageKey` gains a `KeyScope` whose **zero member is `Unstated`**: `Unstated = 0`, `Release = 1`, `DevelopmentOnly = 2`. `CountryPackageHostOptions.Create` **refuses to start** on any key whose scope is `Unstated`, naming the key's thumbprint. `CountryPackageHostOptions.Create` additionally refuses to start when any `DevelopmentOnly` key is configured and `EnvironmentName` is not `Development`, in the same shape, with the same failure mode and for the same reason as the existing `AllowUnsigned` refusal.
 
-**Not a `bool` defaulting to `false`.** The first draft of this record wrote `DevelopmentOnly` with a default of `false`, which means **omission fails open**: a development key configured by someone who did not know the flag existed is silently a production-capable trust anchor, and the guard never fires. That is the wrong default for a credential, and it is the wrong default for the same reason this record exists — a control whose absence is indistinguishable from its permissive setting is not a control. Making the scope **required and undefaulted** converts forgetting into a startup failure, which is the only direction that is safe here.
+**Why the zero member, and why "required and undefaulted" was not enough.** The first draft wrote `DevelopmentOnly` as a `bool` defaulting to `false`, so **omission failed open**: a development key added by someone who never heard of the flag was silently a production-capable trust anchor. The second draft replaced it with a "required, undefaulted `KeyScope`" — and **that is not producible from a two-member enum.** A CLR enum always has a zero value; a missing JSON property, `IConfiguration.Bind` and a non-nullable parameter all land on it. With `Release = 0`, omission yields a production-capable anchor again — the same failure in a new coat, in the section written to end it. **This record committed `CLAUDE.md`'s fourth form twice in three drafts, in the same paragraph.**
+
+**What makes the third version different is that the absent state and the refused state are the same number.** `Unstated = 0` means "no value was supplied" *is* the refused value, so there is no spelling of omission that lands anywhere else. The repository already does this three files away: `PackageTrustLevel.Unsigned = 0`, refused explicitly in `Create`.
+
+**And one line keeps it that way:** a test asserting `default(KeyScope) == KeyScope.Unstated`. Without it a future member reordering re-opens the hole silently, and reordering enum members is exactly the edit nobody reviews as a security change.
 
 This puts the environment guard on **the credential** rather than on the floor, which is the right place: a floor is not a thing you can accidentally ship, and a key is.
 
-**What it does not do, stated so nobody over-reads it.** A required scope stops *omission*; it does not stop a **misdeclaration**. Someone who adds a development key and marks it `Release` gets a production-capable anchor and no refusal. The scope is a declaration by whoever adds the key, and nothing verifies it against the key's provenance. The control against that is ADR-0033 §5.3's: adding a trusted key is an **operator action** recorded in `catalog.operator_audit_event`, with the consequence stated next to the button. **That surface does not exist.** The chain here is: a flag in configuration → a startup refusal → and it stops there. It does not reach "only keys somebody vouched for are configured", and nothing today does.
+**What it does not do, stated so nobody over-reads it.** A refused zero member stops *omission*; it does not stop a **misdeclaration**. Someone who adds a development key and marks it `Release` gets a production-capable anchor and no refusal. The scope is a declaration by whoever adds the key, and nothing verifies it against the key's provenance. The control against that is ADR-0033 §5.3's: adding a trusted key is an **operator action** recorded in `catalog.operator_audit_event`, with the consequence stated next to the button. **That surface does not exist.** The chain here is: a flag in configuration → a startup refusal → and it stops there. It does not reach "only keys somebody vouched for are configured", and nothing today does.
 
 ### 3.1 What the development path actually is
 
@@ -108,6 +112,44 @@ Three consequences follow, and each is load-bearing:
 1. **The set is over the directory *tree*, not the directory.** Recursive, with relative paths, so `runtimes/linux-x64/native/libfoo.so` and `fr/Pkg.resources.dll` are members with the same standing as the main assembly.
 2. **`.deps.json` must be in the list.** It is the file that *decides where the resolver looks*; an unlisted or unhashed `.deps.json` can redirect every other resolution, so leaving it out re-opens the whole hole through the one file that controls the rest.
 3. **Resolution is confined to the package directory.** `AssemblyDependencyResolver` can return paths outside it — a NuGet fallback folder, a shared framework location — from a `.deps.json` that names them. A resolved path that escapes the directory root is refused even if its hash would match something, because a hash list cannot describe files the package does not own.
+4. **A refusal must throw. Returning `IntPtr.Zero` is not a refusal**, and the second draft of this record specified one that was not. Executed on .NET 10, an `AssemblyLoadContext` whose `LoadUnmanagedDll` returns `IntPtr.Zero` for **every** name:
+
+   ```
+   LoadUnmanagedDll("libm.so.6") -> IntPtr.Zero  (the override refuses)
+   LoadUnmanagedDll("libc.so.6") -> IntPtr.Zero  (the override refuses)
+   RESULT: libm cos(0)=1  libc getpid()=4608
+   VERDICT: native code EXECUTED despite the override refusing every load.
+   ```
+
+   `IntPtr.Zero` means *"I decline; fall back to the default behaviour"*, and the default behaviour is the OS loader. The same override changed to **throw** denies:
+
+   ```
+   LoadUnmanagedDll("libm.so.6") -> THROW (the override refuses)
+   RESULT: threw DllNotFoundException: unlisted native library 'libm.so.6'
+   VERDICT: throwing actually denied the load.
+   ```
+
+   This matters most for the packages v1 ships: a **single-assembly package has no `.deps.json`**, so `_resolver` is null and *every* unmanaged load takes the fallback path.
+
+### 4.2.1 Even throwing is provenance, not confinement — the honest size of §4
+
+Executed, same harness: package code calling `NativeLibrary.Load("libc.so.6")` **directly** never reaches the override.
+
+```
+RESULT: NativeLibrary.Load("libc.so.6") returned handle 0x7f7fa84b8000
+        without consulting the ALC override
+```
+
+No refusal line printed — the override was not invoked — and a handle came back. `dlopen` through a `DllImport` on `libdl` is the same story. **A host cannot deny native loading to managed code in its own process**, which is ADR-0033 §5.1's conclusion arriving somewhere new. So §4's claim is bounded to exactly this:
+
+> **The closed set controls what the loader binds *on the package's behalf* — its implicit P/Invoke resolution and its managed assembly resolution. It does not control what native code a package chooses to load, and it never could.** That is provenance — *what ran is what was signed, for everything the runtime resolved for the package* — and it is not containment.
+
+**This un-demotes R5.** §4.4's earlier draft said ADR-0033 §5.4 R5 — the package directory is baked into the image and not writable at runtime — "stops being the only thing between an unsigned sibling and execution". True for the managed path, false for the native one and false again in §4.2.2. **R5 is a co-equal control**: the hash list governs what the loader *binds*, R5 governs what files *exist to be opened at all*, including by `NativeLibrary.Load`, which the list cannot reach.
+
+### 4.2.2 Two more holes in "confined", named rather than assumed away
+
+- **Confinement was specified for resolver-returned paths only.** A manifest entry is also a path, and a manifest is attacker-influenced up to the moment it is signed. Every entry must be validated as **relative, normalised, containing no `..` segment, not rooted, and not a symlink whose target escapes the root** — the last resolved at the moment the file is opened, because a symlink is the one a textual check cannot see.
+- **Hashes are verified at admission and the files are used at load.** That window is a TOCTOU and **R5 is its only control.** Where R5 holds — a read-only image — the filesystem closes it. Where it does not — a writable package directory, which ADR-0033 §9 already names as a revisit trigger — the window is real, and the mitigation is to hash **at open**, from the same handle that is read, rather than in a directory walk beforehand. Stated rather than solved: v1 relies on R5.
 
 **Why this and not a second signature.** The manifest is already embedded in the signed assembly and its bytes are already inside the signature (ADR-0031 §1). **A hash list placed in the manifest is covered by the existing signature with no new key material, no new signing step and no new trust anchor** — the signature's coverage extends from one file to the whole package for the cost of a manifest member. That is the cheapest available correction and it needs nothing this project does not already have.
 
@@ -119,14 +161,16 @@ Three consequences follow, and each is load-bearing:
 - **D9** — a package whose listed file's bytes were changed after signing is refused, with the mismatch naming the relative path.
 - **D10** — a package with an extra **unlisted** file is refused. This distinguishes a closed set from an allowlist, and it is the one most likely to be dropped as pedantic.
 - **D11 — the subdirectory cases, which are where the first draft of this record was wrong.** Three packages, each refused: one with an unlisted **native** library under `runtimes/<rid>/native/`; one with an unlisted **satellite** assembly under a culture directory; one whose **`.deps.json`** is altered after signing. D11 is the test that would have failed against the first draft's specification while D8–D10 passed, which is why it is named separately rather than folded into D10.
-- **D12** — a `.deps.json` naming a path **outside** the package directory resolves to nothing and the package is refused.
+- **D12** — a `.deps.json` naming a path **outside** the package directory resolves to nothing and the package is refused; likewise a manifest entry containing `..`, an absolute path, or a symlink whose real path escapes the root.
+- **D13 — the refusal is a refusal.** A package that P/Invokes an unlisted native library fails with the loader's refusal reaching the caller. The assertion is on the **`DllNotFoundException`**, not on the resolver having been consulted: a test asserting "the override was called" passes against the `IntPtr.Zero` implementation that ran the code anyway, which is exactly how the second draft of this record shipped a refusal that was not one.
+- **D14 — the residual is pinned, in ADR-0033 §5.6 D2's style.** A fixture package calls `NativeLibrary.Load` directly for a library outside the list and the test asserts it **succeeds**. It is an executable statement of §4.2.1's boundary, with two failure modes that both matter: .NET gains a way to intercept it (good news, and this section must be re-read), or someone adds a control that makes the assertion pass for a different reason.
 - Each reports **files listed, files verified, files refused, and paths refused for escaping the directory.**
 
 ### 4.4 What this changes elsewhere
 
 - **`package.manifest.json` gains a member, which is a Country Package contract change** on its own SemVer clock (ADR-0008 §3.1). It is additive and no package ships today, so it is a MINOR at most; whoever implements it makes that call explicitly rather than by omission.
 - **ADR-0008 §9.3's signature description is amended** from "the assembly file followed by the manifest bytes" to the same thing **plus** the manifest's file list, which transitively covers every shipped file.
-- **ADR-0033 §5.4's residual list loses one entry** — R5's "the package directory is baked into the image and not writable at runtime" was doing work that this decision does properly. R5 stays as defence in depth; it stops being the only thing between an unsigned sibling and execution.
+- **ADR-0033 §5.4's R5 is *not* demoted.** An earlier draft said R5 "stops being the only thing between an unsigned sibling and execution". True for the managed path, false for native code a package loads itself (§4.2.1) and false for the admission-to-load window (§4.2.2). **R5 and the hash list are co-equal: the list governs what the loader binds, R5 governs what exists to be opened.**
 
 ---
 
@@ -158,10 +202,12 @@ Three consequences follow, and each is load-bearing:
 | Rule | Last link it follows | What is on the other side, unchecked |
 |---|---|---|
 | §2 the floor is unconditional | `CountryPackageHostOptions.Create`, at startup, on `RoutesTenants` | **Whether a host that routes tenants says so.** `RoutesTenants` is a constructor argument with no default (B-21's choice, and the right one); nothing derives it from the fact that a tenant `DbContext` is registered |
-| §3 required `KeyScope` | The declaration on the configured key | **Misdeclaration.** A development key marked `Release` is admitted. Provenance is not verified and cannot be from configuration alone |
+| §3 `KeyScope.Unstated = 0`, refused | The CLR's own zero value — omission, an absent property and a failed bind all land on the refused member, and one test pins `default(KeyScope) == Unstated` | **Misdeclaration.** A development key marked `Release` is admitted. Provenance is not verified and cannot be, from configuration alone |
 | §3 operator recording of key additions | ADR-0033 §5.3 | **Nothing.** The operator surface that records a key addition does not exist |
 | §4 the closed file set | The manifest's `files` list, inside the existing signature, over the directory tree | **Build ordering** — the manifest must be written after every sibling is built and before the bearing assembly is signed. D11 is the test most likely to catch a break here |
-| §4 resolution confinement | The resolved path being inside the package directory | **What the package does at runtime.** ADR-0033 §5.1 is unchanged: an admitted package can still reach every tenant the process can. This is provenance, not confinement |
+| §4.2 the loader refusal | A **throw** from `LoadUnmanagedDll` / `Load`. Executed: `IntPtr.Zero` is not a refusal and the code ran | Nothing for the implicit path, *provided* the refusal throws. D13 asserts the exception rather than the call |
+| §4.2.1 what the set controls | What the loader binds **on the package's behalf** | **`NativeLibrary.Load` and `dlopen`**, which never consult the context — executed. No in-process way to deny these exists, per ADR-0033 §5.1. D14 pins it |
+| §4.2.2 confinement | The real path at open, inside the root, for resolver-returned **and** manifest-derived entries | **The admission-to-load window.** R5 is its only control; where the directory is writable the window is real and unclosed |
 
 ## 7. Consequences
 
@@ -176,7 +222,8 @@ Three consequences follow, and each is load-bearing:
 
 - **B-21 merges with no development path, and that is fine only because no host loads packages.** The day one does, either a non-routing host or a signing command must exist first. §3.1 says so in the present tense and this is the sentence to check before wiring package loading into `Aurora.Web`.
 - **`DevelopmentOnly` is a declaration, not a proof.** An undeclared development key is invisible to it. §3's chain stops there and the control beyond it — an operator surface that records key additions — does not exist.
-- **§4 adds a build-ordering constraint** to package packaging, and build ordering is a class of thing that breaks quietly. D11 is the test most likely to catch it.
+- **§4 adds a build-ordering constraint** to package packaging, and build ordering breaks quietly. D11 is the test most likely to catch it.
+- **§4 is smaller than it first read.** It is provenance for what the loader resolves, not a boundary. Anyone reaching for it as containment should read §4.2.1 and ADR-0033 §5.1 instead.
 - **The closed set makes a package's shape part of its signed identity.** Adding a locale, a native dependency or a `.deps.json` entry is now a re-sign, not a file copy. That is the intended cost and it will be felt first by whoever ships the first reference package.
 - **The manifest contract changes before any package ships**, which is the cheapest time and still a change to a versioned public contract.
 

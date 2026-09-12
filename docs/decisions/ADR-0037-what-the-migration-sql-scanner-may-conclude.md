@@ -65,11 +65,22 @@ The rule decides membership of the destructive set. It does not decide that a de
 
 ### 2.3 What enumerates the effects: the catalog columns that record "in force"
 
-Limb A enumerates itself; a removal names what it removes. **Limb B does not**, and that is why it has been rediscovered twice. The method that would have found `tgenabled = 'R'` the first time is systematic and is adopted here:
+**Neither limb enumerates itself, and the claim that limb A did is withdrawn here and in §2.3's file.** The first draft said *"a removal names what it removes"*. That sentence produced the `DROP DEFAULT` miss, **survived the fix for it**, and then produced two more — `DROP IDENTITY` and `DROP EXPRESSION` (§2.4). It is false in the way that matters: `ALTER COLUMN n DROP DEFAULT` *does* name what it removes, and naming it tells you nothing about whether a writer depended on it. Leaving the reasoning in place while fixing one of its outputs is `CLAUDE.md`'s fourth failure form, and this record committed it.
 
-> **For every invariant the schema can declare, find the catalog column that records whether it is in force, enumerate that column's values, and then enumerate the statements that write it.** `tgenabled` has four values and only one of them is `D`. Reasoning from the statement (`DISABLE TRIGGER`) finds one. Reasoning from the column finds all four.
+**One audit method, both limbs:**
 
-The enumeration lives in **`docs/architecture/postgres-invariant-suppression.md`**, not in this ADR and not in a review thread, because three different mechanisms need it — MIG2's destructive set, B-19's runtime guard assertions, and whatever checks a tenant database's guards after a restore — and a fact three mechanisms need belongs where all three can find it. Each row carries a stable id (`S1`, `S2`, …), the catalog column, the values that weaken the invariant, and the statements that write it.
+> **For every invariant the schema can declare, and for every mechanism that supplies a value a writer does not, find the catalog column that records it, enumerate that column's states, and only then enumerate the statements that write it.**
+>
+> - **Limb B** — `tgenabled` has four values and only one is `D`. Reasoning from the statement (`DISABLE TRIGGER`) finds one; reasoning from the column finds all four.
+> - **Limb A** — three columns record "this column gets a value without the writer supplying one": `pg_attribute.atthasdef` (with `pg_attrdef`), `pg_attribute.attidentity`, `pg_attribute.attgenerated`. Reasoning from the statement finds `DROP DEFAULT`; reasoning from the columns finds all three, and finds them before a reviewer executes them.
+
+**For limb A the default is also inverted, which is the mechanism rather than a longer list.** A longer list leaves a fourth spelling to be found:
+
+> **Every `ALTER [COLUMN] … DROP <x>` is destructive unless `<x>` is on a named clean list, and the clean list is exactly `NOT NULL`.** `DROP NOT NULL` widens the permitted states and no statement that used to succeed starts failing. `DROP CONSTRAINT` is not on the list and is not governed by it — §3.2 decides it on the operation that produced it.
+>
+> So `DROP DEFAULT`, `DROP IDENTITY` and `DROP EXPRESSION` are destructive **because they are not on the list**, not because someone thought of them — and so is a spelling nobody has thought of. That is the property §7.1 option A claims for the whole design, and until this change it was true only of limb B.
+
+The enumeration lives in **`docs/architecture/postgres-invariant-suppression.md`**, not in this ADR and not in a review thread, because three different mechanisms need it — MIG2's destructive set, B-19's runtime guard assertions, and whatever checks a tenant database's guards after a restore — and a fact three mechanisms need belongs where all three can find it. It carries **both** limbs: suppression rows `S1…Sn` and value-supply rows `V1…Vn`, each with its catalog column, the states that weaken it, and the statements that write it.
 
 **The link this stops at, stated plainly: the table's completeness rests on human knowledge of PostgreSQL, and it is incomplete today.** Naming the audit method is the mitigation, not a fix — it converts "did we think of everything?" into "which catalog columns have we walked?", which is a question with a finite answer someone can be held to. Any check claiming to cover suppression **lists the row ids it covers and asserts that its declared set equals its implemented set**; that makes a check's coverage measurable without pretending the table behind it is complete.
 
@@ -85,7 +96,39 @@ The enumeration lives in **`docs/architecture/postgres-invariant-suppression.md`
 | `SET search_path`, plain `CREATE FUNCTION` clean | **Confirmed** | Neither removes nor suppresses. (`search_path` *can* change what an identifier in a function body resolves to — but a function's own `SET search_path` is part of its definition, which `pg_get_functiondef` renders and B-19's runtime check compares) |
 | `DROP NOT NULL`, `ATTACH PARTITION`, `DROP CONSTRAINT … RESTRICT` clean | **Confirmed**, with §2.1's obligation stated in `Reason` | **A, widening.** `DROP CONSTRAINT` is refined by §3, not by this row |
 | `DROP DEFAULT` clean | **Overturned — destructive** unless the migration discharges §2.1's obligation | **A, and not a widening.** Executed: an insert omitting the column succeeds before and fails `23502` after. A default exists so writers can omit the column; removing it narrows the set of permitted statements |
+| `DROP IDENTITY`, `DROP EXPRESSION` — never named, therefore **clean by omission** | **Destructive**, by §2.1's inverted default rather than by being listed | **A.** The same effect as `DROP DEFAULT` in two spellings the first two drafts did not name. Both executed; see §2.4.1 |
 | `CREATE … IF NOT EXISTS` clean | **Confirmed**, and see §2.5's *proves too much* test | It cannot displace an existing object, so it is neither limb. `CREATE EXTENSION IF NOT EXISTS "btree_gist"` is emitted by Npgsql from `CatalogDbContext.cs:99`'s `HasPostgresExtension` and this repository cannot spell it otherwise |
+
+### 2.4.1 The two spellings, executed — and the one that raises nothing
+
+```sql
+-- DROP IDENTITY
+create table di(id int primary key, n int generated always as identity);
+insert into di(id) values (1);                 -- INSERT 0 1
+alter table di alter column n drop identity;   -- ALTER TABLE
+insert into di(id) values (2);
+-- ERROR:  null value in column "n" of relation "di" violates not-null constraint   (23502)
+
+-- DROP EXPRESSION, on a NOT NULL generated column
+create table de2(id int primary key, a int not null default 1,
+                 n int not null generated always as (a*2) stored);
+insert into de2(id) values (1);                -- INSERT 0 1
+alter table de2 alter column n drop expression;
+insert into de2(id) values (2);
+-- ERROR:  null value in column "n" of relation "de2" violates not-null constraint  (23502)
+```
+
+**And the case that matters most, which no `23502`-shaped rule would ever find.** The same `DROP EXPRESSION` on a **nullable** generated column raises nothing at all:
+
+```sql
+create table de(id int primary key, a int not null default 1,
+                n int generated always as (a*2) stored);
+insert into de(id) values (1);                 -- INSERT 0 1   (n = 2, computed)
+alter table de alter column n drop expression;
+insert into de(id) values (2);                 -- INSERT 0 1   (n = NULL, silently)
+```
+
+The column stops being computed and starts accepting `NULL`. Every later write stores nothing where it used to store a derived value, and **no statement raises anything, ever**. That is worse than the loud cases and invisible to a rule enumerated by "which statements raise `23502`". It is why §2.1's enumeration is by **catalog column** (`attgenerated`) and its default is **inverted**, rather than a list of spellings that happen to fail loudly.
 
 ### 2.5 `CREATE OR REPLACE` — confirmed, and why the reason matters
 
@@ -287,7 +330,7 @@ ADR-0007 §7.2 rule 4 makes `CREATE INDEX CONCURRENTLY` "mandatory for any index
 
 | Option | Pros | Cons |
 |---|---|---|
-| **A. Classify by effect, in two limbs, with limb B enumerated by catalog column** *(chosen)* | Covers spellings nobody has thought of yet, because the audit walks columns rather than statements; explains `DROP NOT NULL` clean and `ENABLE REPLICA` destructive with one rule; gives the twice-rediscovered fact a home three mechanisms can read | The enumeration's completeness still rests on human knowledge; naming the method is a mitigation, not a fix |
+| **A. Classify by effect, in two limbs, both enumerated by catalog column, with limb A's `DROP` family defaulting to destructive** *(chosen)* | Covers spellings nobody has thought of yet **in both limbs** — the audit walks columns rather than statements, and an unnamed `DROP <x>` is destructive by default rather than clean by omission; explains `DROP NOT NULL` clean and `ENABLE REPLICA` destructive with one rule | Completeness still rests on human knowledge; naming the method is a mitigation, not a fix. The inverted default will red a migration whose `DROP <x>` is genuinely harmless, and that migration must argue for itself |
 | B. Classify by spelling — a list of statements | Simple, exact, no judgement | It is the defect. Three reviews found three spellings of one effect, one at a time. The list is complete only against the imagination of whoever last edited it |
 | C. Classify by effect but enumerate by *statement family* rather than catalog column | Closer to how the SQL reads | `tgenabled` is the counter-example: the `DISABLE`/`ENABLE` family reads as two states and has four. Enumerating statements finds what the statements say; enumerating columns finds what the database records |
 | D. Read the live catalog and diff before/after | The only thing that actually measures effect | No deployment exists; a build-time gate that needs a database is not a build-time gate. It is, however, the right shape for an *install-time* check, which ADR-0008 §4.1 already does for package migrations |
@@ -319,8 +362,9 @@ Every blocker found in this record's first draft was a sentence claiming more th
 
 | Rule | Last link it follows | What is on the other side of that link, unchecked |
 |---|---|---|
-| §2.1 limb A, widening exception | The migration's `Reason`, read by a reviewer at Full tier | **A human knowing which readers and writers exist.** `DROP DEFAULT` is the executed proof that "widens the permitted states" and "breaks no writer" are different claims. No mechanism enumerates a column's writers |
-| §2.1 limb B, suppression | The token stream, plus §2.3's table of catalog columns | **Human knowledge of PostgreSQL.** §2.3's table is incomplete by construction; the audit method is the mitigation |
+| §2.1 limb A, the `DROP <x>` family | An **inverted default**: destructive unless `<x>` is `NOT NULL`. Mechanical, and it covers unnamed spellings | Nothing, for membership. The *justification* for claiming the exception stops one row down |
+| §2.1 limb A, the exception once claimed | The migration's `Reason`, read by a reviewer at Full tier | **A human knowing which readers and writers exist.** `DROP DEFAULT`, `DROP IDENTITY` and `DROP EXPRESSION` are the executed proof that "widens the permitted states" and "breaks no writer" are different claims — and nullable `DROP EXPRESSION` proves some of them break nothing *loudly*. No mechanism enumerates a column's writers |
+| §2.1 limb B, suppression | The token stream, plus §2.3's table of catalog columns | **Human knowledge of PostgreSQL.** §2.3's table is incomplete by construction in both limbs; the audit method is the mitigation, and limb A's inverted default is what stops its incompleteness being silent. Limb B has no such backstop |
 | §2.5 `CREATE OR REPLACE` | Whether the statement *can displace* — a property of the spelling, decidable on tokens | Nothing. This one is closed, which is why `IF NOT EXISTS` falls out of it cleanly instead of needing an exemption |
 | §3.2 `DROP CONSTRAINT` | EF's model snapshot for the preceding migration | **The live database.** A constraint created by raw SQL is not in the model, is never attributed, and stays destructive — the loud direction |
 | §3.3 "is this `CHECK` replacement a widening" | The migration's `Reason`, read by a reviewer | **Predicate implication**, which is undecidable and which this project will not approximate |

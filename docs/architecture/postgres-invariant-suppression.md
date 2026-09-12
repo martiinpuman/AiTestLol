@@ -17,11 +17,13 @@ Two branches, two mechanisms, one underlying truth, rediscovered at review cost 
 
 ADR-0037 §2.1 splits weakening into two limbs.
 
-**Limb A — removal.** Something is taken away: a column, a table, a key, an index, a row. It is **visible** — the catalog no longer holds it, and anyone who looks sees the absence. Limb A enumerates itself, because a removal names what it removes.
+**Limb A — removal.** Something is taken away: a column, a table, a key, an index, a row. It is **visible** — the catalog no longer holds it, and anyone who looks sees the absence.
+
+> **This file used to say "limb A enumerates itself, because a removal names what it removes". That sentence is withdrawn** (ADR-0037 §2.1, 2026-09-12). It produced the `DROP DEFAULT` miss, **survived the fix for that miss**, and then produced two more — `DROP IDENTITY` and `DROP EXPRESSION`. `ALTER COLUMN n DROP DEFAULT` *does* name what it removes, and naming it tells you nothing about whether a writer depended on it. **Both limbs are enumerated by catalog column, and limb A additionally defaults to destructive.**
 
 **Limb B — suppression.** The object remains. Its name remains. Its definition remains. Something *outside* its definition decides it does not take effect. **A reader of the catalog, of `information_schema`, or of the migration that created it, sees a guard — and it does not fire.**
 
-Limb B is what this file enumerates, because limb B does not announce itself and cannot be found by reading the statement that caused it.
+This file enumerates **both** limbs — `S1…Sn` for suppression, `V1…Vn` for value supply — because neither announces itself, and neither can be found by reading the statement that caused it.
 
 ## 2. The audit method — reason from the catalog column, not from the statement
 
@@ -66,12 +68,27 @@ The first version of S8 said *"only constraint triggers and foreign keys are def
 
 **No mechanism enforces this today.** It is stated in the present tense on purpose.
 
+## 3a. The limb-A enumeration: what supplies a value the writer does not
+
+A limb-A removal is safe when it widens the permitted **states** and does not narrow the permitted **statements**. Each column below records a mechanism that supplies a value when the writer omits one; removing any of them narrows the statements, so `ALTER COLUMN … DROP <x>` is **destructive by default** (ADR-0037 §2.1) unless `<x>` is `NOT NULL`.
+
+| Id | What records the supply | Removing it | Statement | Evidence |
+|---|---|---|---|---|
+| **V1** | `pg_attribute.atthasdef` + `pg_attrdef` | An insert that omitted the column now supplies `NULL` | `ALTER COLUMN … DROP DEFAULT` | `executed` — `postgres:17-alpine` 17.11, 2026-09-12: the same insert succeeds before and returns `23502` after |
+| **V2** | `pg_attribute.attidentity` | Same | `ALTER COLUMN … DROP IDENTITY` | `executed` — same image and date: `23502` after, succeeded before |
+| **V3** | `pg_attribute.attgenerated` | **Two outcomes.** On a `NOT NULL` generated column, `23502`. On a **nullable** one, **no error at all**: the column stops being computed and every later write silently stores `NULL` where a derived value used to be | `ALTER COLUMN … DROP EXPRESSION` | `executed` — same image and date, **both** outcomes |
+
+**V3's second outcome is why this table exists rather than a list of statements that raise `23502`.** A rule enumerated by "what fails loudly" finds V1, V2 and half of V3, and misses the half that corrupts data silently.
+
+**The clean list has one member.** `ALTER COLUMN … DROP NOT NULL` widens the permitted states and narrows no statement: every insert that succeeded still succeeds. `DROP CONSTRAINT` is not governed here — ADR-0037 §3.2 decides it on the EF operation that produced it.
+
 ## 4. What this file is not
 
 - **An `asserted` row is a claim, and one of them has already been falsified.** S8's scope clause was `asserted` and was wrong. Promoting rows is not bookkeeping: it is how this file avoids becoming the thing it was written to prevent. S2, S10 and S1's `CREATE OR REPLACE TRIGGER` limb were promoted on 2026-09-12 by executing them.
 - **It is not complete, and it cannot claim to be.** §2 gives the method that finds the next row; it does not guarantee the last row has been found. The completeness of the table rests on human knowledge of PostgreSQL, which is precisely the link that broke twice. Naming the method is the mitigation, not a fix.
 - **It is not a mechanism.** Nothing executes this file. A check that claims to cover suppression **lists the row ids it covers and asserts that its declared set equals its implemented set** — that makes a check's coverage measurable without pretending the table behind it is complete. A check that covers S1 and S4 and says so is worth more than one that says "suppression".
 - **It is not only MIG2's.** Three mechanisms read it: MIG2's destructive set (ADR-0037 §2), B-19's runtime guard assertions (`CatalogAppendOnlyGuardTests`), and whatever checks a tenant database's guards after a restore or a provisioning run. A fact three mechanisms need lives where all three can find it.
+- **It is not the only thing standing between limb A and a missed spelling.** §3a can be incomplete without being silent, because ADR-0037 §2.1 makes an unnamed `ALTER COLUMN … DROP <x>` destructive by default. **§3 has no such backstop**, which is why its incompleteness is the more dangerous of the two.
 
 ## 5. When to come back
 
