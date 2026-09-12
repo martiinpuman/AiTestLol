@@ -53,7 +53,7 @@ public sealed partial class ClusterEndpointUniquenessMigrationTests
         script.ShouldContain("COMMIT;");
     }
 
-    /// <summary>Any DDL or DML verb at the start of a statement, the history-table insert excepted.</summary>
-    [GeneratedRegex(@"^(CREATE|ALTER|DROP|DELETE|UPDATE|TRUNCATE|INSERT INTO (?!catalog\.""__EFMigrationsHistory""))", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
+    /// <summary>Any DDL or DML verb at the start of a statement, the insert into the migrations history excepted however the provider quotes it.</summary>
+    [GeneratedRegex(@"^(CREATE|ALTER|DROP|DELETE|UPDATE|TRUNCATE|INSERT INTO (?!\S*__EFMigrationsHistory))", RegexOptions.Multiline | RegexOptions.CultureInvariant)]
     private static partial Regex SchemaStatement();
 }

@@ -354,23 +354,12 @@ Three things a reader will want stated:
   absent from this branch's tree. It exists as a type on `task/B-06.1a` and is wired into a
   connection nowhere until B-06.2 puts `AssertAsync` in the data source's physical-connection
   initializer. Until both land, a connection string this resolver composes is opened with no proof
-  that the database on the other end is the tenant's. And the catalog itself does not yet refuse
-  the shape PR #14 H-1 executed: `ux_tenant_cluster_id_database_name` is keyed on `cluster_id`, a
-  physical database is `(host, port, database_name)`, and nothing makes `database_cluster (host,
-  port)` unique — two cluster rows for one server, one tenant each, the attacker's `database_name`
-  copied, and both resolve to one physical database. The M-1 check above does not catch that (the
-  row genuinely is the attacker's); the fix is a catalog migration on the physical axis, which is the
-  architect's and not this branch's (the catalog migration chain is one branch at a time, and
-  `task/B-19` holds it). `aurora_app` can write neither row; the shape needs the owner. B-07.1, the
-  row that writes cluster rows, is held on it. **The thing that expires with the hole** is
-  `Two_cluster_rows_on_one_server_still_route_two_tenants_to_one_physical_database`, an inertness
-  guard in the pattern of B-04's and B-19's: green while two cluster rows on one server still resolve
-  to one physical database (it prints both endpoints), red the day the catalog refuses either insert
-  with `23505` — and its message then says to delete it and write ADR-0034 §3.3's real property in
-  its place, that no two non-deleted tenant rows produce the same resolved connection string,
-  computed by the real resolver over real rows. That day reds five more tests in the same file,
-  because the test bed registers a cluster row per bed on one endpoint — the fixture shape ADR-0034
-  §3.2 forbids — so the bed needs one shared cluster row, or a second container, first.
+  that the database on the other end is the tenant's. The catalog's own half of the routing
+  question — that two cluster rows cannot name one endpoint, PR #14 H-1 — is closed by B-20
+  (below): `ux_database_cluster_host_port`, ADR-0034 §3.3's property in
+  `CatalogRoutingUniquenessTests` in place of this file's inertness guard, and one cluster row per
+  container in the test bed. The M-1 check above never caught that shape (the row genuinely is the
+  attacker's); the index does, and the stamp is what decides identity where a name cannot.
 - **What invalidation promises, and what it does not.** The interceptor sees every state change
   written through the entity; a change written around the change tracker (raw SQL, `ExecuteUpdate`)
   is bounded by the entry's 60 s lifetime, as is another instance's copy until an L2 exists
@@ -398,6 +387,69 @@ in `Aurora.Platform.Tenancy.Contracts`; **ADR-0034 §6 decides they are `interna
 §3.5's own goal by construction. Every consumer named so far (B-06.2, B-06.3, B-07.1) lives here;
 the first consumer outside, `Aurora.TestKit`'s counting resolver (B-18.5, consumed by B-10), gets
 `[InternalsVisibleTo]` under ADR-0034 §6.1's three conditions, never promotion.
+
+---
+
+## What B-20 adds: the catalog constrains the physical endpoint
+
+`ux_database_cluster_host_port` — `CREATE UNIQUE INDEX … ON catalog.database_cluster (host, port)`,
+the `ClusterEndpointUniqueness` migration, declared on the EF model — is ADR-0034 §3.1, and it
+closes the **third** executed variant of the tenant-takeover finding: two cluster rows on one
+server, one tenant each, the attacker's `database_name` copied from the victim's, both resolving to
+one connection string. With it the composition is a proof: `cluster_id → (host, port)` is injective,
+`fk_tenant_cluster_in_region` makes it total for every non-deleted tenant,
+`ux_tenant_cluster_id_database_name` makes `(cluster_id, database_name)` unique, so
+`(host, port, database_name)` — the triple the resolver composes — is unique across `catalog.tenant`.
+
+**The acceptance criterion is the property, not the index** (ADR-0034 §3.3), because an assertion
+that the index exists would have caught none of the three variants. `CatalogRoutingUniquenessTests`
+asks the catalog, as the owner, to store every executed shape — variant 1 and variant 3 — records
+whether each was admitted or refused with `23505`, then resolves every non-deleted tenant through
+the real `ITenantConnectionResolver` from the production registration and compares every pair of
+physical endpoints, printing tenants resolved, pairs compared and collisions and failing on zero of
+the first two. Run before the migration it failed — `variant 3: ADMITTED`, `pairs compared: 3;
+collisions: 1` — and a fourth variant the catalog admits fails it the same way, whichever index it
+walked around. The comparison is over host, port and database read back out of the resolved string,
+not the whole string: the composer stamps the tenant key into `Application Name`, so whole strings
+never collide and a property over them could never fail. This test replaced B-06.1's inertness
+guard, deleted rather than repaired the day the hole closed, as its message directed. The model's
+own declaration of the index (`CatalogModelTests`) and the SQL the migration emits
+(`ClusterEndpointUniquenessMigrationTests`, unit) are checked in stage 6 with Docker stopped; both
+are tripwires on the configuration and say so, and neither stands in for the property.
+
+**The migration fails loudly against a catalog that already holds the defect** (ADR-0034 §5.1).
+`ClusterEndpointUniquenessMigrationTests` (integration) creates a catalog of its own, migrates it to
+the state before this migration, seeds two rows on one endpoint and runs the migration: SQLSTATE
+`23505`, `could not create unique index "ux_database_cluster_host_port"`, `Key (host, port)=(…) is
+duplicated` — and, because the migration is transactional, no index, no history row, both rows
+intact and the migration still pending for the runner to retry once an operator has resolved the
+duplicate. Transactional on purpose: `CONCURRENTLY` cannot run in a transaction and leaves an
+`INVALID` index behind on failure, and ADR-0007 §7.2 reserves it for tables a live tenant writes to,
+which the catalog's operator seed data is not. Rows on distinct endpoints — one host on two ports,
+two hosts on one port — migrate, keep every row and re-run as a no-op. Npgsql redacts a `DETAIL`
+on the client unless the connection asks (`Include Error Detail`); the test's connection asks, so
+the server is held to naming the duplicate, and the runner's connection (B-08) decides what an
+operator sees.
+
+**What the index does not and cannot cover, stated rather than left to be inferred** (ADR-0034 §2,
+§3.2). Two names for one server — a CNAME, a second DNS record, a failover alias, an IP literal
+beside a host name, a host spelled in another case. The catalog stores what it was told; a
+constraint over a name narrows what can be stored and never establishes identity.
+`TenantIdentityStamp` is the control for that (ADR-0034 §4), on every physical connection, and it
+is in effect on no path until B-06.2 and B-07.1 wire it. Two shapes the index is wrong for if they
+ever become rows: a read replica, which ADR-0007 §3.5 keeps inside the resolver and never as a row;
+and PgBouncer, which arrives as a second endpoint pair on one row with a unique index of its own,
+never as a second row. Either is ADR-0034 §9's revisit trigger. A tenant `database_name` equal to a
+cluster's `maintenance_database` on the same endpoint is not on this axis either; the `aurora_t_`
+naming convention and B-07.1's safe-adoption rule are what cover it.
+
+**One cluster row per container in the tests.** `CatalogDatabaseFixture.ThisServerAsClusterAsync`
+seeds the one `database_cluster` row for the test container on first use, with an app secret
+reference the resolver's `EnvironmentSecretStore` can answer for the life of the fixture; every
+routing test bed and the end-to-end resolve test place their tenants on it. Until B-20 each seeded a
+row of its own for that endpoint — variant 3 as a fixture, the shape ADR-0034 §3.2 forbids — and
+under the index five of B-06.1's six routing tests failed on the second such row until the fixture
+changed.
 
 ---
 

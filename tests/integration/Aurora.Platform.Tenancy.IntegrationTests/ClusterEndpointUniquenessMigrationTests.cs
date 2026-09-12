@@ -138,11 +138,15 @@ public sealed class ClusterEndpointUniquenessMigrationTests
             await CatalogDatabaseFixture.ExecuteAsync(admin, $"REVOKE ALL ON DATABASE {name} FROM PUBLIC");
 
             // Pooling off: the database is dropped at the end, and a pooled connection to it would
-            // be one DROP DATABASE ... WITH (FORCE) has to kill.
+            // be one DROP DATABASE ... WITH (FORCE) has to kill. Error detail on: PostgreSQL always
+            // sends the duplicated key in a 23505's DETAIL, and Npgsql redacts it on the client
+            // unless the connection asks - the runner's connection (B-08) decides what an operator
+            // sees; this one asks, so the test can hold the server to naming the duplicate.
             string migrator = new NpgsqlConnectionStringBuilder(catalog.MigratorConnectionString)
             {
                 Database = name,
                 Pooling = false,
+                IncludeErrorDetail = true,
             }.ConnectionString;
 
             return new ScratchCatalog(catalog, name, migrator);
