@@ -27,6 +27,18 @@ namespace Aurora.Countries.Hosting;
 /// package can do. A loaded package runs with the full permissions of the process and can reach
 /// any tenant this process can (ADR-0033 §5.1, §5.4). Nothing in this class claims otherwise.
 /// </para>
+/// <para>
+/// <b>What the signature covers, and so what the floor admits.</b> The signature is over the
+/// manifest-bearing assembly and the manifest (<see cref="PackageSignature.ContentToSign"/>), and
+/// the floor is a judgement about <i>that</i> assembly. A private dependency the package ships
+/// beside it is resolved by <see cref="CountryPackageLoadContext"/>'s dependency probe on the
+/// strength of the package's admission and carries no signature of its own — so "a tenant-routing
+/// host loads only first-party packages" is true of the package, not of every assembly that ends
+/// up executing in its context. An unsigned assembly dropped into an admitted package's directory
+/// after signing is loaded and runs. That is bounded by the same write to the package directory
+/// ADR-0033 §5.4 R5 already accepts, and it bites with no attacker at all for any package that
+/// ships dependencies; it is raised to the architect as a further ADR-0033 residual.
+/// </para>
 /// </remarks>
 public sealed class CountryPackageLoader
 {
@@ -123,10 +135,12 @@ public sealed class CountryPackageLoader
             return HostingErrors.BelowAdmissionFloor(
                 $"Package '{manifest.Id}' {manifest.Version} is signed by a key that establishes " +
                 $"{inspected.Value.Trust}, and this host routes tenants: it loads only packages whose " +
-                $"signature establishes {_admissionFloor}. A loaded package runs inside the process, " +
-                $"which is the tenancy trust boundary, so it could reach every tenant this host can " +
-                $"(ADR-0033 §5.2). The package was inspected and is listed; it was not loaded, and " +
-                $"none of its code has run.");
+                $"manifest-bearing assembly is signed at {_admissionFloor} or above. The signature " +
+                $"covers that assembly and the manifest; a dependency shipped beside them is loaded " +
+                $"on the strength of that admission and is not signed itself. A loaded package runs " +
+                $"inside the process, which is the tenancy trust boundary, so it could reach every " +
+                $"tenant this host can (ADR-0033 §5.2). The package was inspected and is listed; it " +
+                $"was not loaded, and none of its code has run.");
         }
 
         Result compatible = CoreContractGate.Check(

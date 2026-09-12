@@ -52,6 +52,18 @@ control. The only control is **admission**: deciding what executes at all.
   to start in every environment, Development included; so does one whose keys cannot establish the
   floor, because it could never load anything (§5.6 D3, `CountryPackageHostOptionsTests`).
 
+**What the signature covers, and so what the floor admits.** The signature is over the
+manifest-bearing assembly and the manifest (`PackageSignature.ContentToSign`), and the floor is a
+judgement about *that* assembly. "A tenant-routing host loads only first-party packages" is
+therefore true of the package and **not of everything that ends up executing in its context**: a
+private dependency the package ships beside itself is resolved by the load context's dependency
+probe on the strength of the package's admission and carries no signature of its own. Executed by
+the reviewer of PR #17: an unsigned sibling DLL dropped into an admitted package's directory after
+signing leaves the package verifying as `FirstParty`, is loaded through the normal probe, and runs
+its module initialiser. That is bounded by the same write to the package directory ADR-0033 §5.4 R5
+already accepts — but it bites with no attacker at all for any package that ships dependencies, and
+it is raised to the architect as a further ADR-0033 residual.
+
 **What none of this demonstrates.** That a package cannot reach tenant data. It cannot demonstrate
 that, because it is not true: an admitted package can read the process's configuration and secret
 material and open its own connection to any tenant database, naming no tenancy type at all

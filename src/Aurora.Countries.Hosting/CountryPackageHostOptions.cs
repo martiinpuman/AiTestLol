@@ -150,8 +150,11 @@ public sealed class TrustedPackageKey
 /// in-process privilege boundary in .NET against loaded managed code, so a package a tenant-routing
 /// process loads can reach every tenant that process can. The only control is deciding what is
 /// allowed to execute at all, and for a tenant-routing host that is <b>first-party packages
-/// only</b>. This type says which kind of host it is; <see cref="CountryPackageLoader"/> enforces
-/// the floor at load, and <see cref="Create"/> refuses a configuration that contradicts it.
+/// only</b> — where "package" is the manifest-bearing assembly the signature covers; a dependency
+/// it ships beside itself is loaded on the strength of that admission, unsigned (see
+/// <see cref="CountryPackageLoader"/>). This type says which kind of host it is;
+/// <see cref="CountryPackageLoader"/> enforces the floor at load, and <see cref="Create"/> refuses
+/// a configuration that contradicts it.
 /// </para>
 /// </remarks>
 public sealed class CountryPackageHostOptions
@@ -259,8 +262,8 @@ public sealed class CountryPackageHostOptions
         {
             return HostingErrors.HostConfiguration(
                 $"Packages:AllowUnsigned is set on a host that routes tenants (environment " +
-                $"'{environmentName}'). A tenant-routing process loads only packages whose signature " +
-                $"establishes {TenantRoutingAdmissionFloor}: a loaded package runs inside the " +
+                $"'{environmentName}'). A tenant-routing process loads only packages whose " +
+                $"manifest-bearing assembly is signed at {TenantRoutingAdmissionFloor}: a loaded package runs inside the " +
                 $"process, and the process is the tenancy trust boundary, so it can reach every " +
                 $"tenant this host can. The floor is not a setting — the host refuses to start " +
                 $"rather than run with the flag, in Development as anywhere else (ADR-0033 §5.2).");
