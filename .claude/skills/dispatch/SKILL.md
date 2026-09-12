@@ -58,8 +58,27 @@ Every brief carries these **five** parts. The last two are not optional — they
 turns one silent 50-minute run into two 25-minute runs with feedback in between.
 
 1. **The bounded deliverable** — the acceptance criteria, quoted, and the tier.
-2. **Where to work** — the worktree or branch, and `source scripts/dev-env.sh` before
-   any `dotnet`.
+2. **Where to work — say "create your own worktree", in those words.** Give the branch,
+   then: `git worktree add <path> <branch>`, work there, and `source scripts/dev-env.sh`
+   in the same shell call before any `dotnet`.
+   **Never let an agent work in `/home/user/AiTestLol`.** Roles that get a worktree
+   automatically are fine; the ones that do not — architect, researcher, project-manager,
+   ui-designer — will use the main checkout unless told otherwise, and a brief that says
+   only "work on branch X" is such a brief.
+   One root cause produced four distinct failures on 2026-09-12, none of which announced
+   itself as the same bug:
+   - an orchestrator commit landed on the agent's branch, **twice**, because the agent had
+     checked that branch out in the shared checkout — and `git push origin <integration>`
+     then reported SUCCESS while pushing an unchanged ref;
+   - `verify.sh` reported **1708 tests, exactly 2 × 854**, because two concurrent runs share
+     one `artifacts/verify` directory and stage 6 sums every `.trx` in it. The floor is a
+     minimum, so an inflated count can never fail (`FOLLOWUP-062`);
+   - a review's gate run failed `stage 11, working tree changed` for a change the branch
+     did not make;
+   - **a PR's head moved under a reviewer mid-review**, so its findings were drafted against
+     a tree that no longer existed.
+   Every one of those was green or plausible at the moment it happened. That is why this is
+   a numbered requirement and not advice.
 2b. **Point the agent at `docs/DEVELOPER_BRIEF.md` first**, by name, as the first thing
    it reads — then name the specific sections its task needs. `docs/` is ~91 000 words
    and `DEVELOPER_BRIEF.md` exists solely to route an agent out of it in about three
