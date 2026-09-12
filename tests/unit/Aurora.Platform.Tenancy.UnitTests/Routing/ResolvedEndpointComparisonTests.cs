@@ -23,10 +23,18 @@ namespace Aurora.Platform.Tenancy.UnitTests.Routing;
 public sealed class ResolvedEndpointComparisonTests
 {
     /// <summary>What the resolver composes for one tenant, every §5.2 field set.</summary>
-    private const string Base =
+    private const string Fields =
         "Host=pg-1.internal;Port=5432;Database=aurora_t_acme;Username=aurora_app;Password=pw-one;"
         + "Pooling=True;Minimum Pool Size=0;Maximum Pool Size=10;Connection Idle Lifetime=30;Connection Pruning Interval=5;"
         + "Max Auto Prepare=0;Timeout=5;Command Timeout=30;Application Name=aurora-web:acme";
+
+    /// <summary>
+    /// The base string as the builder renders it. Every varied string is rendered by the same
+    /// builder, so a whole-string comparison against this is a comparison of the varied field and
+    /// nothing else - against the literal above it would differ in key spelling and order, and
+    /// "the strings differ" would be true for the wrong reason.
+    /// </summary>
+    private static readonly string Base = new NpgsqlConnectionStringBuilder(Fields).ConnectionString;
 
     private readonly ITestOutputHelper _output;
 
@@ -53,7 +61,7 @@ public sealed class ResolvedEndpointComparisonTests
         string dimension, string key, string otherValue, bool oneEndpoint)
     {
         string varied = new NpgsqlConnectionStringBuilder(Base) { [key] = otherValue }.ConnectionString;
-        string.Equals(varied, Base, StringComparison.OrdinalIgnoreCase).ShouldBeFalse($"the case varies {dimension}, so the strings must differ");
+        string.Equals(varied, Base, StringComparison.Ordinal).ShouldBeFalse($"the case varies {dimension}, so the strings must differ");
 
         (string Label, string ConnectionString)[] tenants = [("acme", Base), ("other", varied)];
         EndpointComparison<(string Label, string ConnectionString)> comparison = EndpointCollisions.Find(
@@ -78,6 +86,11 @@ public sealed class ResolvedEndpointComparisonTests
 
         int wholeStringCollisions = sameEndpoint.Count(item => string.Equals(item.Varied, Base, StringComparison.Ordinal));
         int endpointCollisions = sameEndpoint.Count(item => ResolvedEndpoint.Parse(item.Varied).Equals(ResolvedEndpoint.Parse(Base)));
+
+        // The control: the whole-string comparison can report a collision - the base against its
+        // own rendering - so its zero over the varied cases is a measurement, not an inability.
+        string rerendered = new NpgsqlConnectionStringBuilder(Base).ConnectionString;
+        string.Equals(rerendered, Base, StringComparison.Ordinal).ShouldBeTrue("the builder renders the same fields the same way twice");
 
         _output.WriteLine($"cases: {sameEndpoint.Length}; whole-string collisions: {wholeStringCollisions}; endpoint collisions: {endpointCollisions}");
         sameEndpoint.Length.ShouldBeGreaterThanOrEqualTo(4);
