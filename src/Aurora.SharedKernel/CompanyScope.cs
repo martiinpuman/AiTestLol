@@ -34,7 +34,7 @@ namespace Aurora.SharedKernel;
 /// (ADR-0007); <see langword="false"/> emits <c>CompanyId = ANY(@p)</c> over
 /// <see cref="CompanyIds"/>. Filtering after materialisation stays forbidden (ADR-0010 rule 6).
 /// The scope never reaches a query by ambient lookup: ADR-0029 A1.2 H-2 makes it a constructor
-/// parameter of any context that maps an <c>ICompanyScoped</c> entity, which B-06.3 builds.
+/// parameter of any context that maps an <see cref="ICompanyScoped"/> entity, which B-06.3 builds.
 /// </para>
 /// <para>
 /// <b>Why a class and not a struct.</b> A struct has a <see langword="default"/> that C# cannot
