@@ -36,6 +36,12 @@
 
   <ItemGroup>
     <Compile Include="..\..\unit\Aurora.Platform.Tenancy.UnitTests\CatalogSchemaGuard.cs" Link="CatalogSchemaGuard.cs" />
+    <!--
+      ResolvedEndpoint.cs is linked the same way: the ADR-0036 comparator is proven over synthetic
+      strings in the unit project (D1) and run over the real resolver's output here (D2), and one
+      source file is what keeps the two the same comparison.
+    -->
+    <Compile Include="..\..\unit\Aurora.Platform.Tenancy.UnitTests\ResolvedEndpoint.cs" Link="ResolvedEndpoint.cs" />
   </ItemGroup>
 
 </Project>

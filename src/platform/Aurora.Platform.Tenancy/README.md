@@ -401,34 +401,77 @@ one connection string. With it the composition is a proof: `cluster_id → (host
 `ux_tenant_cluster_id_database_name` makes `(cluster_id, database_name)` unique, so
 `(host, port, database_name)` — the triple the resolver composes — is unique across `catalog.tenant`.
 Beside it, in the same migration, `ck_database_cluster_host_lower_case` (`host = lower(host)`;
-PR #18 M-2) holds the host to its canonical spelling as `tenant_host` already was, and
-`DatabaseCluster.Register` refuses any other: a host name is case-insensitive, so `PG.INTERNAL`
-beside `pg.internal` would be two rows on one endpoint that the index takes for two.
+ADR-0036 §3, added to ADR-0034 as §3.4) holds the host to its canonical spelling as `tenant_host`
+already was: the index is byte-exact, so it can only make `cluster_id → (host, port)` injective on
+the endpoint if one endpoint has one spelling. `DatabaseCluster.Register` refuses every second
+spelling the check cannot see as well as the one it can: ASCII only, because `lower()` folds a
+non-ASCII letter under one collation and not another, so `pg.ÜBER.internal` could reach the row in
+two spellings on a `C`-collated catalog with the check reporting clean (an internationalised name
+is stored as punycode, which is what DNS carries); no leading, trailing or doubled dot, because
+`pg.internal.` and `pg.internal` are one name to a resolver; and no `/`, so the resolver is never
+handed a Unix-socket directory, whose case is significant and for which the check would be wrong.
+That last is the condition ADR-0036 §3 names as the one that would invalidate the check, and the
+entity is what keeps it from arising through the entity's own write path; a raw-SQL row can still
+carry one, and the check would then fold a path.
 
-**The acceptance criterion is the property, not the index** (ADR-0034 §3.3), because an assertion
-that the index exists would have caught none of the three variants. `CatalogRoutingUniquenessTests`
-asks the catalog, as the owner, to store every executed shape — variant 1; variant 3 with an
-`Active` attacker and with a `Provisioning` one (PR #18 M-3); variant 3 with the host in another
-case (M-1) — records whether each was admitted or refused by a constraint, then takes an endpoint
-for every non-deleted tenant from the production registration: through the real
-`ITenantConnectionResolver` where the application path may connect, and from the routing row the
-resolver reads (`ITenantRoutingReader`, same scope) where it refuses, with the two required to
-agree on every tenant that has both — so a `Provisioning` row, the one B-07.1's adoption rule acts
-on, is compared rather than skipped. It compares every pair, printing tenants, pairs compared and
-collisions, and fails on zero of either. Run before the migration it failed — `variant 3:
-ADMITTED`, `pairs compared: 3; collisions: 1`. The comparison is over host (folded to lower case,
-because a host name is case-insensitive), port and database read back out of the resolved string —
-not the whole string: the composer stamps the tenant key into `Application Name`, so whole strings
-never collide, and a property over them could never fail (executed both ways over one catalog in
-PR #18's review: endpoints `collisions: 1`, whole strings `collisions: 0`). **What that
-establishes:** no two non-deleted tenants name the same host in any spelling, port and database, so
-a further variant that differs in none of those fails here whichever index it walked around. **What
-it does not:** that no two tenants reach the same server. `localhost` beside `127.0.0.1` — an IP
-literal beside a host name, a CNAME, a second DNS record, a failover alias — are different strings
-here and different rows in the catalog (executed in the same review: three rows, one database,
-`collisions: 0`), and no comparison of stored names can close that; `TenantIdentityStamp` is the
-control (ADR-0034 §4). This test replaced B-06.1's inertness guard, deleted rather than repaired
-the day the hole closed, as its message directed. The model's
+**The acceptance criterion is the property, not the index** — ADR-0036 §2.3, which replaced
+ADR-0034 §3.3 after this row found §3.3 vacuous: *no two non-deleted tenants resolve to the same
+physical endpoint*, the endpoint being the `(host, port, database)` triple parsed with
+`NpgsqlConnectionStringBuilder` out of the string the real resolver produced, host compared
+ignoring case, database ordinally, port exactly — never the whole string. A connection string is a
+serialisation of an intent, not a description of a destination (§2.1): `Application Name` carries
+the tenant key by construction, `Username`, `Password` and every ADR-0007 §5.2 pool setting can
+differ between two strings that open one database, so equality over the whole string cannot fail.
+ADR-0036 §2.4 splits the demonstration in three, and this module carries all three:
+
+- **D1, the comparator, as a unit test** (`ResolvedEndpointComparisonTests`, over
+  `ResolvedEndpoint`/`EndpointCollisions` in a source file linked into both test projects as
+  `CatalogSchemaGuard.cs` is). One realistic string with every §5.2 field set, one dimension varied
+  per case, each case first proving the two strings differ: `Application Name`, host case,
+  `Password`, `Username`, `Maximum Pool Size` and `Command Timeout` are one endpoint; database
+  case, database name, port and host name are not. Beside it, ADR-0034 §3.3 as written is executed
+  over the same input — whole-string collisions `0` where endpoint collisions are `6` — so the
+  vacuity stays executable. D1 never touches the catalog and so nothing the catalog refuses can
+  disarm it.
+- **D2, the fleet scan, as an integration test** (`CatalogRoutingUniquenessTests`). It asks the
+  catalog, as the owner, to store every executed shape — variant 1; variant 3 with an `Active`
+  attacker and with a `Provisioning` one (PR #18 M-3); variant 3 with the host in another case
+  (M-1) — records whether each was admitted or refused by a constraint, then takes an endpoint for
+  every non-deleted tenant from the production registration: parsed out of the string the real
+  `ITenantConnectionResolver` produced where the application path may connect, and where it
+  refuses on state, out of the string the real composer produces over the row the real reader read
+  — what the resolver does after its state gate — with the two required to agree on every tenant
+  that has both, so the assertion stays a property of the resolver's output and a `Provisioning`
+  row, the one B-07.1's adoption rule acts on, is compared rather than skipped. It compares every
+  pair with the same comparator, prints tenants, pairs compared and collisions, and fails on zero
+  of either. It is a regression guard, not a proof: once the index and the check are in place no
+  seed can construct a collision through the normal write path.
+- **D3, the one-shot demonstration, recorded rather than standing** — the fix removed the
+  evidence. D2 run before `ux_database_cluster_host_port` existed, against a catalog seeded with
+  variant 3, verbatim:
+
+  ```
+  takeover shapes attempted: 2
+    variant 1: a second tenant row on the victim's cluster, copying its database_name: refused, 23505 on ux_tenant_cluster_id_database_name
+    variant 3: a second cluster row on the victim's cluster's host and port, and a tenant on it copying its database_name: ADMITTED
+  tenants: 3 non-deleted, 3 resolved, 0 not routable (); pairs compared: 3; collisions: 1
+    t-19e54e1994e3 and t-acbe37ef31b3 -> pg-9312cf93ed70.internal:5432/aurora_t_t_19e54e1994e3
+  Shouldly.ShouldAssertException : collisions should be empty but had
+    ADR-0034 §3.3: two non-deleted tenants resolve to one physical database - t-19e54e1994e3 and t-acbe37ef31b3 -> pg-9312cf93ed70.internal:5432/aurora_t_t_19e54e1994e3.
+  ```
+
+  Reproduced after the migration by making the index non-unique and removing the check from `Up`
+  only: `collisions: 6` over 10 pairs, the `Provisioning` attacker and the upper-cased attacker
+  (host folded onto the victim's) among them. Both runs are on PR #18.
+
+**What the comparison establishes:** no two non-deleted tenants name the same host in any
+spelling, port and database, so a further variant that differs in none of those fails D2 whichever
+index it walked around. **What it does not:** that no two tenants reach the same server.
+`localhost` beside `127.0.0.1` — an IP literal beside a host name, a CNAME, a second DNS record, a
+failover alias — are different triples here and different rows in the catalog (executed in PR #18's
+review: three rows, one database, `collisions: 0`), and no comparison of stored names can close
+that; `TenantIdentityStamp` is the control (ADR-0034 §4). D2 replaced B-06.1's inertness guard,
+deleted rather than repaired the day the hole closed, as its message directed. The model's
 own declaration of the index (`CatalogModelTests`) and the SQL the migration emits
 (`ClusterEndpointUniquenessMigrationTests`, unit) are checked in stage 6 with Docker stopped; both
 are tripwires on the configuration and say so, and neither stands in for the property.
@@ -451,9 +494,10 @@ the server is held to naming the duplicate, and the runner's connection (B-08) d
 operator sees.
 
 **What the index does not and cannot cover, stated rather than left to be inferred** (ADR-0034 §2,
-§3.2). Two names for one server — a CNAME, a second DNS record, a failover alias, an IP literal
-beside a host name. (A host spelled in another case was on this list until PR #18 M-1/M-2; the
-check and the folding close that half, and only that half.) The catalog stores what it was told; a
+§3.2; ADR-0036 §2.4). Two names for one server — a CNAME, a second DNS record, a failover alias, an
+IP literal beside a host name. (A host spelled in another case was on this list until ADR-0036 §3;
+the check, the entity's spelling rule and the comparator's folding close that half, and only that
+half.) The catalog stores what it was told; a
 constraint over a name narrows what can be stored and never establishes identity.
 `TenantIdentityStamp` is the control for that (ADR-0034 §4), on every physical connection, and it
 is in effect on no path until B-06.2 and B-07.1 wire it. Two shapes the index is wrong for if they

@@ -44,9 +44,37 @@ public sealed class DatabaseClusterTests
     [InlineData("pg-1.internal:5432")]
     [InlineData("postgres://pg-1.internal")]
     [InlineData("Host=pg-1.internal;Database=x")]
+    [InlineData("/var/run/postgresql")]
     public void A_host_that_is_not_a_bare_host_name_is_refused(string host)
     {
+        // The socket directory is listed on purpose: a Unix-socket path is case-sensitive, the
+        // lower-case rule below would be wrong for it (ADR-0036 §3), and the resolver must never
+        // be handed one from this row.
         Should.Throw<ArgumentException>(() => new ACluster().WithHost(host).Build());
+    }
+
+    [Theory]
+    [InlineData("pg.über.internal")]
+    [InlineData("pg.ÜBER.internal")]
+    [InlineData(".pg-1.internal")]
+    [InlineData("pg-1.internal.")]
+    [InlineData("pg-1..internal")]
+    public void A_host_with_a_second_spelling_the_database_cannot_see_is_refused(string host)
+    {
+        // Two spellings of one name that ck_database_cluster_host_lower_case does not fold: a
+        // non-ASCII letter, whose lower() depends on the catalog's collation, and a trailing,
+        // leading or doubled dot. An internationalised name is stored in its punycode form.
+        Should.Throw<ArgumentException>(() => new ACluster().WithHost(host).Build());
+    }
+
+    [Theory]
+    [InlineData("pg-1.internal")]
+    [InlineData("xn--pg-bfa.internal")]
+    [InlineData("10.0.0.5")]
+    [InlineData("localhost")]
+    public void A_host_name_or_an_IPv4_literal_in_lower_case_ASCII_is_accepted(string host)
+    {
+        new ACluster().WithHost(host).Build().Host.ShouldBe(host);
     }
 
     [Theory]

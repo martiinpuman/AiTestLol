@@ -24,12 +24,18 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// in the B-05 summary rather than reproduced.
 /// </para>
 /// <para>
-/// <b>The host is stored in canonical lower case and the row refuses any other spelling</b>, as
-/// <see cref="TenantHost"/> does, and <c>ck_database_cluster_host_lower_case</c> repeats the rule
-/// in the database. A host name is case-insensitive, so two spellings of one host would be two
-/// rows on one endpoint that <c>ux_database_cluster_host_port</c> could not tell apart
-/// (ADR-0034 §3.2, the aliasing it cannot cover; PR #18 M-1/M-2). An IP literal beside a host
-/// name is the half no spelling rule closes.
+/// <b>The host is stored in one spelling and the row refuses any other</b> (ADR-0036 §3, as
+/// <see cref="TenantHost"/> does): ASCII, lower case, no leading, trailing or doubled dot, and
+/// <c>ck_database_cluster_host_lower_case</c> repeats the case rule in the database. A host name is
+/// case-insensitive, so two spellings of one host would be two rows on one endpoint that
+/// <c>ux_database_cluster_host_port</c> could not tell apart. ASCII only, because the database's
+/// <c>lower()</c> folds non-ASCII letters under one collation and not another, so a host with one
+/// in it could reach the row in two spellings on a <c>C</c>-collated catalog while the check
+/// reports it clean — an internationalised name is stored in its punycode form, which is what DNS
+/// carries. No dot at either end or doubled, because <c>pg.internal.</c> and <c>pg.internal</c> are
+/// one name to a resolver and two strings to the index. No <c>/</c>, so the resolver can never be
+/// handed a Unix-socket directory, whose case is significant and for which the check would be
+/// wrong (ADR-0036 §3). An IP literal beside a host name is the half no spelling rule closes.
 /// </para>
 /// </remarks>
 internal sealed class DatabaseCluster
@@ -102,7 +108,8 @@ internal sealed class DatabaseCluster
         {
             throw new ArgumentException(
                 $"'{host}' is not a host name or address the registry accepts: expected 1 to {MaxHostLength} " +
-                "characters in lower case, with no whitespace, no port suffix and no scheme.",
+                "ASCII characters in lower case, dots only between labels, with no whitespace, no port suffix, " +
+                "no scheme and no path.",
                 nameof(host));
         }
 
@@ -143,15 +150,15 @@ internal sealed class DatabaseCluster
 
     private static bool IsWellFormedHost(string host)
     {
-        if (host.Length is 0 or > MaxHostLength)
+        if (host.Length is 0 or > MaxHostLength || host[0] == '.' || host[^1] == '.' || host.Contains("..", StringComparison.Ordinal))
         {
             return false;
         }
 
         foreach (char character in host)
         {
-            if (char.IsWhiteSpace(character) || char.IsControl(character) || char.IsAsciiLetterUpper(character)
-                || character is '/' or ':' or '=' or ';')
+            if (!char.IsAscii(character) || char.IsWhiteSpace(character) || char.IsControl(character)
+                || char.IsAsciiLetterUpper(character) || character is '/' or ':' or '=' or ';')
             {
                 return false;
             }
