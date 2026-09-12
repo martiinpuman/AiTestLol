@@ -4,6 +4,7 @@
 - **Deciders:** product owner (country-agnostic core), architect (contract)
 - **Supersedes:** —
 - **Superseded by:** **partially superseded by [ADR-0031](ADR-0031-country-package-contract-corrections.md) (2026-09-11)** — §3.1's "only core assembly" sentence, §7 row 10 (a bounded-range validity rule is added), §8.3 as it applies to `IStatutoryReportDefinition.VersionAsOf`, §9.3's description of what a package directory contains, and §10's ownership of `CountryPackageContractTests<TPackage>`. Every other clause of this ADR stands.
+- **Amended by:** **[ADR-0033](ADR-0033-the-tenancy-trust-boundary-is-the-process.md) (2026-09-12)** — §9.4's statement that an `AssemblyLoadContext` is not a security boundary is correct and stands; ADR-0033 carries it the rest of the way for tenancy specifically (the threat, the control, the residual and what must demonstrate each), and **narrows where §9.3's trust levels take effect**: a process that can route tenants loads only packages whose signature establishes `FirstParty`. §9.2's "same thread, same transaction" is unchanged and is named there as the cost of ever moving to an out-of-process host. **§4 is amended by [ADR-0035](ADR-0035-installed-packages-defined-and-the-ddl-handle-confirmed.md) §2 (2026-09-12)**, which supplies the definition of the `InstalledPackages` set a `TenantScope` carries — §4 describes what a package contributes to a tenant database and never defined that set.
 - **Related:** ADR-0004 (PostgreSQL), ADR-0007 (tenancy), ADR-0018 (retention), ADR-0021 (money and rounding), ADR-0023 (tax registration)
 - **Primary input:** `../research/features/localization-packages.md` (ten recommended extension points, and the three failure classes every incumbent exhibits) and `../research/regulation/first-country-package.md` (New Zealand as the first reference package)
 
@@ -313,6 +314,8 @@ This is the novelty in this ADR, and that is its written justification. Everythi
 - Private keys are never in the repository. Signing happens in the release pipeline.
 
 ### 9.4 An `AssemblyLoadContext` is not a security boundary — stated plainly
+
+> **Amended by [ADR-0033](ADR-0033-the-tenancy-trust-boundary-is-the-process.md) (2026-09-12).** This section is right and nothing in it is withdrawn. What it does not say is what follows for **tenancy**: a loaded package can reflect on `TenantScope`'s `internal` constructor and mint a valid scope for any tenant id, and ADR-0007 §4.3's stamp *agrees* with it, because the connection really does reach that tenant. ADR-0033 §4 records the checked position — .NET offers **no** in-process privilege boundary against a loaded assembly, and there is no sandbox to opt into — §5 names admission as the control and writes down the residual, and §5.6 says what must demonstrate both. Two precisions on this section's own wording: the collectible context gives version isolation **and** an *attempted* unload, which package code can prevent completing; and "first-party only in v1" becomes an enforceable admission floor rather than a policy sentence (ADR-0033 §5.2), which is a gate that **does not exist yet**.
 
 Loaded package code runs with full trust in-process: it can read any file the process can read, open any socket, and reflect over anything. `AssemblyLoadContext` provides **version isolation and unloadability, not sandboxing**. Therefore:
 

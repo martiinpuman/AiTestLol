@@ -5,6 +5,7 @@
 - **Supersedes:** — (nothing is reversed here; ADR-0007 §4.1 and §4.2 are **amended**, see below)
 - **Amends:** ADR-0007 §4.1 and §4.2 — those sections state the guarantee in prose ("no tenant `DbContext` is ever registered", "the only public way to obtain one"). This ADR states the boundary a rule reading IL can bind to, and both sections carry a dated pointer here.
 - **Superseded by:** —
+- **Confirmed by:** **[ADR-0035](ADR-0035-installed-packages-defined-and-the-ddl-handle-confirmed.md) §3.3 (2026-09-12)** — §6's `SalesSchemaMigrator : IModuleSchemaMigrator` worked example, which has a *module* type take `ITenantMigrationContextFactory<SalesDbContext>`, could not coexist with ADR-0027 §1's signature `CreateAsync(TenantDatabaseHandle, ct)` and its own allow-list rule T6. The conflict is resolved **in this ADR's favour**: the example stands and ADR-0027 §1's signature is corrected. Nothing in this ADR changes.
 - **Related:** ADR-0007 (multi-tenancy), ADR-0027 (the DDL path), ADR-0030 (fitness rules read IL metadata), ADR-0003 rule 3 (the catalog context is the one conventionally registered context), `../reviews/B-04-rereview.md` (findings H-2, H-4, m-1, m-2), `../architecture/testing-strategy.md` §5.3, `../architecture/solution-layout.md` §2.1
 
 > Four decisions, no more. Each names the mechanism that enforces it, the fixture that proves the mechanism fires, and the fault that must turn that fixture red. Where a decision cannot be mechanised, §7 says so in those words and calls it a convention.
