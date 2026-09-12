@@ -380,7 +380,7 @@ ADR-0010 rules 5, 10; ADR-0029 §5, §8, A1.3 M-6, A1.4; ADR-0013 rule 3; ADR-00
 
 #### B-18.1 — Identity: catalog identity schema, the credential privilege boundary, the platform authentication trail
 
-ADR-0029 §2, A1.3 M-7, **A2.8**; ADR-0007 §9.2, §9.3; `solution-layout.md` §6.4 item 5 (the ACL-comparison probe and the writer field).
+ADR-0029 §2, A1.3 M-7, **A2.7**; ADR-0007 §9.2, §9.3; `solution-layout.md` §6.4 item 5 (the ACL-comparison probe and the writer field).
 
 1. One additive EF migration on `CatalogDbContext` (expand-only — B-09's categories) adds `catalog.identity_credential` and `catalog.identity_invitation` (tenant, user, token hash, kind `Invite|Join`, expires_at, redeemed_at), and points `catalog.identity_user.credential_ref` at `identity_credential`.
 2. **Credential privilege boundary:** a new `aurora_identity` login owns access to `catalog.identity_credential`, and `aurora_app` holds **nothing** on it. Probed in the shape §6.4 item 5 criterion 2 fixed — compare `aclexplode(pg_class.relacl)` **plus** `pg_attribute.attacl`, for `aurora_app` **and** `PUBLIC`, against `CatalogSchemaAllowlist.AppRolePrivileges`, **not** `has_table_privilege` (blind to a column-level grant, and short by `MAINTAIN` on PostgreSQL 17) — then, connected **as `aurora_app`**, execute `SELECT` and expect SQLSTATE `42501`. Each new entry names its **writer** (§6.4 item 5 criterion 3): `identity_credential` → the identity store on `aurora_identity`; `identity_invitation` → `B-18.3`'s issue path and `B-18.4`'s redemption. Probes report how many relations and ACL entries they compared and fail on zero.

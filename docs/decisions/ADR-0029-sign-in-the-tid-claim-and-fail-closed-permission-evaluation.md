@@ -147,7 +147,7 @@ Both sides of the tenant boundary, on the rule of ADR-0028 §6, with one additio
 | `tid` mismatch / no-tenant-for-host refusal | `catalog.authentication_event` | The claim is not trusted, so no tenant is trusted |
 | **Permission denial** raised by the enforcement pipeline | tenant `audit.audit_event` | Authenticated, tenant resolved and trusted. A bare `IPermissionEvaluator` probe used to hide a UI button is **not** audited — only a refusal at the enforcement point |
 
-`catalog.authentication_event(id, occurred_at, event_type, outcome, attempted_user_id NULL, attempted_email_hash bytea, tenant_id NULL, host, source, correlation_id, detail jsonb)`. `attempted_email_hash` is SHA-256 of the normalized email: enough to correlate an attack across attempts, and it does not widen ADR-0007 §9.3's single recorded personal-data exception to people who are not users. Append-only — **by ADR-0028 Amendment 1's mechanisms, not the §2 ones this sentence originally cited; see A2.8**.
+`catalog.authentication_event(id, occurred_at, event_type, outcome, attempted_user_id NULL, attempted_email_hash bytea, tenant_id NULL, host, source, correlation_id, detail jsonb)`. `attempted_email_hash` is SHA-256 of the normalized email: enough to correlate an attack across attempts, and it does not widen ADR-0007 §9.3's single recorded personal-data exception to people who are not users. Append-only — **by ADR-0028 Amendment 1's mechanisms, not the §2 ones this sentence originally cited; see A2.7**.
 
 **A sign-in that cannot be recorded does not happen:** if the `catalog.authentication_event` write fails, the sign-in fails. An authentication log that is allowed to drop rows under load is not an authentication log.
 
@@ -174,7 +174,7 @@ Named so nobody mistakes silence for a decision, and so nobody designs them insi
 - Negative: nine bootstrap rows where the plan had none, and two of them (`B-17.1`, `B-18.3`) land **before** `B-07.3`, which slips. That is the cost of the gap having been real; discovering it during `B-15.2` would have cost a rework of the whole spine.
 - Negative: a per-evaluation permission read is a cache lookup on every guarded command. ADR-0012's 60 s TTL bounds the database cost; the alternative bounds revocation at 8 hours, which is not a trade an ERP may make.
 - Negative: the multi-tenant user's experience is a `403` until the switch endpoint exists. Deliberate: refusing is safe and correcting it later is additive.
-- Negative: `catalog.authentication_event` is a third append-only table in the catalog with its own per-table enforcement, because the `catalog` schema holds mutable tables too and cannot take a schema-wide default-privileges policy (A2.8).
+- Negative: `catalog.authentication_event` is a third append-only table in the catalog with its own per-table enforcement, because the `catalog` schema holds mutable tables too and cannot take a schema-wide default-privileges policy (A2.7).
 
 ## Revisit when
 
@@ -303,7 +303,7 @@ Three individually correct decisions composed badly: every failed sign-in writes
 | **M-4** | `attempted_email_hash` becomes **HMAC-SHA-256 with a key from the secret store** (ADR-0011). Unsalted SHA-256 over an enumerable address space is reversible, so §7's claim that it does not widen ADR-0007 §9.3's personal-data exception was false. §7 is corrected: it is a **correlation key, not an anonymisation**, and it inherits H-8's retention window and partition-drop path |
 | **M-5** | Pinned, with a test asserting the configured values: `PasswordOptions` ≥ 12 characters and **no composition rules** (the framework default of 6 plus character classes fails ASVS L2); `LockoutOptions` 10 attempts, 15-minute lockout, enabled for new users; invitation TTL 72 hours. A breached-password check is a named follow-up, not an omission |
 | **M-6** | A denial writes **at most one** `audit.audit_event` per `(actor, permission, request type)` per 5-minute window, deduplicated in the tenant cache; the **metric** carries the exact count. Otherwise the least privileged member of a tenant can grow an append-only partitioned table without bound and contend the per-tenant audit lock that every business write needs |
-| **M-7** | Password hashes get a privilege boundary, not just a separate row: `catalog.identity_credential` is readable only by a new **`aurora_identity`** login used by the identity store's own data source; `aurora_app` holds nothing on it, probed by the ACL comparison of A2.8 (**not** `has_table_privilege`, which this row originally specified), because B-05 finding M-1 already showed this project shipping an over-broad catalog grant once |
+| **M-7** | Password hashes get a privilege boundary, not just a separate row: `catalog.identity_credential` is readable only by a new **`aurora_identity`** login used by the identity store's own data source; `aurora_app` holds nothing on it, probed by the ACL comparison of A2.7 (**not** `has_table_privilege`, which this row originally specified), because B-05 finding M-1 already showed this project shipping an over-broad catalog grant once |
 | **L-1** | `TenantClaimMismatchException` carries tenant ids in **structured properties only**, never in `Message`, so §4.2's "names neither tenant" does not depend on a Problem Details handler never echoing `ex.Message` |
 | **L-2** | The counter and log distinguish "no `tid`" from "`tid` mismatch" (never the response body), so H-6's fleet-wide claim-drop and a genuine replay attack are not the same line on a dashboard |
 | **L-3** | The invitation token is never placed in a URL: redemption POSTs the token into the redeem form |
@@ -409,7 +409,7 @@ The criterion that makes this falsifiable is a **count**: over a circuit's life 
 
 **And the rule that stops this recurring:** a dependency in an architecture document names **what the row ships**, with the number in parentheses. A number alone is a reference that a legitimate size split silently inverts, which is exactly what happened here.
 
-## A2.8 — Every append-only claim in this ADR cited a mechanism that has since been withdrawn
+## A2.7 — Every append-only claim in this ADR cited a mechanism that has since been withdrawn
 
 Discovered on merging the integration branch, not by review: **ADR-0028 Amendment 1 replaced ADR-0028 §2**, because `ALTER DEFAULT PRIVILEGES … REVOKE UPDATE, DELETE` is a **no-op on PostgreSQL 17.11** and the criterion built on it could not fail — and `has_table_privilege`, which §2 and this ADR both named as the probe, is blind to a column-level grant and short by `MAINTAIN` on PostgreSQL 17. Every append-only sentence in §7, A1.3 M-7 and A2.1 inherited both faults.
 
@@ -422,6 +422,6 @@ Discovered on merging the integration branch, not by review: **ADR-0028 Amendmen
 
 The general lesson, and it is the same one as A2.6: **this ADR cited a mechanism by section number and inherited its later withdrawal silently.** Cite the mechanism *and* what it must demonstrate — here, "an `INSERT` that succeeds and an `UPDATE` that returns `42501`, as `aurora_app`" — so that a citation going stale shows up as a test that stops making sense rather than as a probe that quietly passes against a no-op.
 
-## A2.7 — Named, not answered
+## A2.8 — Named, not answered
 
-Added to §9 and A1.4's list: the **operator-support scope factory and its support-grant validation** (A2.4 — the shape is recorded, the flow is not designed); whether **SPEC-001 AC-1** means an administrator Membership that *exists* or one that is *usable*, now that A2.3 makes it `Invited` until redeemed — a project-manager question; and the ownership question raised by A2.8: whether `catalog.authentication_event` should be created by `solution-layout.md` §6.4 item 5's row (the catalog's other append-only tables) rather than by `B-18.9` — B-18.9 now depends on it for `CatalogSchemaAllowlist`, and merging them is the project-manager's call, not this ADR's. (The fitness-rule id for "no `TenantScope` field on a `CircuitHandler` or component" is no longer open: `task/ARCH-TENANT-DOORS` has merged, the §5.3 range is settled, and the rule is **T11**.)
+Added to §9 and A1.4's list: the **operator-support scope factory and its support-grant validation** (A2.4 — the shape is recorded, the flow is not designed); whether **SPEC-001 AC-1** means an administrator Membership that *exists* or one that is *usable*, now that A2.3 makes it `Invited` until redeemed — a project-manager question; and the ownership question raised by A2.7: whether `catalog.authentication_event` should be created by `solution-layout.md` §6.4 item 5's row (the catalog's other append-only tables) rather than by `B-18.9` — B-18.9 now depends on it for `CatalogSchemaAllowlist`, and merging them is the project-manager's call, not this ADR's. (The fitness-rule id for "no `TenantScope` field on a `CircuitHandler` or component" is no longer open: `task/ARCH-TENANT-DOORS` has merged, the §5.3 range is settled, and the rule is **T11**.)
