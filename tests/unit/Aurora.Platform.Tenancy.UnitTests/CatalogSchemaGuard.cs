@@ -23,27 +23,51 @@ public sealed record AppRoleGrant(string Privilege, string NeededBy);
 
 /// <summary>
 /// One object in schema <c>catalog</c> that carries an ACL of its own, by the kind the ACL lives
-/// on: <see cref="Table"/> (every relation a table privilege applies to — table, partitioned
-/// table, view, materialized view, foreign table), <c>sequence</c>, <c>function</c>,
-/// <c>procedure</c>, <c>type</c>, or the <see cref="Schema"/> itself. This is the key both the
-/// record and <c>CatalogPrivilegeTests</c>' oracle use, so an object of one kind can never be
-/// mistaken for an object of another with the same name. A function's name carries its identity
-/// arguments, as PostgreSQL spells an overload: <c>touch_activity(uuid)</c>.
+/// on: <see cref="Table"/> (every relation a table privilege applies to that is not a partition —
+/// table, partitioned table, view, materialized view, foreign table), <see cref="Partition"/>,
+/// <c>sequence</c>, <c>function</c>, <c>procedure</c>, <c>type</c>, or the <see cref="Schema"/>
+/// itself. This is the key both the record and <c>CatalogPrivilegeTests</c>' oracle use, so an
+/// object of one kind can never be mistaken for an object of another with the same name. A
+/// function's name carries its identity arguments, as PostgreSQL spells an overload:
+/// <c>touch_activity(uuid)</c>.
 /// </summary>
-public sealed record CatalogObject(string Kind, string Name)
+/// <param name="Kind">The kind the ACL lives on, one of the constants here or <see cref="CatalogSchemaAllowlist.ObjectKinds"/>.</param>
+/// <param name="Name">The object's name within schema <c>catalog</c>; for a function, with its identity arguments.</param>
+/// <param name="Parent">
+/// For a <see cref="Partition"/> the oracle observed, the partitioned table at the root of its
+/// tree, which is what its ACL is decided by (<see cref="CatalogSchemaAllowlist.PartitionPrivileges"/>);
+/// the record's own key for that decision is <c>(Partition, root)</c> with no parent, and
+/// <see cref="DecidedBy"/> maps the one to the other. Null for every other kind.
+/// </param>
+public sealed record CatalogObject(string Kind, string Name, string? Parent = null)
 {
     public const string Table = "table";
+    public const string Partition = "partition";
     public const string Schema = "schema";
 
     public static CatalogObject TableNamed(string name) => new(Table, name);
 
     /// <summary>The record in <see cref="CatalogSchemaAllowlist"/> that decides this object.</summary>
-    public string Record =>
-        Kind == Table ? nameof(CatalogSchemaAllowlist.AppRolePrivileges) : nameof(CatalogSchemaAllowlist.AppRoleObjectPrivileges);
+    public string Record => Kind switch
+    {
+        Table => nameof(CatalogSchemaAllowlist.AppRolePrivileges),
+        Partition => nameof(CatalogSchemaAllowlist.PartitionPrivileges),
+        _ => nameof(CatalogSchemaAllowlist.AppRoleObjectPrivileges),
+    };
+
+    /// <summary>
+    /// The key the decision for this object is recorded under: itself, except for an observed
+    /// partition, whose decision is its root table's <see cref="CatalogSchemaAllowlist.PartitionPrivileges"/>
+    /// entry — one expectation for every partition of a tree, however many there are and whatever
+    /// a job names them.
+    /// </summary>
+    public CatalogObject DecidedBy => Kind == Partition && Parent is not null ? new(Partition, Parent) : this;
 
     public override string ToString() => Kind switch
     {
         Table => $"catalog.{Name}",
+        Partition when Parent is null => $"every partition of catalog.{Name}",
+        Partition => $"partition catalog.{Name} of catalog.{Parent}",
         Schema => $"schema {Name}",
         _ => $"{Kind} catalog.{Name}",
     };
@@ -505,12 +529,40 @@ public static class CatalogSchemaAllowlist
         };
 
     /// <summary>
-    /// <see cref="AppRolePrivileges"/> and <see cref="AppRoleObjectPrivileges"/> as one map, keyed
-    /// the way the oracle keys what it reads from the database.
+    /// What <c>aurora_app</c> holds on every partition of a partitioned <c>catalog</c> table, keyed
+    /// by the table at the root of the tree — one expectation for the whole tree, however many
+    /// partitions it has and whatever a job names them. The catalog's shape is <b>empty</b>
+    /// (<c>solution-layout.md</c> §6.4 item 5 criterion 3; ADR-0028 Amendment 2): with no default
+    /// privilege in this schema a partition comes out with a null ACL and stays unreachable to
+    /// the role directly — a routed <c>INSERT</c> through the parent is checked against the
+    /// <em>parent's</em> ACL and succeeds, a direct <c>INSERT</c>, <c>SELECT</c> or <c>TRUNCATE</c>
+    /// on the partition is <c>42501</c>. That is tighter than <c>audit</c>, whose schema-wide
+    /// default grant gives every partition <c>SELECT, INSERT</c>; unless this record says
+    /// <em>empty</em> out loud, <c>audit</c>'s expectation is what gets copied across.
+    /// </summary>
+    /// <remarks>
+    /// The entry must be present and empty, not absent: the oracle reports a partition whose root
+    /// has no entry here as undecided, exactly as it reports a table without a row in
+    /// <see cref="AppRolePrivileges"/>. No partitioned table exists in <c>catalog</c> today —
+    /// <c>catalog.authentication_event</c> (B-18.9) will be the first, and records itself here as
+    /// <c>["authentication_event"] = []</c>. <c>CatalogPrivilegeAllowlistTests</c> holds every
+    /// entry to empty and to a table <see cref="AppRolePrivileges"/> decides, and
+    /// <c>CatalogPrivilegeTests</c> shows the comparison working, and failing, over a partitioned
+    /// table it creates and rolls back.
+    /// </remarks>
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<AppRoleGrant>> PartitionPrivileges =
+        new Dictionary<string, IReadOnlyList<AppRoleGrant>>(StringComparer.Ordinal);
+
+    /// <summary>
+    /// <see cref="AppRolePrivileges"/>, <see cref="AppRoleObjectPrivileges"/> and
+    /// <see cref="PartitionPrivileges"/> as one map, keyed the way the oracle keys what it reads
+    /// from the database — a tree's partitions under <c>(partition, root)</c>, which is what
+    /// <see cref="CatalogObject.DecidedBy"/> maps an observed partition to.
     /// </summary>
     public static readonly IReadOnlyDictionary<CatalogObject, IReadOnlyList<AppRoleGrant>> AppRoleDecisions =
         AppRolePrivileges.Select(table => (Object: CatalogObject.TableNamed(table.Key), Grants: table.Value))
             .Concat(AppRoleObjectPrivileges.Select(other => (Object: other.Key, Grants: other.Value)))
+            .Concat(PartitionPrivileges.Select(tree => (Object: new CatalogObject(CatalogObject.Partition, tree.Key), Grants: tree.Value)))
             .ToDictionary(decision => decision.Object, decision => decision.Grants);
 
     private static HashSet<string> Set(params string[] values) => new(values, StringComparer.Ordinal);

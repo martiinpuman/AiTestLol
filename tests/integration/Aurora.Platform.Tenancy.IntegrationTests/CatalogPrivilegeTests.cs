@@ -80,27 +80,32 @@ public sealed class CatalogPrivilegeTests
     /// adds and a grant that arrives through another role are all entries, and every entry the
     /// record does not name is a difference. The LEFT JOIN keeps an object with no entry at all in
     /// the result, so an object the role cannot touch is still a row the record has to account
-    /// for. Not read here: <c>pg_default_acl</c>, which has no object until one is created —
-    /// <c>The_catalog_sets_exactly_one_default_privilege…</c> reads it on its own.
+    /// for. A partition is read as its own object — its ACL is its own, not its parent's — and
+    /// carries the root of its tree, which is what <c>CatalogSchemaAllowlist.PartitionPrivileges</c>
+    /// decides it by. Not read here: <c>pg_default_acl</c>, which has no object until one is
+    /// created — <c>The_catalog_sets_exactly_one_default_privilege…</c> reads it on its own.
     /// </summary>
     private const string AclEntriesSql =
         "WITH object AS (" +
-        "  SELECT CASE WHEN c.relkind = 'S' THEN 'sequence' ELSE 'table' END AS kind, c.relname::text AS name, c.oid AS reloid," +
+        "  SELECT CASE WHEN c.relkind = 'S' THEN 'sequence' WHEN c.relispartition THEN 'partition' ELSE 'table' END AS kind," +
+        "         c.relname::text AS name," +
+        "         CASE WHEN c.relispartition THEN (SELECT r.relname::text FROM pg_class r WHERE r.oid = pg_partition_root(c.oid)) END AS parent," +
+        "         c.oid AS reloid," +
         "         COALESCE(c.relacl, acldefault((CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END)::\"char\", c.relowner)) AS acl" +
         "  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace" +
         "  WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p', 'v', 'm', 'f', 'S')" +
         "  UNION ALL" +
         "  SELECT CASE WHEN p.prokind = 'p' THEN 'procedure' ELSE 'function' END," +
-        "         p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', NULL::oid," +
+        "         p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', NULL::text, NULL::oid," +
         "         COALESCE(p.proacl, acldefault('f'::\"char\", p.proowner))" +
         "  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = 'catalog'" +
         "  UNION ALL" +
-        "  SELECT 'type', t.typname::text, NULL::oid, COALESCE(t.typacl, acldefault('T'::\"char\", t.typowner))" +
+        "  SELECT 'type', t.typname::text, NULL::text, NULL::oid, COALESCE(t.typacl, acldefault('T'::\"char\", t.typowner))" +
         "  FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace" +
         "  WHERE n.nspname = 'catalog' AND t.typcategory <> 'A'" +
         "    AND (t.typrelid = 0 OR EXISTS (SELECT 1 FROM pg_class c WHERE c.oid = t.typrelid AND c.relkind = 'c'))" +
         "  UNION ALL" +
-        "  SELECT 'schema', n.nspname::text, NULL::oid, COALESCE(n.nspacl, acldefault('n'::\"char\", n.nspowner))" +
+        "  SELECT 'schema', n.nspname::text, NULL::text, NULL::oid, COALESCE(n.nspacl, acldefault('n'::\"char\", n.nspowner))" +
         "  FROM pg_namespace n WHERE n.nspname = 'catalog')," +
         " entry AS (" +
         "  SELECT o.kind, o.name, acl.privilege_type, NULL::text AS column_name, acl.grantee, acl.is_grantable" +
@@ -113,7 +118,8 @@ public sealed class CatalogPrivilegeTests
         " SELECT o.kind, o.name, e.privilege_type, e.column_name, e.is_grantable," +
         "        CASE WHEN e.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(e.grantee) END," +
         "        CASE WHEN e.grantee = 0 THEN true ELSE pg_has_role(@role, e.grantee, 'USAGE') END," +
-        "        CASE WHEN e.grantee = 0 THEN true ELSE pg_has_role(@role, e.grantee, 'SET') END" +
+        "        CASE WHEN e.grantee = 0 THEN true ELSE pg_has_role(@role, e.grantee, 'SET') END," +
+        "        o.parent" +
         " FROM object o" +
         " LEFT JOIN entry e ON e.kind = o.kind AND e.name = o.name" +
         "   AND (e.grantee = 0 OR pg_has_role(@role, e.grantee, 'MEMBER'))";
@@ -145,7 +151,7 @@ public sealed class CatalogPrivilegeTests
             + $"a NULL ACL read as the owner default; it holds {held.ByObject.Sum(o => o.Value.Count)} distinct privileges.");
 
         differences.ShouldBeEmpty(string.Join(Environment.NewLine, differences));
-        held.ByObject.Count.ShouldBe(CatalogSchemaAllowlist.AppRoleDecisions.Count);
+        held.ByObject.Keys.Select(o => o.DecidedBy).Distinct().Count().ShouldBe(CatalogSchemaAllowlist.AppRoleDecisions.Count);
         held.ByObject.Keys.Count(o => o.Kind == CatalogObject.Table).ShouldBe(CatalogSchemaAllowlist.AppRolePrivileges.Count);
         held.ByObject.Keys.ShouldContain(new CatalogObject(CatalogObject.Schema, "catalog"));
 
@@ -303,6 +309,135 @@ public sealed class CatalogPrivilegeTests
         differences.Count.ShouldBe(1, string.Join(Environment.NewLine, differences));
         differences[0].ShouldContain($"function catalog.{function}() exists but");
         differences[0].ShouldEndWith("holds [EXECUTE through PUBLIC]");
+    }
+
+    [Fact]
+    public async Task A_partition_is_decided_by_its_root_table_and_the_expectation_must_be_present_and_empty()
+    {
+        // solution-layout.md 6.4 item 5 criterion 3 and ADR-0028 Amendment 2, over a partitioned
+        // table created inside a transaction that is rolled back, because no partitioned table
+        // exists in catalog yet (B-18.9 brings the first). Four shapes of the record, one
+        // observation each: the real record, which knows neither the table nor its partitions,
+        // reports every one of them; a record that is present and empty for the tree is accepted;
+        // a record that copies audit's {SELECT, INSERT} onto the partitions is reported as
+        // privileges the role does not hold; and, with the record present and empty, a grant on
+        // one partition - the fault the criterion names - is reported on that partition by name.
+        // Plus a record for a tree with no partition, which is stale and must not pass silently.
+        string root = Unique.Identifier("tree");
+        await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
+        await using NpgsqlTransaction transaction = await connection.BeginTransactionAsync();
+
+        foreach (string sql in new[]
+                 {
+                     $"CREATE TABLE catalog.{root} (occurred_at timestamptz NOT NULL, id uuid NOT NULL, PRIMARY KEY (occurred_at, id)) PARTITION BY RANGE (occurred_at)",
+                     $"CREATE TABLE catalog.{root}_default PARTITION OF catalog.{root} DEFAULT",
+                     $"CREATE TABLE catalog.{root}_2026_09 PARTITION OF catalog.{root} FOR VALUES FROM ('2026-09-01') TO ('2026-10-01')",
+                     $"GRANT SELECT, INSERT ON catalog.{root} TO {CatalogDatabaseFixture.AppRole}",
+                 })
+        {
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            await command.ExecuteNonQueryAsync();
+        }
+
+        HeldPrivileges held = await PrivilegesHeldAsync(connection, transaction);
+        List<CatalogObject> partitions = [.. held.ByObject.Keys.Where(o => o.Kind == CatalogObject.Partition && o.Parent == root)];
+        _output.WriteLine($"Read {partitions.Count} partitions of catalog.{root}: {string.Join(", ", partitions)}.");
+        partitions.Count.ShouldBe(2);
+        foreach (CatalogObject partition in partitions)
+        {
+            held.ByObject[partition].ShouldBeEmpty($"{partition} has no ACL of its own in a schema with no default privilege");
+        }
+
+        List<string> absent = Differences(held.ByObject, CatalogSchemaAllowlist.AppRoleDecisions);
+        absent.Count.ShouldBe(3, string.Join(Environment.NewLine, absent));
+        absent.ShouldContain(d => d.StartsWith($"catalog.{root} exists but CatalogSchemaAllowlist.AppRolePrivileges records no decision", StringComparison.Ordinal));
+        absent.ShouldContain(d => d.StartsWith($"partition catalog.{root}_default of catalog.{root} exists but CatalogSchemaAllowlist.PartitionPrivileges records no decision", StringComparison.Ordinal));
+        absent.ShouldContain(d => d.StartsWith($"partition catalog.{root}_2026_09 of catalog.{root} exists but CatalogSchemaAllowlist.PartitionPrivileges records no decision", StringComparison.Ordinal));
+
+        var tree = new CatalogObject(CatalogObject.Partition, root);
+        Dictionary<CatalogObject, IReadOnlyList<AppRoleGrant>> decided = new(CatalogSchemaAllowlist.AppRoleDecisions)
+        {
+            [CatalogObject.TableNamed(root)] = [new("SELECT", "this test (B-19)"), new("INSERT", "this test (B-19)")],
+            [tree] = [],
+        };
+        Differences(held.ByObject, decided).ShouldBeEmpty("present and empty is the catalog's shape");
+
+        decided[tree] = [new("SELECT", "audit's shape, copied (B-19)"), new("INSERT", "audit's shape, copied (B-19)")];
+        List<string> copied = Differences(held.ByObject, decided);
+        copied.Count.ShouldBe(4, string.Join(Environment.NewLine, copied));
+        copied.ShouldAllBe(d => d.Contains($" of catalog.{root}, which {CatalogDatabaseFixture.AppRole} does not hold", StringComparison.Ordinal));
+
+        decided[tree] = [];
+        await using (var grant = new NpgsqlCommand($"GRANT SELECT, INSERT ON catalog.{root}_2026_09 TO {CatalogDatabaseFixture.AppRole}", connection, transaction))
+        {
+            await grant.ExecuteNonQueryAsync();
+        }
+
+        List<string> granted = Differences((await PrivilegesHeldAsync(connection, transaction)).ByObject, decided);
+        granted.Count.ShouldBe(2, string.Join(Environment.NewLine, granted));
+        granted.ShouldContain($"{CatalogDatabaseFixture.AppRole} holds INSERT on partition catalog.{root}_2026_09 of catalog.{root}, which the allowlist does not record");
+        granted.ShouldContain($"{CatalogDatabaseFixture.AppRole} holds SELECT on partition catalog.{root}_2026_09 of catalog.{root}, which the allowlist does not record");
+
+        string nowhere = Unique.Identifier("nowhere");
+        decided[new CatalogObject(CatalogObject.Partition, nowhere)] = [];
+        Differences(held.ByObject, decided)
+            .ShouldContain($"the allowlist records every partition of catalog.{nowhere}, and catalog.{nowhere} has no partition in the migrated schema");
+
+        await transaction.RollbackAsync();
+
+        // Rolled back, the record and the schema agree again.
+        Differences((await PrivilegesHeldAsync(connection, null)).ByObject, CatalogSchemaAllowlist.AppRoleDecisions).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task A_partition_of_a_catalog_table_is_reached_through_its_parent_and_never_directly()
+    {
+        // Why PartitionPrivileges' expectation is empty, executed rather than quoted from the
+        // amendment: in a schema with no default privilege a partition has no ACL, a routed write
+        // is checked against the parent's ACL and lands, and a direct SELECT, INSERT or TRUNCATE
+        // on the partition is 42501. Committed rather than rolled back because aurora_app has to
+        // see the table from its own connection; the collection runs one test at a time, and the
+        // tree is dropped whatever happens.
+        string root = Unique.Identifier("tree");
+        await using NpgsqlConnection migrator = await _catalog.OpenMigratorConnectionAsync();
+        await CatalogDatabaseFixture.ExecuteAsync(
+            migrator,
+            $"CREATE TABLE catalog.{root} (occurred_at timestamptz NOT NULL, id uuid NOT NULL, PRIMARY KEY (occurred_at, id)) PARTITION BY RANGE (occurred_at)");
+        await CatalogDatabaseFixture.ExecuteAsync(migrator, $"CREATE TABLE catalog.{root}_default PARTITION OF catalog.{root} DEFAULT");
+        await CatalogDatabaseFixture.ExecuteAsync(migrator, $"GRANT SELECT, INSERT ON catalog.{root} TO {CatalogDatabaseFixture.AppRole}");
+
+        try
+        {
+            await using NpgsqlConnection app = await _catalog.OpenAppConnectionAsync();
+            await using (var routed = new NpgsqlCommand($"INSERT INTO catalog.{root} (occurred_at, id) VALUES (@at, @id)", app))
+            {
+                routed.Parameters.AddWithValue("at", Unique.Now);
+                routed.Parameters.AddWithValue("id", Guid.CreateVersion7());
+                (await routed.ExecuteNonQueryAsync()).ShouldBe(1, "a routed INSERT is checked against the parent's ACL");
+            }
+
+            await using (var throughParent = new NpgsqlCommand($"SELECT count(*) FROM catalog.{root}", app))
+            {
+                ((long)(await throughParent.ExecuteScalarAsync())!).ShouldBe(1, "a read through the parent reaches the row");
+            }
+
+            (string What, string Sql)[] direct =
+            [
+                ("reading the partition directly", $"SELECT count(*) FROM catalog.{root}_default"),
+                ("writing the partition directly", $"INSERT INTO catalog.{root}_default (occurred_at, id) VALUES (now(), gen_random_uuid())"),
+                ("truncating the partition", $"TRUNCATE catalog.{root}_default"),
+            ];
+            foreach ((string what, string sql) in direct)
+            {
+                await RefusedAsAppAsync(what, sql, []);
+            }
+
+            _output.WriteLine($"As {CatalogDatabaseFixture.AppRole}: 1 routed INSERT landed, 1 read through the parent, {direct.Length} direct statements on the partition refused with {InsufficientPrivilege}.");
+        }
+        finally
+        {
+            await CatalogDatabaseFixture.ExecuteAsync(migrator, $"DROP TABLE catalog.{root}");
+        }
     }
 
     [Fact]
@@ -709,11 +844,16 @@ public sealed class CatalogPrivilegeTests
         refused.SqlState.ShouldBe(InsufficientPrivilege, what);
     }
 
+    /// <summary>
+    /// Every table the record decides one by one: ordinary and partitioned, not the partitions,
+    /// whose expectation is their root's (<c>CatalogSchemaAllowlist.PartitionPrivileges</c>) and
+    /// whose ACL the oracle compares.
+    /// </summary>
     private static async Task<List<string>> OrdinaryTablesAsync(NpgsqlConnection connection)
     {
         await using var command = new NpgsqlCommand(
             "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-            + "WHERE n.nspname = 'catalog' AND c.relkind = 'r' ORDER BY c.relname",
+            + "WHERE n.nspname = 'catalog' AND c.relkind IN ('r', 'p') AND NOT c.relispartition ORDER BY c.relname",
             connection);
         await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
 
@@ -735,7 +875,7 @@ public sealed class CatalogPrivilegeTests
     {
         /// <summary>How many objects of each kind were read, every kind the oracle knows, zeros included.</summary>
         public string CountByKind() =>
-            string.Join(", ", CatalogSchemaAllowlist.ObjectKinds.Prepend(CatalogObject.Table)
+            string.Join(", ", CatalogSchemaAllowlist.ObjectKinds.Prepend(CatalogObject.Partition).Prepend(CatalogObject.Table)
                 .Select(kind => $"{ByObject.Keys.Count(o => o.Kind == kind)} {kind}"));
     }
 
@@ -749,7 +889,7 @@ public sealed class CatalogPrivilegeTests
         await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
-            var catalogObject = new CatalogObject(reader.GetString(0), reader.GetString(1));
+            var catalogObject = new CatalogObject(reader.GetString(0), reader.GetString(1), reader.IsDBNull(8) ? null : reader.GetString(8));
             if (!held.TryGetValue(catalogObject, out HashSet<string>? privileges))
             {
                 privileges = new HashSet<string>(StringComparer.Ordinal);
@@ -825,7 +965,7 @@ public sealed class CatalogPrivilegeTests
 
         foreach ((CatalogObject catalogObject, IReadOnlySet<string> privileges) in held.OrderBy(pair => pair.Key.ToString(), StringComparer.Ordinal))
         {
-            if (!recorded.TryGetValue(catalogObject, out IReadOnlyList<AppRoleGrant>? grants))
+            if (!recorded.TryGetValue(catalogObject.DecidedBy, out IReadOnlyList<AppRoleGrant>? grants))
             {
                 differences.Add(
                     $"{catalogObject} exists but CatalogSchemaAllowlist.{catalogObject.Record} records no decision for it; "
@@ -846,9 +986,15 @@ public sealed class CatalogPrivilegeTests
             }
         }
 
-        foreach (CatalogObject catalogObject in recorded.Keys.Except(held.Keys).OrderBy(o => o.ToString(), StringComparer.Ordinal))
+        // A record with nothing to decide is stale, and stale rows silently pre-approve: a table
+        // or object that is gone, or a partition expectation for a tree with no partition - the
+        // state a failed migration leaves, and one nothing else here would report.
+        HashSet<CatalogObject> decidedByHeld = [.. held.Keys.Select(o => o.DecidedBy)];
+        foreach (CatalogObject catalogObject in recorded.Keys.Where(o => !decidedByHeld.Contains(o)).OrderBy(o => o.ToString(), StringComparer.Ordinal))
         {
-            differences.Add($"the allowlist records {catalogObject}, which does not exist in the migrated schema");
+            differences.Add(catalogObject.Kind == CatalogObject.Partition
+                ? $"the allowlist records {catalogObject}, and catalog.{catalogObject.Name} has no partition in the migrated schema"
+                : $"the allowlist records {catalogObject}, which does not exist in the migrated schema");
         }
 
         return differences;

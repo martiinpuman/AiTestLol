@@ -126,6 +126,37 @@ public sealed partial class CatalogPrivilegeAllowlistTests
     }
 
     [Fact]
+    public void Every_partition_expectation_names_a_table_the_record_decides_and_is_empty()
+    {
+        // The catalog's shape for a partition is empty (solution-layout.md 6.4 item 5 criterion 3):
+        // with no default privilege in the schema a partition has no ACL of its own, it is reached
+        // through its parent and never directly, and a grant on one is the audit shape copied
+        // across. The key is the root of the tree, which must be a table the record decides.
+        _output.WriteLine(
+            $"Checked {CatalogSchemaAllowlist.PartitionPrivileges.Count} partition expectation(s): "
+            + $"{string.Join(", ", CatalogSchemaAllowlist.PartitionPrivileges.Keys.Order(StringComparer.Ordinal))}.");
+
+        foreach ((string root, IReadOnlyList<AppRoleGrant> grants) in CatalogSchemaAllowlist.PartitionPrivileges)
+        {
+            CatalogSchemaAllowlist.AppRolePrivileges.Keys.ShouldContain(root, $"every partition of catalog.{root} is decided, but catalog.{root} itself is not");
+            grants.ShouldBeEmpty($"every partition of catalog.{root}: a partition of a catalog table holds nothing for the role directly");
+        }
+    }
+
+    [Fact]
+    public void No_partitioned_table_is_recorded_yet_which_is_why_the_partition_rule_examines_nothing()
+    {
+        // The inertness guard for the rule above, in the shape RuleInventoryTests uses for a rule
+        // whose subject does not exist yet: its population is zero today, and a zero examined must
+        // be said rather than passed over. The rule itself is shown biting over a partitioned
+        // table CatalogPrivilegeTests creates and rolls back.
+        CatalogSchemaAllowlist.PartitionPrivileges.ShouldBeEmpty(
+            "a partitioned catalog table is now recorded (catalog.authentication_event, B-18.9, is the first). "
+            + "Every_partition_expectation_names_a_table_the_record_decides_and_is_empty has a population: "
+            + "delete this guard and floor that rule's count at 1.");
+    }
+
+    [Fact]
     public void A_column_privilege_names_a_column_the_table_has()
     {
         List<(string Table, string Column)> columnGrants =
