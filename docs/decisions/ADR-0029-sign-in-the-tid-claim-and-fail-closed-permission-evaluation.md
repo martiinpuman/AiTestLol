@@ -1,6 +1,6 @@
 # ADR-0029 — Sign-in, the `tid` claim and fail-closed permission evaluation
 
-- **Status:** Accepted (2026-09-11), **amended 2026-09-11** after security review (`../reviews/ADR-0029.md`: 2 blockers, 9 high). **Read Amendment 1 at the end of this document before implementing anything — where it disagrees with §1-§9 it wins.**
+- **Status:** Accepted (2026-09-11), **amended 2026-09-11 and 2026-09-12** after two security reviews (`../reviews/ADR-0029.md`: 2 blockers, 9 high). **Read Amendments 1 and 2 at the end of this document before implementing anything — where they disagree with §1-§9, and where Amendment 2 disagrees with Amendment 1, the later text wins.** Amendment 2 closes three findings that Amendment 1's own fixes introduced.
 - **Deciders:** architect
 - **Supersedes:** **in part** ADR-0009 rule 4 — the phrase *"cross-checked against host/path resolution on every request"* is replaced by the three named checkpoints in §4. A Blazor Server circuit issues no HTTP requests while it is alive (ADR-0005 rule 2), so "every request" leaves the longest-lived session in the product unchecked. Every other decision in ADR-0009 stands.
 - **Superseded by:** —
@@ -151,7 +151,7 @@ Both sides of the tenant boundary, on the rule of ADR-0028 §6, with one additio
 
 **A sign-in that cannot be recorded does not happen:** if the `catalog.authentication_event` write fails, the sign-in fails. An authentication log that is allowed to drop rows under load is not an authentication log.
 
-**Dependency consequence, stated because it is the question that prompted this ADR:** only the two rows that write tenant-side events depend on **B-16.1** (the audit store and `IAuditWriter`) — **corrected in A1.4; this sentence said B-16.2, the `[Auditable]` interceptor, which neither row uses** — sign-in (B-18.5) and the enforcement pipeline (B-17.3). Everything else in the identity and access set writes platform-side only and is free of the B-16 chain, which is what lets most of it run in parallel with it.
+**Dependency consequence, stated because it is the question that prompted this ADR:** only the two rows that write tenant-side events depend on **the row that ships `IAuditWriter` and the hash chain — `B-16.2` in `docs/BACKLOG.md`** (corrected twice: A1.4 fixed the substance, A2.6 fixed the number) — sign-in (B-18.5) and the enforcement pipeline (B-17.3). Everything else in the identity and access set writes platform-side only and is free of the B-16 chain, which is what lets most of it run in parallel with it.
 
 ### 8. Two new fitness rules, and one existing rule that must count
 
@@ -212,7 +212,7 @@ Credentials are global, so setting a password through an invitation sets it for 
 
 **Decision, four parts.**
 
-1. **An invitation may only be issued against an unestablished identity.** `IPlatformUserProvisioning.ResolveForTenantAdministratorAsync(email, tenantId)` is the single owner of find-or-create and returns one of two outcomes: **`Invite`** — the identity has **no credential and no Tenant Membership in any other tenant** — or **`Join`** — an established identity, for which provisioning creates the Tenant Membership only. **A `Join` never produces a password-set token.** Redeeming a join requires authenticating as that user with their existing credential. An identity may therefore be given access to a new tenant, but never a new password, by someone who merely knows its email address.
+1. **An invitation may only be issued against an unestablished identity.** `IPlatformUserProvisioning.ResolveForTenantAdministratorAsync(email, tenantId)` is the single owner of find-or-create and returns one of two outcomes: **`Invite`** — the identity has **no credential and no Tenant Membership in any other tenant** — or **`Join`** — an established identity, for which provisioning creates the Tenant Membership only. **A `Join` never produces a password-set token.** **Amended by A2.3: that Membership is created `Invited`, never `Active` — as written the join gated something that had already happened.** Redeeming a join requires authenticating as that user with their existing credential. An identity may therefore be given access to a new tenant, but never a new password, by someone who merely knows its email address.
 2. **The token is never returned to the caller.** `IssueAsync` returns an opaque `InvitationHandle` (id, expiry, outcome); the secret leaves the process only through `IInvitationDelivery`, addressed to the invited address. Bootstrap has no mail transport, so `Aurora.Composition` registers a delivery implementation that **throws** when no transport is configured — provisioning fails loudly rather than quietly handing the secret back. The test harness registers a capturing sink. Returning the token in an API response is the same disclosure as logging it, with a nicer wrapper.
 3. **Redemption resolves its tenant from the host or path, never from the request body**, and refuses unless `invitation.tenant_id` equals it — the same rule §4 applies to the mint. The redeem endpoint lives on the tenant's own host.
 4. ADR-0010 rule 8 is preserved rather than contradicted: no operator ever holds a capability over an established tenant user. **Who may call provisioning at all** is the operator capability model, which rule 8 excludes from the tenant permission model and which no document owns — named in A1.4 as a follow-up, not decided here.
@@ -224,7 +224,7 @@ Credentials are global, so setting a password through an invitation sets it for 
 **Decision — remove the ability to present two halves that disagree.** `EvaluateAsync` no longer takes a `ClaimsPrincipal`. It takes an **`AccessSubject`**, a sealed type constructible only inside `Aurora.Platform.Access` by one of two factories:
 
 - `AccessSubject.FromPrincipal(ClaimsPrincipal, TenantScope)` — **performs the comparison as the price of construction**: `tid` present, parsable and equal to `scope.TenantId`, and the principal's security stamp, user status and Tenant Membership for that tenant still valid against the 60 s `IdentitySnapshot` (A1.1). There is no path that reads the principal without this.
-- `AccessSubject.ForSystemJob(TenantScope, SystemPrincipalId, IReadOnlySet<Permission>)` — ADR-0010 rule 9's named system principal. It carries **no `tid` claim at all**, so jobs never become a second site that writes tenant claims (which would have collided with rule S7).
+- `AccessSubject.ForSystemJob(TenantScope, SystemPrincipalId, IReadOnlySet<Permission>)` — ADR-0010 rule 9's named system principal. **Superseded by A2.2: the permission-set parameter is removed — as written, the factory that closed H-1 needed no proof at all and took its permissions from the caller.** It carries **no `tid` claim at all**, so jobs never become a second site that writes tenant claims (which would have collided with rule S7).
 
 The §5 outcome table gains three rows, and they are deliberately three different outcomes:
 
@@ -258,7 +258,7 @@ Registered before `UseAuthentication`, the control is a silent no-op; and under 
 
 The 60-second argument covered permissions only. On the plain HTTP path nothing re-checked membership, tenant state or the security stamp at all, so a revoked member or a suspended tenant kept working for the 12-hour cookie lifetime — and a `SchemaBlocked` tenant kept **writing to a half-migrated database**.
 
-**Decision — one choke point, not five checks.** `ITenantScopeFactory.OpenAsync` refuses to open a scope for a tenant whose `catalog.tenant.state` is not in the allow-list for the requested `TenantAccessReason`. It already re-reads the routing row under a 60 s cache that is invalidated on state change (ADR-0007 §3.5, ADR-0012 rule 6), and it already runs the §7.5 skew gate, so this costs nothing and bounds tenant-state staleness to 60 s for **every** path, including jobs and the outbox.
+**Decision — one choke point, not five checks.** **Amended by A2.4 (the reason is bound by the factory, not passed — otherwise the allow-list is advisory) and A2.5 (the circuit opens a scope per unit of work, so "every path" becomes true rather than assumed).** `ITenantScopeFactory.OpenAsync` refuses to open a scope for a tenant whose `catalog.tenant.state` is not in the allow-list for the requested `TenantAccessReason`. It already re-reads the routing row under a 60 s cache that is invalidated on state change (ADR-0007 §3.5, ADR-0012 rule 6), and it already runs the §7.5 skew gate, so this costs nothing and bounds tenant-state staleness to 60 s for **every** path, including jobs and the outbox.
 
 | Reason | May open a tenant in state |
 |---|---|
@@ -287,7 +287,7 @@ It replaces the principal with one built from the store; `tid` is not a store cl
 
 Three individually correct decisions composed badly: every failed sign-in writes to the shared catalog; a failed write fails the sign-in; all rate limiting was deferred.
 
-**Decision — rate limiting is not deferred past sign-in.** `Microsoft.AspNetCore.RateLimiting` (in-box, no new dependency) applies fixed-window limits per source IP and per email hash to `/sign-in` and to invitation redeem, **rejecting before the credential check and before any catalog write**. A rejected request writes at most **one** row per `(source, email-hash, window, event type)`, deduplicated by a unique key with `ON CONFLICT DO NOTHING` — an insert that does nothing, which is compatible with append-only, unlike the counter column the obvious design would have used. `catalog.authentication_event` is **monthly RANGE-partitioned** on `occurred_at` exactly like `audit.audit_event` (ADR-0028 §3), with a 180-day retention window enforced by detaching and dropping whole partitions — because an append-only trigger blocks `DELETE` for the owner too, so retention on this table is a partition operation or it is nothing. *"A sign-in that cannot be recorded does not happen"* stands unchanged: the fix belongs to the rate limiting, not to that rule.
+**Decision — rate limiting is not deferred past sign-in.** `Microsoft.AspNetCore.RateLimiting` (in-box, no new dependency) applies fixed-window limits per source IP and per email hash to `/sign-in` and to invitation redeem, **rejecting before the credential check and before any catalog write**. A rejected request writes at most **one** row per `(source, email-hash, window, event type)`, deduplicated by a unique key with `ON CONFLICT DO NOTHING` — an insert that does nothing, which is compatible with append-only, unlike the counter column the obvious design would have used. **Superseded by A2.1: that key cannot be created on a partitioned table, and its obvious repair deduplicates nothing. The key is `(occurred_at, dedupe_key)` and `occurred_at` *is* the window start for a bounded row.** `catalog.authentication_event` is **monthly RANGE-partitioned** on `occurred_at` exactly like `audit.audit_event` (ADR-0028 §3), with a 180-day retention window enforced by detaching and dropping whole partitions — because an append-only trigger blocks `DELETE` for the owner too, so retention on this table is a partition operation or it is nothing. *"A sign-in that cannot be recorded does not happen"* stands unchanged: the fix belongs to the rate limiting, not to that rule.
 
 ### H-9: circuit reconnect proved the tenant and not the person
 
@@ -311,8 +311,104 @@ Three individually correct decisions composed badly: every failed sign-in writes
 
 ## A1.4 — Corrections to §7's dependency claim, and follow-ups this amendment does not answer
 
-**§7's closing paragraph is wrong and is corrected here:** the two rows that write tenant-side events depend on **B-16.1** — the audit store and `IAuditWriter` — **not B-16.2**, the `[Auditable]` interceptor. Both write an explicit event; the interceptor is irrelevant to them, and naming it both delayed the rows and invited someone to route a permission denial through an entity-change interceptor.
+**§7's closing paragraph is wrong and is corrected here:** the two rows that write tenant-side events depend on **the row that ships `IAuditWriter` and the hash chain — `B-16.2` in `docs/BACKLOG.md` (renumbered by A2.6; this paragraph originally said B-16.1, which is right against `solution-layout.md` §6.1's older two-row split and points at an empty table against the backlog)** — **not** the `[Auditable]` interceptor row, `B-16.3`. Both write an explicit event; the interceptor is irrelevant to them, and naming it both delayed the rows and invited someone to route a permission denial through an entity-change interceptor.
 
 Also corrected: a permission denial has **no caller transaction**, because the pipeline refuses before the handler runs and no module `DbContext` exists. ADR-0028 §4 requires one. The enforcement pipeline therefore opens its **own** short transaction on `AccessDbContext` (via `ITenantDbContextFactory` with the current scope) and writes the denial event inside it. If that write fails, the denial still stands — the caller is never granted because auditing failed — and the failure is logged at `Error` and counted.
 
 **Named, not answered** (each needs its own ADR or an owner, and none may be decided inside a bootstrap row): the **operator capability model** — who may provision, who may read an invitation handle, what an operator may do to a tenant user — which ADR-0010 rule 8 excludes from the tenant permission model and SPEC-001 BR-1 assumes exists; **who may write `catalog.tenant_host` and what verifies a custom domain**, a tenant-influenced row in the shared database that steers routing; **what the health endpoints expose**, given ADR-0007 §9.4 has them enumerate this instance's cached tenants; **the offboarding `TenantAccessReason`** that may open `Exporting`/`PendingDeletion` scopes; **a scheduler for the retention and partition-management jobs**, since `Aurora.Platform.Jobs` is in no bootstrap row and ADR-0028 §3's partition pre-creation job has the same latent gap; **breached-password checking**; and the **tenant-switch endpoint**, already deferred in §9 and unchanged.
+
+---
+
+# Amendment 2 — 2026-09-12, second security review (PR #5)
+
+**Applies to Amendment 1 and to §1–§9.** Where this amendment disagrees with either, **this amendment wins**; the overridden sentences are marked in place.
+
+Both blockers are closed and five of the nine highs with them. **Three of the five that remain were introduced by Amendment 1's own fixes** — H-1 locked one door and opened another, H-5's choke point turned out to have a one-word bypass and to be unreachable on the path it was raised for, and H-8's bounded write could not be created at all. That is the honest shape of this round: a fix that adds a mechanism adds a surface, and the surface needs the same reading the original did.
+
+## A2.1 — H-A: H-8's bounded write cannot be created, and its obvious repair silently stops deduplicating
+
+Executed against `postgres:17-alpine` (2026-09-11, this environment), confirming both halves of the reviewer's finding:
+
+```
+CREATE UNIQUE INDEX ux ON authentication_event (source_hash, email_hash, window_start, event_type);
+ERROR:  unique constraint on partitioned table must include all partitioning columns
+DETAIL:  UNIQUE constraint ... lacks column "occurred_at" which is part of the partition key.
+```
+
+Adding `occurred_at` to that key compiles and runs and **deduplicates nothing**, because every attempt carries a different instant — so H-8's unbounded catalog write is restored by its own fix, silently, with a green test suite.
+
+**Decision — `occurred_at` *is* the window start for a bounded row, and the discriminator is a column, not a predicate.**
+
+`catalog.authentication_event` gains `dedupe_key text NOT NULL`, `granularity ('Instant' | 'Window')` and `window_seconds`. The index is `UNIQUE (occurred_at, dedupe_key)` — it contains the partition key, so PostgreSQL accepts it — and every write is `ON CONFLICT DO NOTHING`.
+
+| Granularity | `occurred_at` | `dedupe_key` | Used for |
+|---|---|---|---|
+| `Window` | the **window start**, truncated | `{event_type}\|{source_hash}\|{email_hash}` | Every event class whose volume an unauthenticated or unproven caller controls: failed sign-in, rate-limit rejection, redemption refusal, `tid`/routing refusal |
+| `Instant` | the instant | a fresh UUID, so it can never collide | Events a proven actor caused: invitation issued, invitation redeemed |
+
+Verified end to end on the same container: three attempts in one window produce **one** row; the next window produces a second; **two `Instant` rows written in the same instant produce two rows**. That third assertion is the one that matters — it is what fails if someone "repairs" the design by adding `occurred_at` to the key and calls it deduplication.
+
+Two consequences, stated so nobody has to infer them. For a `Window` row `occurred_at` is a **bucket, not an instant**; `granularity` exists precisely so a reader cannot mistake one for the other, and per-attempt timing lives in structured logs (which carry no personal data, ADR-0016). And because `ON CONFLICT DO NOTHING` keeps the **first** row, attacker-chosen `detail` from later attempts in a window is discarded rather than merged.
+
+**This supersedes A1.2 H-8's unique key** `(source_hash, email_hash, window_start, event_type)`, which cannot exist.
+
+## A2.2 — H-B: `ForSystemJob` takes a caller-chosen permission set for a caller-chosen tenant
+
+A1.2 H-1 removed the evaluator's ability to be handed two disagreeing halves of the tenancy proof, and in the same paragraph introduced a factory that needs no proof at all: `ForSystemJob(TenantScope, SystemPrincipalId, IReadOnlySet<Permission>)` — no claim, no membership, no cross-check, and the permission set supplied by the caller. Anything that can reach it grants itself anything in any tenant it can open. B-17.3 had no criterion for it.
+
+**Decision — the caller chooses neither the permissions nor the context.**
+
+1. **Signature loses the set:** `AccessSubject.ForSystemJob(TenantScope scope, SystemPrincipalId id)`. A `SystemPrincipal` is **code-declared** exactly as a `Permission` is, with its permission set fixed at compile time, and the evaluator looks the set up from that registry. There is no overload that accepts a permission collection — a test asserts the type exposes none, because an absent overload is the only version of this rule that cannot be worked around.
+2. **Every declared system principal is listed in `system-principals.approved.txt`** with its permission set and a reason per entry, asserted by fitness rule S9 (extended), which reports the count. A new system principal is a reviewed edit, like a new claim type and a new administrator permission.
+3. **`ForSystemJob` refuses unless `scope.Reason` is `Job` or `Outbox`.** A request-path scope cannot be laundered into a system subject, which is the move a careless handler would otherwise make to get past a denial.
+4. **Its call sites are allow-listed** to `Aurora.Platform.Jobs`, the outbox dispatcher and their test assemblies (S9), in the shape of ADR-0027 §1's `TenantDatabaseHandle` rule.
+
+ADR-0010 rule 9's other half — a job carrying "the permission context of whoever caused it" — goes through `FromPrincipal`, which already performs the full comparison (A1.2 H-1). `ForSystemJob` is only the *named system principal* case, and it is now as narrow as that name claims.
+
+## A2.3 — H-C: a `Join` creates an `Active` Membership at issue
+
+A1.1 B-2 said "redeeming a join requires authenticating as that user" while the Membership was already `Active` at issue, so the gate guarded something that had already happened: anyone who may provision could make an arbitrary existing person an active administrator of their tenant, and that person's first knowledge of it would be a notification.
+
+**Decision — a Membership created by provisioning is `Invited`, never `Active`, on both paths.** `MembershipState` is enumerated `Invited | Active | Suspended | Revoked`, and **redemption is the only transition to `Active`**. The mint precondition (§4) and `AccessSubject.FromPrincipal` (A1.2 H-1) already require `Active`, so an un-redeemed `Join` grants exactly nothing: no sign-in, no scope, no evaluation. Making it uniform across `Invite` and `Join` removes the asymmetry that produced the hole rather than patching one branch of it.
+
+SPEC-001 AC-1 still holds literally — exactly one administrator Membership row exists after provisioning — but it is `Invited` until redeemed. If the project-manager intends AC-1 to mean *usable*, that is a spec question and is named in A2.6, not answered here.
+
+## A2.4 — H-D: `TenantAccessReason` is caller-supplied, so H-5's gate is a one-word bypass
+
+A1.2 H-5's state allow-list is keyed on the reason, and `OperatorSupport` is the only value that opens `Suspended` and `SchemaBlocked`. If the reason is an argument, the gate is advisory. ADR-0027's own options table rejects exactly this shape — *"the guarantee acquires an exception whose name is exactly what a careless developer would choose"* — about the `Migration` reason. The same sentence applies to this one and was not applied.
+
+**Decision — the reason is bound by the factory, never passed to it.**
+
+`ITenantScopeFactory.OpenAsync(TenantId, ct)` takes **no reason parameter**. `TenantAccessReason` stays a property of `TenantScope` for the gate and for logging, but it is determined by *which factory binding was resolved*, and each composition root registers exactly one:
+
+| Composition root | Binding | May open |
+|---|---|---|
+| `Aurora.Web` | `Request` | `Active` |
+| `Aurora.Worker` | `Job`, `Outbox` | `Active` |
+| Provisioning saga host | `Provisioning` | `Provisioning`, `Active` |
+| — | `Migration` | **no binding** — DDL uses `TenantDatabaseHandle` (ADR-0027) |
+| — | `OperatorSupport` | **no binding in bootstrap** |
+
+`OperatorSupport` has no binding because the operator console and ADR-0010 rule 8's time-boxed, reason-coded support grant do not exist yet; a test asserts an operator-support scope cannot be obtained from **any** bootstrap composition root. When it is built it arrives as a **separate factory type** taking a support-grant id that it validates against `catalog.operator_audit_event`, resolvable only in the operator composition root — not as an enum value a developer may type. Recording that shape now is the point: the follow-up cannot arrive as a parameter without contradicting this ADR.
+
+Fitness rule T9 is extended: `ITenantScopeFactory` exposes no reason parameter, and no call site outside `Aurora.Platform.Tenancy` names a `TenantAccessReason` value — with a deliberately-violating fixture.
+
+## A2.5 — H-E: "60 s on every path" is false for the path H-5 was raised for
+
+A1.2 H-5 claimed the gate at `OpenAsync` bounds tenant-state staleness to 60 s "for every path". On the circuit path it does not: the reviewer's reading is that the scope is pinned at circuit creation, so the gate runs once and a `SchemaBlocked` tenant keeps being written for thirty minutes — which is the case H-5 exists for. My phrase *"a circuit does not open a scope, it reads the ambient one"* is the error.
+
+**Decision — the circuit pins the `TenantId`; a `TenantScope` is opened per unit of work.** This is what ADR-0007 already says when read together: §3.2 resolves the tenant *"once per unit of work"*, §3.3 pins **the tenant** — not a scope — to the circuit, and §10.4's stale-scope trap plus `IsActive` being false after disposal only make sense if a scope's lifetime is an operation. So one `TenantScope` per component event handler or application-service invocation, opened at its start and disposed at its end; `ITenantScopeAccessor.Current` returns the current unit of work's scope and throws off it. The gate then runs on every unit of work and the 60 s bound is real on the circuit path.
+
+The criterion that makes this falsifiable is a **count**: over a circuit's life the number of scope opens must be greater than one. A circuit-lifetime scope makes that count exactly 1, which is the implementation this amendment exists to prevent. Paired with it: suspend the tenant mid-circuit and assert the next component action fails within 60 s. The fitness rule that forbids a `TenantScope` field on a `CircuitHandler` or a component needs an id from `testing-strategy.md` §5.3, which is contested with `task/ARCH-TENANT-DOORS` right now; the rule is stated here and in B-18.8's criteria, and the id is assigned by that row's reviewer once the T-range has settled.
+
+## A2.6 — The `B-16` numbering contradiction, and how dependencies are written from now on
+
+`solution-layout.md` §6.1 wrote two audit rows — B-16.1 (store **and** `IAuditWriter`) and B-16.2 (the `[Auditable]` interceptor). The project-manager then split the first on size, so `docs/BACKLOG.md` — **the file the orchestrator dispatches from** — has B-16.1 = schema only, B-16.2 = `IAuditWriter` and the hash chain, B-16.3 = interceptor. A1.4's "depend on B-16.1, not B-16.2" is right against §6.1 and **backwards against the backlog**, where it points two rows at an empty table.
+
+**Decision.** The backlog's numbering is authoritative — the split is the project-manager's and it is a good one — and `solution-layout.md` §6.1 is reconciled to it. The two rows that write tenant-side audit events depend on **the row that ships `IAuditWriter` and the hash chain, which is `B-16.2` in `docs/BACKLOG.md`**. A1.4's correction stands in substance (neither row uses the `[Auditable]` interceptor, `B-16.3`) and is wrong in its number.
+
+**And the rule that stops this recurring:** a dependency in an architecture document names **what the row ships**, with the number in parentheses. A number alone is a reference that a legitimate size split silently inverts, which is exactly what happened here.
+
+## A2.7 — Named, not answered
+
+Added to §9 and A1.4's list: the **operator-support scope factory and its support-grant validation** (A2.4 — the shape is recorded, the flow is not designed); whether **SPEC-001 AC-1** means an administrator Membership that *exists* or one that is *usable*, now that A2.3 makes it `Invited` until redeemed — a project-manager question; and the **fitness-rule id** for "no `TenantScope` field on a `CircuitHandler` or component", which waits on the §5.3 rule range being uncontested.
