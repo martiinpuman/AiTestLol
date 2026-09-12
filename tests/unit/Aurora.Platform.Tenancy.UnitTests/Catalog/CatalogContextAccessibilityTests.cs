@@ -53,6 +53,7 @@ public sealed class CatalogContextAccessibilityTests
         new HashSet<string>(StringComparer.Ordinal)
         {
             "Aurora.Platform.Tenancy.CatalogServiceCollectionExtensions",
+            "Aurora.Platform.Tenancy.TenancyServiceCollectionExtensions",
             "Aurora.Platform.Tenancy.TenantPoolProfile",
         };
 

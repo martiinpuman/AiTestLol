@@ -1,6 +1,8 @@
 using System;
 using Aurora.Platform.Tenancy.Catalog;
+using Aurora.Platform.Tenancy.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Aurora.Platform.Tenancy;
 
@@ -8,20 +10,34 @@ namespace Aurora.Platform.Tenancy;
 /// Registers the catalog database for the composition root (<c>Aurora.Composition</c>).
 /// </summary>
 /// <remarks>
+/// <para>
 /// The catalog context is the only <c>DbContext</c> in the system registered conventionally
 /// (ADR-0003 rule 3, ADR-0007 §4.2). The connection string arrives from host configuration bound
 /// to typed options in the host — its password is a tier-2 secret (ADR-0011) and reaches this
 /// method already composed; nothing here reads configuration or logs the string.
+/// </para>
+/// <para>
+/// The routing cache (ADR-0007 §3.5, ADR-0012 §3) is registered here rather than with the
+/// resolver, because it is a property of the catalog context, not of its readers: every tenant
+/// state change written through the context must reach the cache, whichever host wrote it and
+/// whether or not that host also resolves connections.
+/// </para>
 /// </remarks>
 public static class CatalogServiceCollectionExtensions
 {
-    /// <summary>Adds the catalog <c>DbContext</c>, scoped, over <paramref name="connectionString"/>.</summary>
+    /// <summary>
+    /// Adds the catalog <c>DbContext</c>, scoped, over <paramref name="connectionString"/>, with
+    /// the routing cache the resolver reads through.
+    /// </summary>
     /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException"><paramref name="connectionString"/> is blank.</exception>
     public static IServiceCollection AddCatalogDatabase(this IServiceCollection services, string connectionString)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+        services.AddHybridCache();
+        services.TryAddSingleton<TenantRoutingCache>();
 
         services.AddDbContext<CatalogDbContext>(options => CatalogDbContextOptions.Configure(options, connectionString));
         return services;

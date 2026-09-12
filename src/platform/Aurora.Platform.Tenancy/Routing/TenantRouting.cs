@@ -6,8 +6,8 @@ namespace Aurora.Platform.Tenancy.Routing;
 
 /// <summary>
 /// What the catalog says about where one tenant lives: the row of <c>catalog.tenant</c> joined to
-/// its <c>catalog.database_cluster</c>, as read by <c>ITenantRoutingReader</c> and held for
-/// 60 s by <c>TenantRoutingCache</c> (ADR-0007 §3.5, ADR-0012 §3).
+/// its <c>catalog.database_cluster</c>, as read by <see cref="ITenantRoutingReader"/> and held for
+/// 60 s by <see cref="TenantRoutingCache"/> (ADR-0007 §3.5, ADR-0012 §3).
 /// </summary>
 /// <param name="TenantId">The tenant's identity, as <c>catalog.tenant.id</c>.</param>
 /// <param name="TenantKey">The tenant's key, which names its pool in <c>pg_stat_activity</c>.</param>

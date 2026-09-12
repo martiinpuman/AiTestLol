@@ -6,7 +6,7 @@ namespace Aurora.Platform.Tenancy;
 /// </summary>
 /// <remarks>
 /// Public because it is the one thing a host has to tell
-/// <c>TenancyServiceCollectionExtensions.AddTenantConnectionResolver</c>; the settings a
+/// <see cref="TenancyServiceCollectionExtensions.AddTenantConnectionResolver"/>; the settings a
 /// profile stands for stay internal, in <c>TenantPoolSettings</c>, so that no caller outside this
 /// assembly learns what a connection string looks like (ADR-0007 §3.5).
 /// </remarks>
