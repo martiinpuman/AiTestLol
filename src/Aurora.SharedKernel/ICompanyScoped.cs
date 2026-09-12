@@ -6,10 +6,11 @@ namespace Aurora.SharedKernel;
 /// <remarks>
 /// <para>
 /// ADR-0010 rule 6 scopes data by an EF global query filter on <c>CompanyId</c>, parameterized
-/// from the resolved <see cref="CompanyScope"/>. ADR-0029 A1.2 H-2 makes that structural: a
-/// context whose model maps any type implementing this interface has one constructor, and it
-/// takes a <see cref="CompanyScope"/>, so a filtered context cannot be obtained unfiltered. Model
-/// metadata is the mechanism, and this interface is what the metadata reads (B-06.3).
+/// from the resolved <see cref="CompanyScope"/>. ADR-0029 A1.2 H-2 decides how that becomes
+/// structural: a context whose model maps any type implementing this interface has one
+/// constructor, and it takes a <see cref="CompanyScope"/>, so a filtered context cannot be
+/// obtained unfiltered. B-06.3 builds that rule; this interface is what its model metadata will
+/// read. Nothing in this assembly enforces it — the kernel holds the marker, not the mechanism.
 /// </para>
 /// <para>
 /// <b>A company is scoped to itself.</b> The aggregate that <em>is</em> a company implements this

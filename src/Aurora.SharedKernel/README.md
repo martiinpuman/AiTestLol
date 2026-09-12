@@ -82,9 +82,11 @@ construction because an empty filter list that a query builder turns into no fil
 `WHERE 1=1`, which is every company — the company-level twin of a cross-tenant read. It is a sealed
 class rather than a struct because a struct `default` would have to mean something, and neither
 "every company" nor a third form is acceptable. A consumer branches on `IsAllCompaniesInTenant`,
-never on the count of `CompanyIds`. The scope reaches a query as a constructor parameter of any
-`DbContext` that maps an `ICompanyScoped` entity (B-06.3), never by ambient lookup; a company
-implements `ICompanyScoped` by returning its own id, so `Company` needs no special case.
+never on the count of `CompanyIds`. How the scope reaches a query is decided but not yet built:
+ADR-0029 A1.2 H-2 makes it a constructor parameter of any `DbContext` that maps an
+`ICompanyScoped` entity, never an ambient lookup, and B-06.3 builds that rule — this assembly
+holds the marker and the value, not the mechanism. A company implements `ICompanyScoped` by
+returning its own id, so `Company` needs no special case.
 
 **`Result` is for expected failures only.** A broken invariant still throws (ADR-0017 layer 2) and
 input shape is still validated at the boundary (layer 1). `Result` exists so that "the period is

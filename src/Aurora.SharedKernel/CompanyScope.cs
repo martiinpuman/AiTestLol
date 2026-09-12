@@ -33,8 +33,9 @@ namespace Aurora.SharedKernel;
 /// <see langword="true"/> emits no predicate, because tenant isolation is the database
 /// (ADR-0007); <see langword="false"/> emits <c>CompanyId = ANY(@p)</c> over
 /// <see cref="CompanyIds"/>. Filtering after materialisation stays forbidden (ADR-0010 rule 6).
-/// The scope never reaches a query by ambient lookup: ADR-0029 A1.2 H-2 makes it a constructor
-/// parameter of any context that maps an <see cref="ICompanyScoped"/> entity, which B-06.3 builds.
+/// The scope is never to reach a query by ambient lookup: ADR-0029 A1.2 H-2 decides that it is a
+/// constructor parameter of any context that maps an <see cref="ICompanyScoped"/> entity. B-06.3
+/// builds that rule; this type only makes sure that whatever arrives there is one of two forms.
 /// </para>
 /// <para>
 /// <b>Why a class and not a struct.</b> A struct has a <see langword="default"/> that C# cannot
