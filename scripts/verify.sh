@@ -57,10 +57,11 @@ readonly FAIL_TAIL_LINES=40
 # catch a whole assembly dropping out of Aurora.sln, a misspelled Category trait
 # or a discovery failure, all of which move the count by tens or to zero. Re-round
 # it whenever a test project joins or leaves Aurora.sln.
-# 736 executed once B-04 merges alongside B-05 and B-12 (SharedKernel 208,
-# Countries.Contracts 141, Countries.Hosting 91, Platform.Tenancy 163, Architecture 135).
-# Re-rounded at every merge, never inherited: B-04 alone measured 342, B-05 371, B-12 440.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-730}"
+# 761 executed with B-03.1 (SharedKernel 231, Countries.Contracts 141,
+# Countries.Hosting 91, Platform.Tenancy 163, Architecture 135); 736 before it.
+# Re-rounded at every merge, never inherited: B-04 alone measured 342, B-05 371,
+# B-12 440, B-03.1 761.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-760}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ One project per module or platform module, created with the thing it tests: a mo
 
 | Project | Tests | Landed with |
 |---|---|---|
-| `Aurora.SharedKernel.UnitTests` | `Money`, `Quantity`, `Percentage`, `DateRange`, typed ids, `Result` | B-03 |
+| `Aurora.SharedKernel.UnitTests` | `Money`, `Quantity`, `Percentage`, `DateRange`, typed ids, `Result`; `CompanyScope` and `ICompanyScoped` | B-03; B-03.1 |
 | `Aurora.Platform.Tenancy.UnitTests` | The registry's value objects and invariants, the catalog EF model, the ADR-0007 §9.3 guard over that model | B-05 |
 
 Modules' projects are named `Aurora.Modules.<M>.UnitTests`. These run in `verify.sh` stage 6,

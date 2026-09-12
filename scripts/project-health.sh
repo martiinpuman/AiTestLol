@@ -58,7 +58,12 @@ echo "branches"
 merged_left=0
 while read -r b; do
   [ -z "${b}" ] && continue
-  if git merge-base --is-ancestor "${b}" "${INTEGRATION}" 2>/dev/null; then
+  if [ "$(git rev-list --count "${INTEGRATION}..${b}")" -eq 0 ] && git worktree list --porcelain | grep -q "^branch refs/heads/${b}$"; then
+    # No commits of its own and a worktree holding it: an agent that has started and
+    # not yet committed. Comparing tips instead was wrong the moment develop moved on,
+    # which it did within the minute — the worktree is the signal that survives.
+    say "${b} — checked out by a worktree, no commits yet"
+  elif git merge-base --is-ancestor "${b}" "${INTEGRATION}" 2>/dev/null; then
     fail "${b} is fully merged into ${INTEGRATION} and should be deleted"
     merged_left=$((merged_left + 1))
   else
@@ -92,7 +97,7 @@ while read -r path; do
     # it as one sent the orchestrator after a worktree that was simply starting up.
     # Recent modification is the signal that separates the two.
     say "${path} (${br}) — agent active in the last hour"
-  elif [ "$(git rev-parse "${br}" 2>/dev/null)" = "$(git rev-parse "${INTEGRATION}" 2>/dev/null)" ]; then
+  elif [ "$(git rev-list --count "${INTEGRATION}..${br}" 2>/dev/null || echo 1)" -eq 0 ]; then
     # Tip equal to the integration tip means no commits yet — a branch that has not
     # started, not one whose work is merged. Ancestry alone cannot tell them apart,
     # and calling a freshly dispatched agent's worktree prunable sends the
@@ -115,6 +120,99 @@ bash scripts/file-claims.sh 2>/dev/null | grep -E 'CONTESTED|no file is claimed'
 if ! bash scripts/file-claims.sh >/dev/null 2>&1; then
   fail "$(bash scripts/file-claims.sh 2>/dev/null | tail -3 | head -1)"
 fi
+echo
+
+# 3c. `ready` in this backlog means "the spec is ready to build", not "dispatchable
+#     now" — most ready rows are waiting on a predecessor, which is normal and not a
+#     defect. So report what is *actually* dispatchable, and fail only on the real
+#     inconsistency: a row marked done whose dependencies are not.
+#     (The first version of this check failed on every ready-but-waiting row. Twenty
+#     rows red at once is a check nobody reads — it fired on a convention, not a fault.)
+#
+#     Two things beyond the dependency column decide dispatchability, and the second
+#     version of this check read neither. It offered B-18.1 as dispatchable while
+#     B-18.1's own notes say it may not run concurrently with B-19, which was in
+#     flight at the time; and it offered three rows that already had branches. The
+#     dependency column was the last link it followed, and the answer lived one link
+#     further on.
+#
+#     The concurrency constraint is prose, so this reads it by a FIXED PHRASE LIST and
+#     says so in its own output. A constraint worded any other way is invisible here.
+#     That is why the phrase list and the scanned-cell count are printed rather than
+#     kept in the script: a reader can see how much of the input was actually read.
+#     FOLLOWUP-042 asks the project-manager for a machine-readable conflicts field,
+#     which is the only thing that makes this exhaustive rather than best-effort.
+echo "backlog readiness"
+python3 - <<'READY'
+import re, sys
+import subprocess
+
+# A row with a task branch ahead of the integration branch is started, not waiting.
+INTEGRATION = 'claude/multi-tenant-saas-erp-pv2nap'
+in_flight = set()
+for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', 'refs/heads/task'],
+                          capture_output=True, text=True).stdout.split():
+    row = ref.split('/', 1)[1] if '/' in ref else ref
+    ahead = subprocess.run(['git', 'rev-list', '--count', f'{INTEGRATION}..{ref}'],
+                           capture_output=True, text=True).stdout.strip()
+    if ahead.isdigit() and int(ahead) > 0:
+        in_flight.add(row)
+
+# The concurrency constraint is prose. These are the only phrases read; anything
+# worded differently is not seen, which is why the list is printed below.
+HOLD_PHRASES = ['never concurrently', 'must therefore be sequenced', 'no third row may',
+                'not parallel-safe', 'must be sequenced']
+
+rows, notes = {}, {}
+for line in open('docs/BACKLOG.md'):
+    m = re.match(r'\|\s*(B-[0-9.]+[a-z]?)\s*\|', line)
+    if not m:
+        continue
+    cells = [c.strip() for c in line.split('|')]
+    if len(cells) < 9:
+        continue
+    rows[m.group(1)] = (cells[6], cells[8])
+    notes[m.group(1)] = ' '.join(cells[9:]) if len(cells) > 9 else ''
+
+def unmet(deps):
+    return [d for d in re.findall(r'B-[0-9.]+[a-z]?', deps) if rows.get(d, ('', ''))[1] != 'done']
+
+def held_by(row):
+    # Only the sentences carrying a hold phrase are read for row ids: the notes cell
+    # as a whole names every neighbour, so scanning all of it would hold every row.
+    text = notes.get(row, '')
+    blockers = set()
+    for sentence in re.split(r'(?<=[.;])\s+', text):
+        low = sentence.lower()
+        if any(p in low for p in HOLD_PHRASES):
+            blockers |= {d for d in re.findall(r'B-[0-9.]+[a-z]?', sentence)
+                         if d != row and d in in_flight}
+    return sorted(blockers)
+
+ready = [r for r, (d, st) in rows.items() if st == 'ready' and not unmet(d)]
+started = sorted(r for r in ready if r in in_flight)
+held = sorted((r, held_by(r)) for r in ready if r not in in_flight and held_by(r))
+dispatchable = sorted(r for r in ready
+                      if r not in in_flight and not held_by(r))
+broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet(d)]
+
+print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row is started, held or waiting on a predecessor)'}")
+if started:
+    print(f"  already started: {', '.join(started)}")
+for r, b in held:
+    print(f"  {r} held — its row forbids running concurrently with {', '.join(b)}, in flight")
+for r, u in broken:
+    print(f"  {r} is done but depends on un-done {', '.join(sorted(set(u)))}")
+
+scanned = sum(1 for r in rows if notes.get(r))
+unread = sum(1 for l in open('docs/BACKLOG.md')
+             if re.match(r'\|\s*B-', l) and not re.match(r'\|\s*B-[0-9.]+[a-z]?\s*\|', l))
+print(f"  {len(rows)} row(s) read" + (f", {unread} row id(s) the parser could not read" if unread else ""))
+print(f"  {scanned} notes cell(s) scanned for a concurrency hold, matching only: {'; '.join(HOLD_PHRASES)}")
+print(f"  a hold worded any other way is not seen here — FOLLOWUP-042 asks for a machine-readable field")
+sys.exit(1 if broken else 0)
+READY
+[ $? -eq 0 ] || fail "a row is marked done while a dependency is not"
 echo
 
 # 4. Dangling document references. The architect once shipped forward references
