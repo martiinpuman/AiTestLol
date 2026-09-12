@@ -2,7 +2,7 @@
 
 **Phase:** build · **Milestone:** M1 walking skeleton (B-01 … B-15)
 **Integration branch:** `claude/multi-tenant-saas-erp-pv2nap` · draft PR #1 tracks it
-**Last iteration:** 7 (2026-09-12)
+**Last iteration:** 8 (2026-09-12)
 
 ## Product in one line
 A multi-tenant SaaS ERP for SMBs with a country-agnostic core, where every jurisdiction-specific rule ships as an installable **Country Package**.
@@ -20,7 +20,7 @@ request**. Merge authority is the orchestrator's; no branch waits on a human.
 xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework major from 3.0 on).
 `source scripts/dev-env.sh` before any `dotnet`; `scripts/bootstrap-env.sh` rebuilds a fresh container.
 
-## Done and merged (nine tasks)
+## Done and merged (twelve tasks)
 - **B-01** solution skeleton — 9 projects, Release clean at 0 warnings, lock file per project.
 - **B-02** `scripts/verify.sh` — the quality gate, plus `verify-selftest.sh`, which injects a defect,
   asserts the gate fails naming the right stage, and reverts. 21/21.
@@ -46,28 +46,30 @@ xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework maj
 - Automation: two hooks (39-case selftest), `dev-test.sh`, `dev-build.sh`, `file-claims.sh`,
   `project-health.sh`, five skills.
 
-**Integration branch green at 761 unit tests**, 54 integration. Floor 760, re-rounded at every merge
-and **never inherited** — three in-flight branches each re-round it and the third to merge re-measures.
+**Integration branch green at 764 unit tests**, 77 integration. Floor 760, re-measured at every merge
+and **never inherited** — three in-flight branches each re-round it (826, 840, 860) and each measures
+the merged result rather than trusting the incoming line. Git cannot see that conflict, which is why
+the rule exists.
 
-## In flight — four pull requests, all in review
-| PR | Branch | Tier | Where it stands |
-|---|---|---|---|
-| #9 | `task/ARCH-AUDIT-TRUNCATE` | Full | ADR-0028 Amendment 2. **Rework 5.** Fifth review found the pinned side of a comparison unconstrained (round 3's blocker, reintroduced by its own fix) and a completeness guard scoped so narrowly it refuses to run on a correct system. |
-| #12 | `task/B-19` | Full | Catalog append-only trails. **Rework 3** at `cabf7c6`, 75 integration tests. With the third reviewer, which Full tier requires after a rework. |
-| #13 | `task/B-06.1a` | Full | Tenancy kernel types and `TenantIdentityStamp`. First review. |
-| #14 | `task/B-06.1` | Full | `ITenantConnectionResolver`, its 60 s cache, the §5.2 pool settings. First review. |
+## In flight — three pull requests and two fresh builds
+| What | Tier | Where it stands |
+|---|---|---|
+| PR #13 `task/B-06.1a` | Full | **Rework 2.** Second review found three majors, one of which is the eighth form *inside the fix for the seventh*: link 5's new "a throwing getter counts as fail-closed" arm passes green on B-06.3's natural lease shape, where the pre-rework version failed loudly. |
+| PR #14 `task/B-06.1` | Full | **APPROVED** by the second reviewer, no blockers or majors. Taking four cheap minors first — two are *a test that passes for the wrong reason*. Merges **before** B-20. |
+| PR #16 `task/B-09` | Full | **Rework 1.** Two blockers: a procedural body in a *single-quoted* literal is never read and reported clean (`DO '…'` versus `DO $$…$$`), and MIG1 goes red at merge because B-19's migration carries no `[MigrationSafety]`. |
+| `task/B-20` | Full | ADR-0034 §3.1's `(host, port)` unique index. Building. Warned: it reds **six** integration tests, five of them because `RoutingTestBed` builds a cluster row per bed on one endpoint. |
+| `task/B-21` | Full | ADR-0033's package admission floor, `FirstParty`-only, with D1/D2/D3. Building. |
 
 ## Routings recorded but not yet actioned (transcribe before merging, never after)
-- **`TenantDatabaseHandle` has no owning backlog row.** B-04's inertness guard asserts it is absent;
-  something must eventually build it. → architect, then project-manager.
-- **`InstalledPackages` shape is unconfirmed.** B-06.1a built it because no such type existed and
-  ADR-0008 §4 does not define one. Text id and version, because the tenancy contracts assembly may
-  not reference the Country Package contracts (layering rule L2). → architect.
-- **ADR-0007 §3.5 places `ITenantConnectionResolver` in `.Contracts`;** B-06.1 shipped it `internal`
-  in `Aurora.Platform.Tenancy` because every named consumer lives there and the partition forbade
-  Contracts writes. One-file move when an outside consumer exists (B-10/B-18.5 is the first).
-  → architect: confirm the ADR stands or amend it.
-- **ADR-0029 A2.7 point 3 wording is stale.** `FOLLOWUP-032` is being narrowed to that point only.
+All four of the previous entries are **answered** by ADR-0033/0034/0035 on PR #15: `TenantDatabaseHandle`
+is kept and owned by B-07.1 but moves out of `.Contracts` (that project may not reference Npgsql);
+`InstalledPackages` is confirmed with an `Active`/`TryGetActive` correction B-06.1a must absorb;
+ADR-0007 §3.5 moves rather than the code changing, because a connection string is a live credential and
+a `.Contracts` type is nameable by every module; and `FOLLOWUP-032` is narrowed.
+
+Open, and held: **B-18.1 and B-07.1 both wait on ADR-0034's `ux_database_cluster_host_port` index.**
+Three variants of the tenant-takeover finding have now been executed, and every one defined a
+constraint over a *logical* identifier where the thing that must be unique is the *physical* endpoint.
 
 ## Known risks
 1. **Usage limits kill agents mid-task, repeatedly** (five times so far). Mitigation works: developers

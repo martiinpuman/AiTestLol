@@ -81,10 +81,23 @@ For any task that adds a check, a gate or a property test, add the demonstration
 > State in the test which input dimensions are genuinely arbitrary and which are a
 > fixed list. A mechanism that cannot fail is not a check.
 
-## 5. After dispatch
+## 5. After dispatch — do this immediately, not at the end of the turn
 
-Record the dispatch in `docs/BACKLOG.md` (status) and `docs/ITERATION_LOG.md`. Do not
-dispatch a second agent against the same files.
+Set the row's status to **`in-progress`** in `docs/BACKLOG.md` in the same turn you
+dispatch, and record it in `docs/ITERATION_LOG.md`. Do not dispatch a second agent
+against the same files.
+
+Why immediately: `project-health.sh` reads **repository state**, and a dispatch is not
+repository state until the agent puts something on disk. Between the `Agent` call and
+the agent's first commit or worktree, the row still reads `dispatchable now:` — and a
+check-in firing in that window will dispatch it again. This was observed live: B-20 and
+B-21 both read dispatchable seconds after their agents were launched.
+
+The status flip is the only signal available at dispatch time, which is why it is a step
+and not a courtesy. The readiness check now also reports in-progress rows and says
+whether anything is on disk yet, because an in-progress row with nothing on disk is
+*also* what an agent that died looks like, and usage limits have killed agents here five
+times.
 
 ## 0. Before any of the above — is the file free?
 

@@ -229,6 +229,14 @@ def held_by(row):
     return sorted(blockers)
 
 ready = [r for r, (d, st) in rows.items() if st == 'ready' and not unmet(d)]
+
+# A row marked in-progress at dispatch time closes the window between "an agent was
+# told to build this" and "that agent has put something on disk" -- repository state
+# is the only thing this check can read, and a dispatch is not repository state until
+# the agent acts. But an in-progress row with nothing on disk is also what an agent
+# that DIED looks like, and usage limits have killed agents here five times. So report
+# them, and say which of the two it is rather than letting the row go quiet.
+in_progress = sorted(r for r, (d, st) in rows.items() if st == 'in-progress')
 started = sorted(r for r in ready if r in in_flight)
 held = sorted((r, held_by(r)) for r in ready if r not in in_flight and held_by(r))
 dispatchable = sorted(r for r in ready
@@ -238,6 +246,11 @@ broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet
 print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row is started, held or waiting on a predecessor)'}")
 for r in started:
     print(f"  already started: {r} — {started_by.get(r, 'in flight')}")
+for r in in_progress:
+    if r in in_flight:
+        print(f"  {r} in progress — {started_by.get(r, 'in flight')}")
+    else:
+        print(f"  {r} in progress — dispatched, nothing on disk yet; if this persists its agent died")
 for r, b in held:
     if b == ['an explicit HELD marker in its own row']:
         print(f"  {r} held — its row carries an explicit HELD marker")
