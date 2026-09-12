@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Migrations;
@@ -46,7 +45,7 @@ public sealed class CatalogHostGrammarTests
         ("xn--pg-bfa.internal", true),
         ("a", true),
         (new string('a', 63) + ".internal", true),
-        (string.Join('.', Enumerable.Repeat(new string('b', 61), 4)) + ".c", true),
+        (string.Join('.', new string('b', 63), new string('c', 63), new string('d', 63), new string('e', 61)), true),
         ("pg-1.internal,pg-2.internal", false),
         ("/var/run/postgresql", false),
         ("::1", false),
@@ -106,7 +105,7 @@ public sealed class CatalogHostGrammarTests
     {
         await using NpgsqlConnection owner = await _catalog.OpenMigratorConnectionAsync();
         await using var command = new NpgsqlCommand(
-            "SELECT current_setting('lc_ctype'), lower(@u COLLATE \"C\"), lower(@u), lower(@m COLLATE \"C\"), lower(@m)", owner);
+            "SELECT datctype, lower(@u COLLATE \"C\"), lower(@u), lower(@m COLLATE \"C\"), lower(@m) FROM pg_database WHERE datname = current_database()", owner);
         command.Parameters.AddWithValue("u", NonAsciiUpper);
         command.Parameters.AddWithValue("m", AsciiAndNonAsciiUpper);
         await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
@@ -117,7 +116,7 @@ public sealed class CatalogHostGrammarTests
         string mixedUnderC = reader.GetString(3);
         string mixedUnderCtype = reader.GetString(4);
 
-        _output.WriteLine($"lc_ctype of the catalog: {ctype}");
+        _output.WriteLine($"datctype of the catalog: {ctype}");
         _output.WriteLine($"lower('{NonAsciiUpper}') under C: {underC} (host = lower(host) {(underC == NonAsciiUpper ? "holds: admitted" : "fails: refused")})");
         _output.WriteLine($"lower('{NonAsciiUpper}') under {ctype}: {underCtype} (host = lower(host) {(underCtype == NonAsciiUpper ? "holds: admitted" : "fails: refused")})");
         _output.WriteLine($"lower('{AsciiAndNonAsciiUpper}') under C: {mixedUnderC}; under {ctype}: {mixedUnderCtype}");

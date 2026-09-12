@@ -403,16 +403,41 @@ one connection string. With it the composition is a proof: `cluster_id → (host
 Beside it, in the same migration, `ck_database_cluster_host_lower_case` (`host = lower(host)`;
 ADR-0036 §3, added to ADR-0034 as §3.4) holds the host to its canonical spelling as `tenant_host`
 already was: the index is byte-exact, so it can only make `cluster_id → (host, port)` injective on
-the endpoint if one endpoint has one spelling. `DatabaseCluster.Register` refuses every second
-spelling the check cannot see as well as the one it can: ASCII only, because `lower()` folds a
-non-ASCII letter under one collation and not another, so `pg.ÜBER.internal` could reach the row in
-two spellings on a `C`-collated catalog with the check reporting clean (an internationalised name
-is stored as punycode, which is what DNS carries); no leading, trailing or doubled dot, because
-`pg.internal.` and `pg.internal` are one name to a resolver; and no `/`, so the resolver is never
-handed a Unix-socket directory, whose case is significant and for which the check would be wrong.
-That last is the condition ADR-0036 §3 names as the one that would invalidate the check, and the
-entity is what keeps it from arising through the entity's own write path; a raw-SQL row can still
-carry one, and the check would then fold a path.
+the endpoint if one endpoint has one spelling. And the host is *one host*: `CanonicalHost` states what
+a `database_cluster.host` is — RFC 1123 labels of lower-case ASCII letters, digits and inner
+hyphens, 1 to 63 each, joined by single dots, 253 at most, of which an IPv4 literal is a special
+case — and `ck_database_cluster_host_well_formed` evaluates the same grammar in the database, so
+raw SQL meets it as `DatabaseCluster.Register` does (ADR-0036 §4.2 chose the constraint as the
+mechanism; the entity's copy binds only callers of `Register`, of which there is none in production
+yet). A grammar, not a deny-list: three characters had been refused one review at a time — `/`,
+then a dot in the wrong place, then `,`, the multi-host separator that let
+`pg-1.internal,pg-2.internal` past the index, the lower-case check and the endpoint comparison as a
+fifth takeover shape (PR #18, second review; Npgsql opens whichever host answers, so it is the
+same server under another string). Excluded by construction: a multi-host list and a Unix-socket
+directory — the two shapes ADR-0036 §6 names as breaking the endpoint triple — a scheme, a port
+suffix, a path, a stray or doubled dot, and any upper-case or non-ASCII character. That last is
+why the grammar is ASCII, **executed on `postgres:17-alpine` in `CatalogHostGrammarTests`** rather
+than reasoned: the lower-case check's `lower()` depends on the database's `lc_ctype` for a
+non-ASCII letter —
+
+```
+datctype of the catalog: en_US.utf8
+lower('pg.Über.internal') under C: pg.Über.internal (host = lower(host) holds: admitted)
+lower('pg.Über.internal') under en_US.utf8: pg.über.internal (host = lower(host) fails: refused)
+lower('pg.ÜBER.internal') under C: pg.Über.internal; under en_US.utf8: pg.über.internal
+C: 'pg.Über.internal' = lower(host) is True; insert refused 23514 on ck_database_cluster_host_well_formed
+en_US.utf8: insert refused 23514 on ck_database_cluster_host_lower_case
+```
+
+— so `pg.Über.internal` beside `pg.über.internal` is two rows on a `C`-collated catalog and one on
+the fixture's, with the lower-case check alone. `pg.ÜBER.internal` is **not** that witness: `B`,
+`E` and `R` are ASCII upper case and fold under both (an earlier version of this paragraph cited
+it; it does not reproduce). The shape check refuses both spellings under both collations, and the
+entity's grammar and the constraint's regular expression are held equal over 25 cases by executing
+both. An internationalised name is stored as punycode, which is what DNS carries. An IPv6 literal
+(`::1`, `[::1]`) is outside the grammar pending the architect: ADR-0036 §3 reasons about folding
+one, the row has never accepted one, and admitting it is a decision about what a cluster endpoint
+may be, not a spelling rule.
 
 **The acceptance criterion is the property, not the index** — ADR-0036 §2.3, which replaced
 ADR-0034 §3.3 after this row found §3.3 vacuous: *no two non-deleted tenants resolve to the same
@@ -436,7 +461,9 @@ ADR-0036 §2.4 splits the demonstration in three, and this module carries all th
 - **D2, the fleet scan, as an integration test** (`CatalogRoutingUniquenessTests`). It asks the
   catalog, as the owner, to store every executed shape — variant 1; variant 3 with an `Active`
   attacker and with a `Provisioning` one (PR #18 M-3); variant 3 with the host in another case
-  (M-1) — records whether each was admitted or refused by a constraint, then takes an endpoint for
+  (M-1); variant 3 as a multi-host list, the fifth shape, which printed `ADMITTED … collisions: 0`
+  and passed against the previous migration — records whether each was admitted or refused by a
+  constraint, then takes an endpoint for
   every non-deleted tenant from the production registration: parsed out of the string the real
   `ITenantConnectionResolver` produced where the application path may connect, and where it
   refuses on state, out of the string the real composer produces over the row the real reader read
@@ -444,8 +471,10 @@ ADR-0036 §2.4 splits the demonstration in three, and this module carries all th
   that has both, so the assertion stays a property of the resolver's output and a `Provisioning`
   row, the one B-07.1's adoption rule acts on, is compared rather than skipped. It compares every
   pair with the same comparator, prints tenants, pairs compared and collisions, and fails on zero
-  of either. It is a regression guard, not a proof: once the index and the check are in place no
-  seed can construct a collision through the normal write path.
+  of either. `ResolvedEndpoint.Parse` refuses a multi-host value outright (ADR-0036 §6: a list is
+  not one endpoint), so a row carrying one makes D2 error rather than pass. It is a regression
+  guard, not a proof: once the index and the checks are in place no seed can construct a collision
+  through the normal write path.
 - **D3, the one-shot demonstration, recorded rather than standing** — the fix removed the
   evidence. D2 run before `ux_database_cluster_host_port` existed, against a catalog seeded with
   variant 3, verbatim:
@@ -483,8 +512,9 @@ the state before this migration, seeds two rows on one endpoint and runs the mig
 duplicated` — and, because the migration is transactional, no index, no history row, both rows
 intact and the migration still pending for the runner to retry once an operator has resolved the
 duplicate. A mixed-case host at the same state fails it with `23514`, `check constraint
-"ck_database_cluster_host_lower_case" of relation "database_cluster" is violated by some row` — and
-the index created a statement earlier is rolled back with it, the row left as it was spelled.
+"ck_database_cluster_host_lower_case" of relation "database_cluster" is violated by some row`, and a
+multi-host list with `23514` naming `ck_database_cluster_host_well_formed` — and the index and
+check created a statement earlier are rolled back with it, the row left as it was spelled.
 Transactional on purpose: `CONCURRENTLY` cannot run in a transaction and leaves an
 `INVALID` index behind on failure, and ADR-0007 §7.2 reserves it for tables a live tenant writes to,
 which the catalog's operator seed data is not. Rows on distinct endpoints — one host on two ports,
@@ -495,9 +525,9 @@ operator sees.
 
 **What the index does not and cannot cover, stated rather than left to be inferred** (ADR-0034 §2,
 §3.2; ADR-0036 §2.4). Two names for one server — a CNAME, a second DNS record, a failover alias, an
-IP literal beside a host name. (A host spelled in another case was on this list until ADR-0036 §3;
-the check, the entity's spelling rule and the comparator's folding close that half, and only that
-half.) The catalog stores what it was told; a
+IP literal beside a host name. (A host spelled in another case, and a multi-host list, were on this
+list until ADR-0036 §3 and PR #18's second review; the two checks, the grammar and the comparator's
+folding close those halves, and only those.) The catalog stores what it was told; a
 constraint over a name narrows what can be stored and never establishes identity.
 `TenantIdentityStamp` is the control for that (ADR-0034 §4), on every physical connection, and it
 is in effect on no path until B-06.2 and B-07.1 wire it. Two shapes the index is wrong for if they

@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using Aurora.Platform.Tenancy.Catalog;
 using Shouldly;
 using Xunit;
@@ -91,7 +90,7 @@ public sealed class DatabaseClusterTests
     public void A_label_may_be_63_characters_and_a_host_253_and_neither_one_more()
     {
         string label63 = new string('a', 63);
-        string host253 = string.Join('.', Enumerable.Repeat(new string('b', 61), 4)) + ".c";
+        string host253 = string.Join('.', new string('b', 63), new string('c', 63), new string('d', 63), new string('e', 61));
 
         host253.Length.ShouldBe(253);
         new ACluster().WithHost(label63 + ".internal").Build().Host.ShouldBe(label63 + ".internal");
