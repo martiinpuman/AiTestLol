@@ -133,7 +133,7 @@ python3 - <<'READY'
 import re, sys
 rows = {}
 for line in open('docs/BACKLOG.md'):
-    m = re.match(r'\|\s*(B-[0-9.]+)\s*\|', line)
+    m = re.match(r'\|\s*(B-[0-9.]+[a-z]?)\s*\|', line)
     if not m:
         continue
     cells = [c.strip() for c in line.split('|')]
@@ -141,13 +141,15 @@ for line in open('docs/BACKLOG.md'):
         continue
     rows[m.group(1)] = (cells[6], cells[8])
 def unmet(deps):
-    return [d for d in re.findall(r'B-[0-9.]+', deps) if rows.get(d, ('', ''))[1] != 'done']
+    return [d for d in re.findall(r'B-[0-9.]+[a-z]?', deps) if rows.get(d, ('', ''))[1] != 'done']
 dispatchable = sorted(r for r, (d, st) in rows.items() if st == 'ready' and not unmet(d))
 broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet(d)]
 print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row waits on a predecessor)'}")
 for r, u in broken:
     print(f"  {r} is done but depends on un-done {', '.join(sorted(set(u)))}")
-print(f"  {len(rows)} row(s) read")
+unread = sum(1 for l in open('docs/BACKLOG.md')
+             if re.match(r'\|\s*B-', l) and not re.match(r'\|\s*B-[0-9.]+[a-z]?\s*\|', l))
+print(f"  {len(rows)} row(s) read" + (f", {unread} row id(s) the parser could not read" if unread else ""))
 sys.exit(1 if broken else 0)
 READY
 [ $? -eq 0 ] || fail "a row is marked done while a dependency is not"
