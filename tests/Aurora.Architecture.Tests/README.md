@@ -50,7 +50,8 @@ both trusted. The difference is written down in `RuleInventoryTests` and **check
 |---|---|---|
 | F1, S3, L1, L1-L5 | **Live** | They examine the kernel, the hosts and the project graph, all of which exist |
 | T4 | **Live** | `IHttpContextAccessor` exists in the framework; any production code could name it today |
-| T3, T5, T6 | **Live, nothing to find** | They scan every production type on every run and would report the first violation immediately. The *types* they govern (`ITenantDbContextFactory<>`, `TenantScope`, `TenantDatabaseHandle`) arrive with B-06 |
+| T5 | **Live** | `TenantScope` and `TenantAccess` exist in `Aurora.Platform.Tenancy.Contracts` since B-06.1a and are in the population T5 scans; `RuleInventoryTests` pins them as the exact (full name, assembly) set. The third name it matches, `TenantDatabaseHandle`, has no owning row yet |
+| T3, T6 | **Live, nothing to find** | They scan every production type on every run and would report the first violation immediately. The *types* they govern (`ITenantDbContextFactory<>`, `TenantDatabaseHandle`) arrive with B-06.3 and the row that owns the handle |
 | T1 | **Inert** | No tenant `DbContext` exists in production yet. B-05 brings the catalog context (exempt as the exact pair); B-06 brings the first tenant context |
 | T2 | **Live** | `Aurora.Platform.Tenancy` exists since B-05, with the one permitted `AddDbContext` call site: the catalog registration. T2 examines it on every run, floor 1 |
 | M1 | **Inert** | Fewer than two business modules exist, so there are no cross-module edges |
@@ -90,10 +91,14 @@ solution; the fixture test runs the **same function** over a deliberately-violat
   assert the rule actually examined them.
 
 Four fixtures are **stand-ins**: `TenantScope`, `TenantDatabaseHandle`, `ITenantDbContextFactory<>`
-and `ITenantMigrationContextFactory<>` do not exist until B-06. The rules match them by *simple name*, which ADR-0007 fixes, rather than by full name, whose
-namespace B-06 has not chosen — a rule that guessed the namespace and guessed wrong would match
-nothing and report no violations, in green, forever. **When B-06 lands the real types, delete the
-stand-ins and point the fixtures at them**; `RuleInventoryTests` is what will remind you.
+and `ITenantMigrationContextFactory<>`. The rules match them by *simple name*, which ADR-0007 fixes, rather than by full name, whose
+namespace was not chosen when the rules were written — a rule that guessed the namespace and guessed wrong would match
+nothing and report no violations, in green, forever. `TenantScope` (and its base `TenantAccess`) now
+exists for real, in `Aurora.Platform.Tenancy.Contracts` since B-06.1a, and `RuleInventoryTests` pins
+it there; the stand-in is kept because it exercises the same simple-name matching path and because
+the other three still have no real type. **When the last of them lands, delete the stand-ins and
+point the fixtures at the real types in one change** (this assembly would then reference the
+contracts project); `RuleInventoryTests` is what will remind you.
 
 The one *exemption* runs the other way, because a too-wide exemption fails silently where a too-wide
 subject match fails loudly (ADR-0032 §2, §4.2). Matched by simple name, any `CatalogDbContext`

@@ -154,17 +154,35 @@ public sealed class RuleInventoryTests
     }
 
     [Fact]
-    public void No_tenant_access_type_exists_yet_which_is_why_T5_and_T6_have_nothing_to_find()
+    public void The_tenant_access_types_T5_bites_on_are_the_two_real_ones_and_T6s_handle_does_not_exist_yet()
     {
-        SolutionLayout.ProductionTypes
-            .Where(static type =>
-                TenancyNames.TenantAccessSimpleNames.Contains(TypeIndex.SimpleNameOf(type.FullName)))
-            .Select(static type => type.FullName)
-            .ShouldBeEmpty(
-                "TenantScope, TenantAccess or TenantDatabaseHandle now exists in production (B-06, "
-                + "ADR-0027). T5 and T6 are already live and will now bite on the real types; delete "
-                + "the stand-ins in Fixtures/Violations/TenancyViolations.cs, point the fixtures at "
-                + "the real ones, and update this test.");
+        // B-06.1a landed TenantAccess and TenantScope in Aurora.Platform.Tenancy.Contracts, so T5
+        // now examines the real proof types on every run rather than only the fixture stand-ins.
+        // The assertion is the exact (full name, assembly) set rather than "at least these", for the
+        // same reason the catalog exemption is an exact pair: a second TenantScope anywhere would be
+        // a look-alike the rules match by simple name, and it must be a red test here, not a silent
+        // widening of what "the scope" means. TenantDatabaseHandle has no owning row yet (ADR-0027
+        // §1; flagged on B-06.1a's backlog row), so its absence is still asserted, and the row that
+        // lands it updates this set. The stand-ins in Fixtures/Violations/TenancyViolations.cs stay
+        // until then: the rules key on simple names, so a stand-in exercises the same matching path
+        // as the real type, and re-pointing the fixtures is one change once every real type exists.
+        (string FullName, string AssemblyName)[] present =
+        [
+            .. SolutionLayout.ProductionTypes
+                .Where(static type =>
+                    TenancyNames.TenantAccessSimpleNames.Contains(TypeIndex.SimpleNameOf(type.FullName)))
+                .Select(static type => (type.FullName, type.AssemblyName))
+                .OrderBy(static type => type.FullName, StringComparer.Ordinal),
+        ];
+
+        present.ShouldBe(
+            [
+                ("Aurora.Platform.Tenancy.Contracts.TenantAccess", "Aurora.Platform.Tenancy.Contracts"),
+                ("Aurora.Platform.Tenancy.Contracts.TenantScope", "Aurora.Platform.Tenancy.Contracts"),
+            ],
+            "the tenant proof types in production are exactly ADR-0027 §1's TenantAccess and TenantScope, "
+            + "both in the contracts assembly (B-06.1a); TenantDatabaseHandle arrives with the row that "
+            + "owns it, and any other type carrying one of these names is a look-alike");
     }
 
     [Fact]
