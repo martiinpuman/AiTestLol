@@ -36,26 +36,39 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// lets the statement through <em>for the probe's session</em>.
 /// </para>
 /// <para>
-/// <b>The binding check.</b> For each guard the migration created, every <c>pg_trigger</c> column
-/// that decides whether it fires is read and compared with what the migration wrote: <c>tgtype</c>
-/// exactly, <c>tgenabled = 'A'</c>, <c>tgfoid</c> resolved to
-/// <c>catalog.refuse_append_only_change</c> <em>by schema</em>, <c>tgqual</c> null and
-/// <c>tgattr</c> empty. <em>What it sees that the probe cannot:</em> a guard whose firing was
-/// made conditional. A <c>WHEN (current_setting('aurora.maintenance', true) IS DISTINCT FROM 'on')</c>
-/// clause lets nothing through until a session sets that GUC, so the probe, which sets none,
-/// still gets its <c>42501</c>; a column list (<c>BEFORE UPDATE OF correlation_id</c>) fires for
-/// the column the probe happens to update and for no other. Both shipped through the first
-/// review of this branch with every test green (PR #12, critical), because the enumeration read
-/// <c>tgtype</c>, <c>tgenabled</c> and a schema-less <c>proname</c> and nothing else — a link
-/// nothing was reading, which is where every break on this project so far has lived. <em>What it
-/// cannot see:</em> a hollow body, by construction; that is the probe's.
+/// <b>The binding check.</b> What a write to one of these tables does is decided by four things
+/// PostgreSQL holds in four places — the ACL (<c>CatalogPrivilegeTests</c>' oracle), the guards
+/// (<c>pg_trigger</c>), rewrite rules (<c>pg_rewrite</c>) and row-level security
+/// (<c>pg_class.relrowsecurity</c>, <c>pg_policy</c>) — and this check reads the last three
+/// and compares them with what the migration wrote. For each guard: <c>tgtype</c> exactly,
+/// <c>tgenabled = 'A'</c>, <c>tgfoid</c> resolved to <c>catalog.refuse_append_only_change</c>
+/// <em>by schema</em>, <c>tgqual</c> null, <c>tgattr</c> empty, <c>tgnargs</c> zero. For each
+/// table: no rule of any kind, row-level security off, no policy. <em>What it sees that the
+/// probe cannot:</em> anything that was made <em>conditional on the session</em>. A guard
+/// re-created <c>WHEN (current_setting('aurora.maintenance', true) IS DISTINCT FROM 'on')</c>
+/// fires for every session that has not set that GUC — the probe included — and for no session
+/// that has; a column list (<c>BEFORE UPDATE OF correlation_id</c>) fires for the column the
+/// probe happens to update and for no other; a rule <c>ON INSERT … WHERE current_setting(…) =
+/// 'on' DO INSTEAD NOTHING</c> discards an armed session's inserts with nothing refused, so an
+/// unrecorded support-access grant or an erasure that is never replayed after a restore leaves a
+/// trail that looks intact because nothing was ever refused, only silently dropped; a forced
+/// row-level-security policy keyed the same way conceals every row from an armed session and
+/// turns its <c>UPDATE</c> and <c>DELETE</c> into silent no-ops. Each of those leaves every
+/// column the check read before it byte-identical — the <c>WHEN</c> clause shipped through the
+/// first review of this branch with every test green (PR #12, critical), the rule through the
+/// second (high) — because a check is only as good as the last link it follows, and each time
+/// the link stopped one column, then one catalog, short. <c>aurora_app</c> can <em>arm</em> any of
+/// them (<c>SET aurora.maintenance = 'on'</c> is any role's to run) but cannot plant one: planting
+/// needs the DDL role. <em>What it cannot see:</em> a hollow body, by construction; that is the
+/// probe's.
 /// </para>
 /// <para>
 /// <b>What neither sees.</b> A transient tamper — disable, act, restore — between two runs, and
 /// any shape neither the probe executes nor the binding check binds. The first is what a chain
 /// head outside the database is for (<c>FOLLOWUP-026</c>); against the second the only defence
-/// is that the binding check reads <em>every</em> column of <c>pg_trigger</c> that changes what
-/// fires, which is the list above.
+/// is that the binding check reads <em>every</em> place PostgreSQL decides what a write does,
+/// which is the list above. A <c>CHECK</c> constraint keyed on a GUC is the one shape that
+/// announces itself — an armed insert fails loudly rather than vanishing — and is not read here.
 /// </para>
 /// </remarks>
 [Collection(CatalogDatabaseSuite.Name)]
@@ -96,7 +109,8 @@ public sealed class CatalogAppendOnlyGuardTests
     /// <summary>
     /// Every tamper shape, and what each side of the suite sees of it. Columns: the fault; the
     /// statements the owner issues; what the effect probe reports silent (<c>table/VERB</c>, or
-    /// nothing); the binding check's finding (a substring, or nothing); a bypass statement run
+    /// nothing); the binding check's findings (substrings separated by <c> | </c>, exactly that
+    /// many, or nothing); a bypass statement run
     /// with <see cref="MaintenanceSwitch"/> set to <c>on</c> (or nothing); and the bypass's
     /// <em>proof</em> — a boolean <c>SELECT</c> that is true only if the bypass landed, read
     /// before the savepoint is rolled back. The proof is what is asserted, never the driver's
@@ -199,6 +213,38 @@ public sealed class CatalogAppendOnlyGuardTests
             "",
             ""
         },
+        {
+            "argued: the truncate guard re-created passing an argument its function ignores - inert today, read anyway",
+            "DROP TRIGGER trg_operator_audit_event_append_only_truncate ON catalog.operator_audit_event; "
+            + "CREATE TRIGGER trg_operator_audit_event_append_only_truncate BEFORE TRUNCATE ON catalog.operator_audit_event FOR EACH STATEMENT "
+            + $"EXECUTE FUNCTION catalog.{GuardFunction}('maintenance'); "
+            + "ALTER TABLE catalog.operator_audit_event ENABLE ALWAYS TRIGGER trg_operator_audit_event_append_only_truncate",
+            "",
+            "catalog.operator_audit_event.trg_operator_audit_event_append_only_truncate passes 1 argument(s) to its function",
+            "",
+            ""
+        },
+        {
+            "rewritten: a rule that discards an armed session's INSERTs with nothing refused (PR #12 second review, high)",
+            "CREATE RULE audit_off AS ON INSERT TO catalog.operator_audit_event "
+            + $"WHERE current_setting('{MaintenanceSwitch}', true) = 'on' DO INSTEAD NOTHING",
+            "",
+            "catalog.operator_audit_event has rule audit_off",
+            "INSERT INTO catalog.operator_audit_event (id, occurred_at, tenant_id, actor_type, actor_id, action) "
+            + "VALUES (gen_random_uuid(), '2026-09-11T12:00:00Z', NULL, 'System', 'attacker:probe', 'silently.discarded')",
+            "SELECT NOT EXISTS (SELECT 1 FROM catalog.operator_audit_event WHERE action = 'silently.discarded')"
+        },
+        {
+            "concealed: forced row-level security with a policy that hides every row from an armed session",
+            "ALTER TABLE catalog.erasure_replay_log ENABLE ROW LEVEL SECURITY; "
+            + "ALTER TABLE catalog.erasure_replay_log FORCE ROW LEVEL SECURITY; "
+            + "CREATE POLICY conceal ON catalog.erasure_replay_log FOR ALL "
+            + $"USING (current_setting('{MaintenanceSwitch}', true) IS DISTINCT FROM 'on') WITH CHECK (true)",
+            "",
+            "catalog.erasure_replay_log has row level security FORCE | catalog.erasure_replay_log has policy conceal",
+            "UPDATE catalog.erasure_replay_log SET requested_by = 'rewritten' WHERE id = @id",
+            "SELECT NOT EXISTS (SELECT 1 FROM catalog.erasure_replay_log WHERE id = @id)"
+        },
     };
 
     private readonly CatalogDatabaseFixture _catalog;
@@ -229,24 +275,27 @@ public sealed class CatalogAppendOnlyGuardTests
     }
 
     [Fact]
-    public async Task Each_append_only_table_carries_the_two_guards_the_migration_created_bound_exactly_as_it_created_them()
+    public async Task Each_append_only_table_carries_the_two_guards_the_migration_created_bound_exactly_as_it_created_them_and_nothing_else_that_decides_a_write()
     {
         // The binding check over the migrated database: every guard present, of the exact type,
         // ALWAYS, executing catalog.refuse_append_only_change by schema, unconditional, for every
-        // column. tgenabled must read 'A', not merely not 'D': an 'O' trigger is suppressed under
-        // session_replication_role = 'replica' with tgenabled unchanged, and ENABLE REPLICA leaves
-        // 'R'. tgqual and tgattr must be empty: a WHEN clause or a column list is a guard that
-        // fires for the probe and not for an attacker, and neither changes tgtype, tgenabled or
-        // the function.
+        // column, with no arguments; and on each table no rewrite rule, no row-level security,
+        // no policy. tgenabled must read 'A', not merely not 'D': an 'O' trigger is suppressed
+        // under session_replication_role = 'replica' with tgenabled unchanged, and ENABLE REPLICA
+        // leaves 'R'. tgqual and tgattr must be empty and pg_rewrite and pg_policy must hold
+        // nothing for these tables: a WHEN clause, a column list, a conditional rule or a policy
+        // is a table that behaves for the probe and not for an attacker, and none of them changes
+        // tgtype, tgenabled or the function.
         await using NpgsqlConnection connection = await _catalog.OpenMigratorConnectionAsync();
-        IReadOnlyList<GuardLocation> located = await LocateGuardsAsync(connection, null);
-        List<string> findings = Findings(located);
+        IReadOnlyList<GuardLocation> guards = await LocateGuardsAsync(connection, null);
+        IReadOnlyList<TableAttachment> attachments = await LocateAttachmentsAsync(connection, null);
+        List<string> findings = Findings(guards, attachments);
 
-        _output.WriteLine(Describe(located));
+        _output.WriteLine(Describe(guards, attachments));
 
         findings.ShouldBeEmpty(string.Join(Environment.NewLine, findings));
-        located.Count.ShouldBe(CatalogSchemaAllowlist.AppendOnlyTables.Count * ExpectedGuards.Count, "two guards per append-only table");
-        located.Count.ShouldBeGreaterThanOrEqualTo(4, "a binding check over fewer guards examined the wrong population");
+        guards.Count.ShouldBe(CatalogSchemaAllowlist.AppendOnlyTables.Count * ExpectedGuards.Count, "two guards per append-only table");
+        guards.Count.ShouldBeGreaterThanOrEqualTo(4, "a binding check over fewer guards examined the wrong population");
     }
 
     [Theory]
@@ -281,6 +330,16 @@ public sealed class CatalogAppendOnlyGuardTests
         // - The rebound guard is seen by both: the probe, because the shadow function does not
         //   raise; the binding check, because the function is resolved by schema and not by name
         //   alone (PR #12 medium).
+        // - A trigger argument is inert today only because the function ignores TG_ARGV; "inert
+        //   only because" is how the previous doors were described, so it is read and reported.
+        // - The rule and the policy are outside pg_trigger altogether, which is why the guard
+        //   check of the second review was complete over the object it examined and still let
+        //   them through (PR #12 second review, high). A rule ON INSERT … WHERE the GUC is set DO
+        //   INSTEAD NOTHING leaves the probe's unarmed inserts landing and an armed session's
+        //   discarded with nothing refused; a forced row-level-security policy keyed the same way
+        //   leaves the probe's unarmed statements refused by the guard while an armed session
+        //   sees no rows and updates none, silently. Only the binding check sees these, by
+        //   reading pg_rewrite, pg_class.relrowsecurity and pg_policy.
         Guid tenantId = await SeedTenantAsync();
         await using NpgsqlConnection owner = await _catalog.OpenMigratorConnectionAsync();
         await using NpgsqlTransaction transaction = await owner.BeginTransactionAsync();
@@ -291,8 +350,9 @@ public sealed class CatalogAppendOnlyGuardTests
         }
 
         GuardProbe probe = await ProbeAsync(owner, transaction, tenantId);
-        IReadOnlyList<GuardLocation> located = await LocateGuardsAsync(owner, transaction);
-        List<string> findings = Findings(located);
+        IReadOnlyList<GuardLocation> guards = await LocateGuardsAsync(owner, transaction);
+        IReadOnlyList<TableAttachment> attachments = await LocateAttachmentsAsync(owner, transaction);
+        List<string> findings = Findings(guards, attachments);
         string? bypass = bypassSql.Length == 0 ? null : await BypassAsync(owner, transaction, tenantId, bypassSql, bypassProof);
 
         await transaction.RollbackAsync();
@@ -300,7 +360,7 @@ public sealed class CatalogAppendOnlyGuardTests
         _output.WriteLine($"Fault '{fault}':");
         _output.WriteLine($"  effect probe:  {probe.Report()}");
         _output.WriteLine($"  binding check: {(findings.Count == 0 ? "(no finding)" : string.Join("; ", findings))}");
-        _output.WriteLine($"  {Describe(located)}");
+        _output.WriteLine($"  {Describe(guards, attachments)}");
         if (bypass is not null)
         {
             _output.WriteLine($"  bypass with {MaintenanceSwitch} = on: {bypass}");
@@ -311,13 +371,15 @@ public sealed class CatalogAppendOnlyGuardTests
             probeSilent.Length == 0 ? [] : probeSilent.Split(", ").Order(StringComparer.Ordinal),
             Case.Sensitive,
             $"the fault '{fault}' silenced exactly these statements for the probe");
-        if (finding.Length == 0)
+        string[] expectedFindings = finding.Length == 0 ? [] : finding.Split(" | ");
+        findings.Count.ShouldBe(
+            expectedFindings.Length,
+            expectedFindings.Length == 0
+                ? $"the fault '{fault}' leaves pg_trigger, pg_rewrite and pg_policy as the migration wrote them, so the binding check has nothing to report: {string.Join("; ", findings)}"
+                : $"the fault '{fault}' changes exactly {expectedFindings.Length} binding(s): {string.Join("; ", findings)}");
+        foreach (string expected in expectedFindings)
         {
-            findings.ShouldBeEmpty($"the fault '{fault}' leaves pg_trigger as the migration wrote it, so the binding check has nothing to report");
-        }
-        else
-        {
-            findings.ShouldHaveSingleItem($"the fault '{fault}' changes one guard's binding").ShouldContain(finding);
+            findings.ShouldContain(f => f.Contains(expected, StringComparison.Ordinal), $"the fault '{fault}' is reported as '{expected}'");
         }
 
         (probeSilent.Length > 0 || finding.Length > 0).ShouldBeTrue($"the fault '{fault}' is seen by neither side, which is the one thing this branch cannot ship");
@@ -326,7 +388,7 @@ public sealed class CatalogAppendOnlyGuardTests
         // the fault, not the check, and the check cost the trail nothing.
         await using NpgsqlTransaction clean = await owner.BeginTransactionAsync();
         GuardProbe restored = await ProbeAsync(owner, clean, tenantId);
-        List<string> restoredFindings = Findings(await LocateGuardsAsync(owner, clean));
+        List<string> restoredFindings = Findings(await LocateGuardsAsync(owner, clean), await LocateAttachmentsAsync(owner, clean));
         await clean.RollbackAsync();
         restored.Silent.ShouldBeEmpty(restored.Report());
         restoredFindings.ShouldBeEmpty(string.Join(Environment.NewLine, restoredFindings));
@@ -442,8 +504,8 @@ public sealed class CatalogAppendOnlyGuardTests
         }
 
         await transaction.RollbackAsync("bypass");
-        landed.ShouldBeTrue($"{sql} with {MaintenanceSwitch} = on was not refused, yet '{proof}' says it did not land");
-        return $"{sql} -> landed; '{proof}' is true";
+        landed.ShouldBeTrue($"{sql} with {MaintenanceSwitch} = on was not refused, yet '{proof}' says it had no effect");
+        return $"{sql} -> not refused; '{proof}' is true";
     }
 
     private static NpgsqlCommand WithSeededRow(NpgsqlCommand command, AppendOnlyRow row)
@@ -458,15 +520,16 @@ public sealed class CatalogAppendOnlyGuardTests
 
     /// <summary>
     /// Every non-internal trigger on the append-only tables, with each <c>pg_trigger</c> column
-    /// that decides whether it fires: type, enabled state, the function it executes resolved by
-    /// schema, whether it carries a <c>WHEN</c> clause (<c>tgqual</c>) and how many columns an
-    /// <c>UPDATE OF</c> list names (<c>tgattr</c>); plus PostgreSQL's own rendering, for the report.
+    /// that decides whether and how it fires: type, enabled state, the function it executes
+    /// resolved by schema, whether it carries a <c>WHEN</c> clause (<c>tgqual</c>), how many
+    /// columns an <c>UPDATE OF</c> list names (<c>tgattr</c>) and how many arguments it passes
+    /// (<c>tgnargs</c>); plus PostgreSQL's own rendering, for the report.
     /// </summary>
     private static async Task<IReadOnlyList<GuardLocation>> LocateGuardsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
     {
         await using var command = new NpgsqlCommand(
             "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, fn.nspname || '.' || p.proname, "
-            + "       t.tgqual IS NOT NULL, coalesce(array_length(t.tgattr::smallint[], 1), 0), pg_get_triggerdef(t.oid) "
+            + "       t.tgqual IS NOT NULL, coalesce(array_length(t.tgattr::smallint[], 1), 0), t.tgnargs::int, pg_get_triggerdef(t.oid) "
             + "FROM pg_trigger t "
             + "JOIN pg_class c ON c.oid = t.tgrelid "
             + "JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -483,18 +546,55 @@ public sealed class CatalogAppendOnlyGuardTests
         {
             located.Add(new GuardLocation(
                 reader.GetString(0), reader.GetString(1), reader.GetInt16(2), reader.GetChar(3), reader.GetString(4),
-                reader.GetBoolean(5), reader.GetInt32(6), reader.GetString(7)));
+                reader.GetBoolean(5), reader.GetInt32(6), reader.GetInt32(7), reader.GetString(8)));
         }
 
         return located;
     }
 
     /// <summary>
-    /// Every way a located guard can differ from the one the migration created, each as a
-    /// sentence naming the guard, plus every expected guard that is not there at all. Empty means
-    /// every binding is as written.
+    /// Everything besides a trigger that PostgreSQL consults to decide what a write to one of the
+    /// append-only tables does, from the catalogs that hold it: every rewrite rule
+    /// (<c>pg_rewrite</c>, rendered by <c>pg_get_ruledef</c>), row-level security if it is enabled
+    /// or forced (<c>pg_class.relrowsecurity</c>, <c>relforcerowsecurity</c>), and every policy
+    /// (<c>pg_policy</c>, read through <c>pg_policies</c> for its rendered expressions). The
+    /// migration creates none of these, so every row is a finding.
     /// </summary>
-    private static List<string> Findings(IReadOnlyList<GuardLocation> located)
+    private static async Task<IReadOnlyList<TableAttachment>> LocateAttachmentsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT c.relname, 'rule', r.rulename::text, pg_get_ruledef(r.oid) "
+            + "FROM pg_rewrite r JOIN pg_class c ON c.oid = r.ev_class JOIN pg_namespace n ON n.oid = c.relnamespace "
+            + "WHERE n.nspname = 'catalog' AND c.relname = ANY(@tables) "
+            + "UNION ALL "
+            + "SELECT c.relname, 'row level security', CASE WHEN c.relforcerowsecurity THEN 'FORCE' ELSE 'ENABLE' END, '' "
+            + "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+            + "WHERE n.nspname = 'catalog' AND c.relname = ANY(@tables) AND c.relrowsecurity "
+            + "UNION ALL "
+            + "SELECT p.tablename::text, 'policy', p.policyname::text, "
+            + "       'FOR ' || p.cmd || ' TO ' || array_to_string(p.roles, ', ') || ' USING (' || coalesce(p.qual, '') || ') WITH CHECK (' || coalesce(p.with_check, '') || ')' "
+            + "FROM pg_policies p WHERE p.schemaname = 'catalog' AND p.tablename = ANY(@tables) "
+            + "ORDER BY 1, 2, 3",
+            connection, transaction);
+        command.Parameters.AddWithValue("tables", CatalogSchemaAllowlist.AppendOnlyTables.ToArray());
+
+        List<TableAttachment> attachments = [];
+        await using NpgsqlDataReader reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            attachments.Add(new TableAttachment(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+        }
+
+        return attachments;
+    }
+
+    /// <summary>
+    /// Every way a located guard can differ from the one the migration created, each as a
+    /// sentence naming the guard; every expected guard that is not there at all; and every rule,
+    /// row-level-security setting or policy on either table, which the migration never creates.
+    /// Empty means every binding is as written and nothing else decides a write.
+    /// </summary>
+    private static List<string> Findings(IReadOnlyList<GuardLocation> guards, IReadOnlyList<TableAttachment> attachments)
     {
         List<string> findings = [];
         var expected = new Dictionary<(string Table, string Trigger), short>();
@@ -506,7 +606,7 @@ public sealed class CatalogAppendOnlyGuardTests
             }
         }
 
-        foreach (GuardLocation guard in located)
+        foreach (GuardLocation guard in guards)
         {
             string name = $"catalog.{guard.Table}.{guard.Trigger}";
             if (!expected.Remove((guard.Table, guard.Trigger), out short type))
@@ -539,6 +639,11 @@ public sealed class CatalogAppendOnlyGuardTests
             {
                 findings.Add($"{name} fires for a column list of {guard.Columns}, so an UPDATE of any other column goes through: {guard.Definition}");
             }
+
+            if (guard.Args > 0)
+            {
+                findings.Add($"{name} passes {guard.Args} argument(s) to its function, which the migration does not: {guard.Definition}");
+            }
         }
 
         foreach ((string table, string trigger) in expected.Keys.OrderBy(key => key.Table, StringComparer.Ordinal).ThenBy(key => key.Trigger, StringComparer.Ordinal))
@@ -546,13 +651,22 @@ public sealed class CatalogAppendOnlyGuardTests
             findings.Add($"catalog.{table}.{trigger} is missing");
         }
 
+        foreach (TableAttachment attachment in attachments)
+        {
+            findings.Add(
+                $"catalog.{attachment.Table} has {attachment.Kind} {attachment.Name}, which decides what a write does before any guard fires"
+                + (attachment.Definition.Length == 0 ? string.Empty : $": {attachment.Definition}"));
+        }
+
         return findings;
     }
 
-    private static string Describe(IReadOnlyList<GuardLocation> located) =>
-        $"Located {located.Count} guard trigger(s) on {CatalogSchemaAllowlist.AppendOnlyTables.Count} append-only tables: "
-        + string.Join("; ", located.Select(g =>
-            $"{g.Table}.{g.Trigger} tgtype {g.Type} tgenabled {g.Enabled} -> {g.Function}() when {(g.HasWhen ? "present" : "none")} columns {g.Columns}"));
+    private static string Describe(IReadOnlyList<GuardLocation> guards, IReadOnlyList<TableAttachment> attachments) =>
+        $"Located {guards.Count} guard trigger(s) on {CatalogSchemaAllowlist.AppendOnlyTables.Count} append-only tables: "
+        + string.Join("; ", guards.Select(g =>
+            $"{g.Table}.{g.Trigger} tgtype {g.Type} tgenabled {g.Enabled} -> {g.Function}() when {(g.HasWhen ? "present" : "none")} columns {g.Columns} args {g.Args}"))
+        + $". Read {attachments.Count(a => a.Kind == "rule")} rule(s), {attachments.Count(a => a.Kind == "policy")} polic(ies) and "
+        + $"row level security on {attachments.Count(a => a.Kind == "row level security")} table(s) from pg_rewrite, pg_policy and pg_class.";
 
     private async Task<Guid> SeedTenantAsync()
     {
@@ -577,6 +691,12 @@ public sealed class CatalogAppendOnlyGuardTests
             + $"silent: {(Silent.Count == 0 ? "(none)" : string.Join(", ", Silent))}";
     }
 
-    /// <summary>One trigger as <c>pg_trigger</c> holds it, in the columns that decide whether it fires.</summary>
-    private sealed record GuardLocation(string Table, string Trigger, short Type, char Enabled, string Function, bool HasWhen, int Columns, string Definition);
+    /// <summary>One trigger as <c>pg_trigger</c> holds it, in the columns that decide whether and how it fires.</summary>
+    private sealed record GuardLocation(string Table, string Trigger, short Type, char Enabled, string Function, bool HasWhen, int Columns, int Args, string Definition);
+
+    /// <summary>
+    /// One thing besides a trigger attached to an append-only table that decides what a write
+    /// does — a rewrite rule, row-level security, a policy — by table, kind, name and rendering.
+    /// </summary>
+    private sealed record TableAttachment(string Table, string Kind, string Name, string Definition);
 }
