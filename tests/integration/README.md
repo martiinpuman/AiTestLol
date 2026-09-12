@@ -4,7 +4,7 @@ Each project is created by the task that owns the thing it tests.
 
 | Project | Tests | Landed with |
 |---|---|---|
-| `Aurora.Platform.Tenancy.IntegrationTests` | The catalog database: migrated schema, constraints, round trips and `aurora_app`'s privileges | B-05 |
+| `Aurora.Platform.Tenancy.IntegrationTests` | The catalog database: migrated schema, constraints, round trips and `aurora_app`'s privileges (B-05); the two append-only trails, their grants and their guard, asserted by refusal as the owner inside a rolled-back transaction (B-19) | B-05, B-19 |
 
 Still to come: `Aurora.Countries.NewZealand.Tests` with the first Country Package, and one
 `Aurora.Modules.<M>.IntegrationTests` per module from `scripts/new-module.sh` (task B-14).
