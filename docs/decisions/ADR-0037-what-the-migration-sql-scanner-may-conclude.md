@@ -320,7 +320,7 @@ It reports **migrations examined, `Contract` migrations examined, and Expand/Con
 
 ### 5.3 What is not built, in the present tense
 
-- **`CoreSchemaVersion` is on `task/B-06.1a` (PR #13) and is not merged.** Until it merges, G7 has nothing to read and must not be written as though it does.
+- **`CoreSchemaVersion` is on `task/B-06.1a` (PR #13) and is not merged** — checked at integration `2f36550`, where `src/platform/Aurora.Platform.Tenancy.Contracts/CoreSchemaVersion.cs` does not exist. Until it merges, G7 has nothing to read and must not be written as though it does. **The commit is named so this claim's staleness is checkable rather than assumed** (ADR-0036 §7).
 - **`CoreSchemaVersion.Current` is `0` and no tenant-database migration exists.** Every migration in the repository today is a *catalog* migration, and the catalog has **no** schema-version constant and no skew gate. For catalog migrations G7 does not apply and G6 is the only ordering check there is. A catalog skew gate would need its own constant and is a new decision, not an extension of this one.
 - **`SchemaVersion` does not exist.** `MigrationSafetyAttribute` on `task/B-09` has `Category`, `Reason` and `Contracts` and nothing else, so G5, G6 and G7 are a specification for B-09.3 and **G2–G4 are the only checks this table describes that anything can run today**. Written in the present tense because an earlier draft described the whole table as though the member existed.
 - **G7's stronger form** — `CoreSchemaVersion.Current` equals the highest ordinal across registered `IModuleSchemaMigrator`s — **is B-08.3's** (ADR-0027 §4), and no migrator is registered. G7 as written checks declarations against the constant; it does not check the constant against reality.
