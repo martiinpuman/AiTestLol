@@ -10,14 +10,16 @@ loading machinery they protect; it touches no database and knows nothing about t
 ## The order, which is the point
 
 ```
-directory  →  metadata (no code runs)  →  reference rule  →  signature  →  coreContractRange  →  load
+directory  →  metadata (no code runs)  →  reference rule  →  signature  →  admission floor  →  coreContractRange  →  load
 ```
 
-Metadata, references, trust and compatibility are all settled while the package is still an inert
-file. `MetadataLoadContext` reads an assembly the way a decompiler does: no type initialisers, no
-module initialisers, no entry point. A package that fails any of these checks has never been given a
-thread, so there is nothing to undo — which is why verification comes before schema creation rather
-than after it.
+Metadata, references, trust, the admission floor and compatibility are all settled while the
+package is still an inert file. `MetadataLoadContext` reads an assembly the way a decompiler does:
+no type initialisers, no module initialisers, no entry point. A package that fails any of these
+checks has never been given a thread, so there is nothing to undo — which is why verification comes
+before schema creation rather than after it. That "never been given a thread" is asserted, not
+described: `PackageAdmissionFloorTests` loads a fixture package whose module initialiser records
+that it ran, and observes the record absent after every refusal (ADR-0033 §5.6 D1).
 
 | Type | What it does |
 |---|---|
@@ -28,7 +30,34 @@ than after it.
 | `CountryPackageLoadContext` | One collectible ALC per (package, version) |
 | `CountryPackageLoader`, `LoadedCountryPackage` | Inspect, gate, load, unload |
 | `CountryPackageCatalogue` | What this deployment has available, with what it rejected and why |
-| `CountryPackageHostOptions` | Where packages live, which keys are trusted, and whether unsigned ones may load |
+| `CountryPackageHostOptions` | Where packages live, which keys are trusted, whether unsigned ones may load, and whether this host routes tenants — which sets its `AdmissionFloor` |
+
+## The admission floor (ADR-0033)
+
+A loaded package runs inside the process, and **the process is the tenancy trust boundary**
+(ADR-0033 §5.1). .NET offers no in-process privilege boundary against loaded managed code — not a
+weak one, none (§4, checked against .NET 10's own documentation) — so a package a tenant-routing
+process loads can reach every tenant that process can, and confinement is not available as a
+control. The only control is **admission**: deciding what executes at all.
+
+- A host says what it is: `CountryPackageHostOptions.Create(..., routesTenants:)` has no default.
+  A host that routes tenants has `AdmissionFloor == FirstParty`; one that does not has no floor
+  above ADR-0008 §9.3's signature rules.
+- `CountryPackageLoader.Load` refuses a package whose signature establishes less than the floor
+  with `country_package.below_admission_floor`, after inspection and before any load context
+  exists. `Inspect` is unchanged: a `Partner` package on a tenant-routing host is **listed and not
+  loaded** — ADR-0033 §5.2 narrows *where* the level takes effect, it does not remove it, so a
+  `Partner` key may still be configured beside a `FirstParty` one.
+- The floor cannot be configured away. A tenant-routing host with `Packages:AllowUnsigned` refuses
+  to start in every environment, Development included; so does one whose keys cannot establish the
+  floor, because it could never load anything (§5.6 D3, `CountryPackageHostOptionsTests`).
+
+**What none of this demonstrates.** That a package cannot reach tenant data. It cannot demonstrate
+that, because it is not true: an admitted package can read the process's configuration and secret
+material and open its own connection to any tenant database, naming no tenancy type at all
+(ADR-0033 §5.4 R1–R3). The floor closes the admission gap only. The residual is real, it is written
+down in the ADR, and `PackageAdmissionFloorTests` says so in its own documentation so that a green
+suite cannot be read as a sandbox.
 
 ## What a package can and cannot reach
 
@@ -53,8 +82,9 @@ tenant anywhere in the contract, so a package cannot reach a tenant the caller d
 do. An `AssemblyLoadContext` is version isolation and unloadability, **not a sandbox**
 (ADR-0008 §9.4). Loaded package code runs in-process with full trust: it can read any file this
 process can read and open any socket. The controls that decide whether hostile code runs at all are
-upstream — the signature, the reference rule, and v1 accepting first-party packages only. Nobody
-should read this file and conclude there is a plugin sandbox here.
+upstream — the signature, the reference rule, and the admission floor of ADR-0033 §5.2 (a
+tenant-routing host loads first-party packages only). Nobody should read this file and conclude
+there is a plugin sandbox here.
 
 ## What happens when signature verification fails
 
