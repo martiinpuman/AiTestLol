@@ -25,6 +25,12 @@ public static class HostingErrors
     /// <summary>The package references a core assembly it is not allowed to.</summary>
     public const string ForbiddenReferenceCode = "country_package.forbidden_reference";
 
+    /// <summary>
+    /// The package's signature established less trust than this host's admission floor requires
+    /// (ADR-0033 §5.2): it is listed, and not loaded.
+    /// </summary>
+    public const string BelowAdmissionFloorCode = "country_package.below_admission_floor";
+
     /// <summary>The package's code did not load, or did not expose an <c>ICountryPackage</c>.</summary>
     public const string LoadFailedCode = "country_package.load_failed";
 
@@ -45,6 +51,13 @@ public static class HostingErrors
     /// <summary>The package references a core assembly it is not allowed to.</summary>
     public static Error ForbiddenReference(string description) =>
         Error.NotPermitted(ForbiddenReferenceCode, description);
+
+    /// <summary>
+    /// The package's signature established less trust than this host's admission floor requires
+    /// (ADR-0033 §5.2): it is listed, and not loaded.
+    /// </summary>
+    public static Error BelowAdmissionFloor(string description) =>
+        Error.NotPermitted(BelowAdmissionFloorCode, description);
 
     /// <summary>The package's code did not load, or did not expose an <c>ICountryPackage</c>.</summary>
     public static Error LoadFailed(string description) => Error.Rejected(LoadFailedCode, description);

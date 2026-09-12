@@ -137,6 +137,12 @@
           "Aurora.SharedKernel": "[1.0.0, )"
         }
       },
+      "aurora.countries.hostilepackage": {
+        "type": "Project",
+        "dependencies": {
+          "Aurora.Countries.Contracts": "[1.0.0, )"
+        }
+      },
       "aurora.countries.hosting": {
         "type": "Project",
         "dependencies": {

@@ -62,11 +62,11 @@ readonly FAIL_TAIL_LINES=40
 # discovery failure, all of which move the count by tens or to zero; the smallest
 # assembly is 91, so any assembly dropping out still lands below it. Re-round it
 # whenever a test project joins or leaves Aurora.sln.
-# 840 executed with B-06.1 rework 2, B-19 merged (SharedKernel 231, Countries.Contracts 141,
-# Countries.Hosting 91, Platform.Tenancy 242, Architecture 135); 764 before it.
+# 854 executed with B-21, B-06.1 merged (SharedKernel 231, Countries.Contracts 141,
+# Countries.Hosting 105, Platform.Tenancy 242, Architecture 135); 840 before it.
 # Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
-# B-12 440, B-03.1 761, B-19 764, B-06.1 840.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-830}"
+# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854.
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-850}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------

@@ -239,7 +239,8 @@ public sealed class CountryPackageLoaderTests
             package.Root,
             allowUnsigned ? CountryPackageHostOptions.DevelopmentEnvironmentName : "Production",
             allowUnsigned,
-            keys));
+            keys,
+            routesTenants: true));
 
     private static T Ok<T>(Result<T> result) =>
         result.IsSuccess
