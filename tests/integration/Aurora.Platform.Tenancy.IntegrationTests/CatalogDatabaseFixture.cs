@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
+using Aurora.Platform.Tenancy.Contracts;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -53,7 +54,9 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     private readonly string _adminPassword = MintPassword();
     private readonly string _migratorPassword = MintPassword();
     private readonly string _appPassword = MintPassword();
+    private readonly string _appSecretName = "AURORA_TEST_APP_SECRET_" + Guid.NewGuid().ToString("N");
     private string _superuserCatalogConnectionString = null!;
+    private Lazy<Task<DatabaseCluster>> _thisServerAsCluster = null!;
 
     /// <summary>What the application would hold: the runtime role over the catalog database.</summary>
     public string AppConnectionString { get; private set; } = null!;
@@ -111,9 +114,30 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
 
         await using CatalogDbContext migrator = CreateContext(MigratorConnectionString);
         await migrator.Database.MigrateAsync();
+
+        _thisServerAsCluster = new Lazy<Task<DatabaseCluster>>(SeedThisServerAsClusterAsync);
     }
 
-    public async Task DisposeAsync() => await _container.DisposeAsync();
+    public async Task DisposeAsync()
+    {
+        Environment.SetEnvironmentVariable(_appSecretName, null);
+        await _container.DisposeAsync();
+    }
+
+    /// <summary>
+    /// The one <c>catalog.database_cluster</c> row for this container's own endpoint, seeded on
+    /// first use and shared by every test that resolves a tenant and opens what it resolved.
+    /// </summary>
+    /// <remarks>
+    /// One row per endpoint is the rule the catalog keeps from B-20 on
+    /// (<c>ux_database_cluster_host_port</c>, ADR-0034 §3.1), and ADR-0034 §3.2 says what a fixture
+    /// that wants two clusters does instead: two containers, or one cluster row with two tenants.
+    /// Until B-20 every routing test seeded a cluster row of its own for this endpoint, and the
+    /// second such row was variant 3 of the tenant-takeover finding, admitted. The row's app secret
+    /// reference names an environment variable that holds <c>aurora_app</c>'s password for the life
+    /// of the fixture, which is how the resolver's <c>EnvironmentSecretStore</c> finds the credential.
+    /// </remarks>
+    internal Task<DatabaseCluster> ThisServerAsClusterAsync() => _thisServerAsCluster.Value;
 
     /// <summary>A context over <see cref="AppConnectionString"/>: what a request would get.</summary>
     /// <remarks>
@@ -157,6 +181,25 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
     /// nothing about the privilege model that ships.
     /// </summary>
     public Task<NpgsqlConnection> OpenSuperuserConnectionAsync() => OpenAsync(_superuserCatalogConnectionString);
+
+    private async Task<DatabaseCluster> SeedThisServerAsClusterAsync()
+    {
+        var endpoint = new NpgsqlConnectionStringBuilder(AppConnectionString);
+        Environment.SetEnvironmentVariable(_appSecretName, endpoint.Password);
+
+        DatabaseCluster cluster = DatabaseCluster.Register(
+            Unique.ClusterId(),
+            Region.Parse("nz", null),
+            endpoint.Host!,
+            endpoint.Port,
+            MaintenanceDatabaseName,
+            SecretReference.Of("vault://kv/aurora/test/admin"),
+            SecretReference.Of("vault://kv/aurora/test/migrator"),
+            SecretReference.Of("env:" + _appSecretName),
+            1_000);
+        await SeedAsync(owner => owner.DatabaseClusters.Add(cluster));
+        return cluster;
+    }
 
     internal static CatalogDbContext CreateContext(string connectionString)
     {
