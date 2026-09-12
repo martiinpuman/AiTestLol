@@ -7,6 +7,7 @@
   - **ADR-0008 §4** — which describes what a package contributes but never defines the set a `TenantScope` carries. §2 supplies the definition.
   - **ADR-0007 §3.4** — which names `InstalledPackages` in the `TenantScope` sketch and leaves it undefined. Same.
 - **Superseded by:** —
+- **Amended by:** **[ADR-0038](ADR-0038-contract-carried-text-names-its-sink.md) (2026-09-12)** — §2.2's chain is extended and two of its links are corrected: `InstalledPackageEntry` now validates the catalog's own character pattern rather than only blank and whitespace (ADR-0038 §2.1), and `ck_installed_package_id_well_formed` **had no test of any kind** when §2.2 called it "a database check constraint, not a convention" (ADR-0038 §2.5). §2.2's conclusion is right; two of the links it walks were not executed.
 - **Related:** ADR-0007 §3.4, §9.2, ADR-0008 §4.1, §5.1, §5.3, §6.1, ADR-0027 §1–§3, ADR-0032 §4.1.3 (the `SalesSchemaMigrator` worked example) and §5 (the rule summary), ADR-0033 (what a package can do once loaded), `../architecture/modules.md` §4
 - **Raised by:** two reviewers of PR #13 (`task/B-06.1a`), and the project-manager's flag on B-06.1a's backlog row
 
@@ -44,6 +45,12 @@ The id and version are carried as the catalog's text. This is correct and is not
 - `Aurora.Platform.Tenancy.Contracts` may reference `Aurora.SharedKernel` and `Aurora.Documents.Canonical` and nothing else (fitness rule L2, `solution-layout.md` §2). `PackageId` and `PackageVersion` live in `Aurora.Countries.Contracts`.
 - And it **must not**, independently of the rule. Tenancy contracts are tier-1 for every module. The Country Package contract is a versioned public API on its own SemVer clock (ADR-0008 §3.1). Binding the shape of a `TenantScope` to it would make a package-contract MAJOR bump a tenancy change, and every module would recompile for a jurisdiction release.
 - The catalog column is `text`. Text is what was read; text is what is carried.
+
+> **ADR-0038 §2.5 executed this chain and found its last link untested.** The constraint is declared in
+> `20260911172124_InitialCatalog.cs:99` and named in no test — not its effect, not even its presence. The paragraph
+> below is the right chain and it was, at the time it was written, a chain nothing had walked. ADR-0038 §2.4 D3 is
+> the test that walks it, and ADR-0038 §2.1 puts the pattern in the entry type as well, so the first link stops
+> being "only null, blank and whitespace".
 
 **Where the spelling is enforced, link by link** — because "the catalog row's to enforce" is a claim that needs its mechanism named:
 
