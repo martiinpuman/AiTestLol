@@ -96,3 +96,67 @@ workstation in a shared office is the realistic threat, not credential theft.
 > tenants have habits, so it is worth asking before B-18.5 and B-18.6 are built.
 >
 > **Proceeding on the architect's defaults** unless the product owner says otherwise.
+
+---
+
+## 2026-09-12 — Continuous integration on pull requests (OPEN, not blocking)
+
+**Q11. Should `scripts/verify.sh` run automatically on every pull request, as a GitHub Actions workflow?**
+
+Right now it does not. The repository has **no `.github/workflows/` directory at all**, so the quality
+gate runs only when an agent runs it by hand in a worktree and reports the result. Every merge so far
+has been made on an agent's transcription of a gate result, not on a check GitHub itself observed.
+
+That is the same defect shape this project keeps finding one level up: the gate is real, but nothing
+independent verifies that it ran, and a branch could be merged on a claimed `RESULT: PASS`. The
+orchestrator has been re-running the gate before merging, which closes it by diligence rather than by
+mechanism — and diligence is exactly what `CLAUDE.md` says not to rely on.
+
+**Why this is a question rather than a change already made:** GitHub Actions minutes are **free on
+public repositories and metered on private ones**. Adding a workflow to a private repository starts
+consuming a billed resource. "Never spend money" is a hard limit in `CLAUDE.md`, and an agent deciding
+on its own to start a recurring charge is not a decision an agent should make. So the workflow is not
+written.
+
+**What it would be, if the answer is yes:** one workflow on `pull_request` into the integration branch —
+`actions/setup-dotnet` for .NET 10, Docker for the Testcontainers PostgreSQL image, then `verify.sh`,
+with the executed test count in the job summary. The integration tests would still be outside the gate
+until B-11 builds stages 4, 5 and 7–10; CI does not fix that, it just makes the existing gate observed.
+Roughly 5–10 minutes per run, per push.
+
+> **What an answer changes:** whether merge decisions rest on a check GitHub ran or on an agent's
+> report of a check it ran itself.
+>
+> **Proceeding without CI** unless the product owner says otherwise — the orchestrator re-runs
+> `verify.sh` on the merge commit before every merge, and records the verbatim result in
+> `docs/ITERATION_LOG.md`, which is the best mechanism available without spending anything.
+
+---
+
+## 2026-09-12 — Two questions the Company screen forced (OPEN, not blocking)
+
+Both come out of `DESIGN-001`. Neither blocks: a decision is recorded for each and the team proceeds on it.
+
+**Q12. When a command's outcome is genuinely unknown, do we tell the user, or do we retry?**
+
+`SPEC-002` omitted an idempotency key on "create company", reasoning that the button's loading and
+disabled state prevents double submission. That holds for a double-click. It does **not** hold for a
+dropped Blazor circuit mid-submit, where the browser cannot know whether the command committed.
+
+> **Proceeding on:** tell the user the outcome is unknown, name the company they typed, and **never
+> auto-retry**. A duplicate company is a data-correctness problem in an ERP; a clear "we don't know,
+> check the list" is an annoyance. If that trade is wrong for you, the idempotency-key decision needs
+> revisiting before B-15.2, and `CLAUDE.md` already requires idempotency keys on commands that create
+> financial documents — this is the first row that tests where that line sits.
+
+**Q13. Should the API return the same status for "you lack permission" and "this tenant doesn't have
+the module"?**
+
+The UI collapses them regardless — that is settled and is now a binding rule in `components.md` §17,
+because a screen that distinguishes the two becomes an oracle for what exists in other tenants. The
+open question is whether `GET /api/v1/companies` should also collapse them, or whether the API may be
+more precise than the UI it serves.
+
+> **Proceeding on:** the API collapses them too. An API that is more precise than its UI leaks the same
+> information to anyone with a terminal, and the UI's caution would be decorative. Recorded as an
+> ADR-0010/ADR-0013 question for the architect.
