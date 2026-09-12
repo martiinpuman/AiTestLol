@@ -149,9 +149,10 @@ public sealed class CatalogAppendOnlyTests
                 (await insert.ExecuteNonQueryAsync()).ShouldBe(1, $"INSERT into catalog.{row.Table} as {CatalogDatabaseFixture.AppRole}");
             }
 
-            // TRUNCATE too: the row asks only for UPDATE and DELETE, but TRUNCATE is the one verb
-            // no guard on these tables refuses (see the migration), so the ACL is all that keeps
-            // the role from it, and that is worth executing rather than inferring.
+            // TRUNCATE too: the ACL refuses it before either guard is reached, and as the role
+            // that is the refusal a caller sees, so it is worth executing rather than inferring
+            // from the record. The guard's own refusal of TRUNCATE is probed as the owner in
+            // CatalogAppendOnlyGuardTests, where a 42501 cannot have come from the ACL.
             foreach (string sql in new[]
                      {
                          $"UPDATE catalog.{row.Table} SET correlation_id = gen_random_uuid() WHERE id = @id",

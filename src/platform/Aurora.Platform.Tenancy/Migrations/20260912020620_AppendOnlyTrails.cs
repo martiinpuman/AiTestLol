@@ -7,8 +7,8 @@ namespace Aurora.Platform.Tenancy.Migrations
     /// <summary>
     /// The catalog's two append-only trails — <c>catalog.operator_audit_event</c> (ADR-0007 §9.2)
     /// and <c>catalog.erasure_replay_log</c> (ADR-0007 §11.5, ADR-0018 §6) — with the grants and
-    /// the guard that make "append-only" a mechanism rather than a name (ADR-0004 rule 5; ADR-0028
-    /// §2 as amended; <c>solution-layout.md</c> §6.4 item 5). Tables, grants and guard only: no
+    /// the guards that make "append-only" a mechanism rather than a name (ADR-0004 rule 5; ADR-0028
+    /// §2 as amended; <c>solution-layout.md</c> §6.4 item 5). Tables, grants and guards only: no
     /// writer. The provisioning saga (B-07.1, B-07.4), ADR-0010 rule 8's support-access path and
     /// ADR-0007 §11.5's erasure path write to what this creates.
     /// </summary>
@@ -106,8 +106,9 @@ namespace Aurora.Platform.Tenancy.Migrations
             migrationBuilder.Sql("GRANT SELECT, INSERT ON catalog.operator_audit_event TO aurora_app;");
             migrationBuilder.Sql("GRANT SELECT, INSERT ON catalog.erasure_replay_log TO aurora_app;");
 
-            // The guard function (ADR-0028 section 2 mechanism 3): what a BEFORE UPDATE OR DELETE
-            // row trigger on an append-only table raises with. 42501 is the SQLSTATE a privilege
+            // The guard function (ADR-0028 section 2 mechanism 3): what the row-level and the
+            // statement-level guard on an append-only table both raise with - TG_OP names the verb,
+            // so one function serves UPDATE, DELETE and TRUNCATE. 42501 is the SQLSTATE a privilege
             // refusal carries, so a caller sees one kind of "no" whether the ACL or the guard
             // refused, and the owner - whom privileges alone would not restrain - is refused the
             // same as aurora_app. Created by aurora_migrator, so InitialCatalog's one default
@@ -128,33 +129,46 @@ namespace Aurora.Platform.Tenancy.Migrations
                 $$;
                 """);
 
-            // One guard per table, in the same migration as the table, enabled ALWAYS (ADR-0028
-            // Amendment 2). CREATE TRIGGER yields an ordinary trigger ('O'), which
-            // session_replication_role = 'replica' suppresses with pg_trigger unchanged; the GUC is
-            // superuser-only on PostgreSQL 17 and one GRANT SET ON PARAMETER away, and ENABLE
-            // ALWAYS costs one statement. What is asserted of the guard is that it refuses, never
-            // that it exists: CatalogAppendOnlyGuardTests executes UPDATE and DELETE as
-            // aurora_migrator inside a transaction it rolls back and requires 42501 and this
-            // function's message from each table, because CREATE OR REPLACE FUNCTION with a body
-            // that returns the row is one statement that leaves every pg_trigger column
-            // byte-identical while the UPDATE lands. The pg_trigger enumeration is kept as the
-            // locator that says which table and why, and it is blind to that fault by construction.
+            // Two guards per table, in the same migration as the table, both enabled ALWAYS
+            // (ADR-0028 Amendment 2): a row-level BEFORE UPDATE OR DELETE guard, and a
+            // statement-level BEFORE TRUNCATE guard. The second is here although solution-
+            // layout.md section 6.4 item 5 reads the truncate question as one that "does not
+            // arise" for an unpartitioned table: that reading is about cloning - there is no
+            // partition for a truncate trigger to fail to reach - and the TRUNCATE statement does
+            // not care whether a table is partitioned. Without it the owner empties either trail
+            // in one statement, the hole Amendment 2 found on partitions arriving by another door;
+            // the orchestrator widened this row's scope to close it (B-19 rework). CREATE TRIGGER
+            // yields an ordinary trigger ('O'), which session_replication_role = 'replica'
+            // suppresses with pg_trigger unchanged; the GUC is superuser-only on PostgreSQL 17 and
+            // one GRANT SET ON PARAMETER away, and ENABLE ALWAYS costs one statement.
+            //
+            // What is asserted of the guards is that they refuse, never that they exist:
+            // CatalogAppendOnlyGuardTests executes UPDATE, DELETE and TRUNCATE as aurora_migrator
+            // inside a transaction it rolls back and requires 42501 and this function's message
+            // from each, because CREATE OR REPLACE FUNCTION with a hollow body - RETURN NULL, which
+            // a statement-level trigger ignores - is one statement that leaves every pg_trigger
+            // column byte-identical while the TRUNCATE lands. The pg_trigger enumeration is kept as
+            // the locator that says which table and why, and it is blind to that fault by
+            // construction.
             //
             // Neither table is partitioned, so Amendment 2's partition clause - a guard created on
-            // every partition, and the BEFORE TRUNCATE guard that is never cloned to one - does not
-            // arise here, and solution-layout.md section 6.4 item 5 asks for no truncate guard on
-            // these two tables. What that leaves, stated rather than implied: TRUNCATE is held by
-            // aurora_migrator alone (aurora_app truncating either table is 42501 from the privilege
-            // check, and the ACL comparison keeps it so), and as the DDL-path role it can also
-            // truncate, disable or drop this guard - the detection-not-prevention boundary ADR-0028
-            // section 2 draws, whose cover is the chain head recorded in operator_audit_event by
-            // FOLLOWUP-031's job (FOLLOWUP-026).
+            // every partition, because a truncate guard is never cloned to one - does not arise
+            // here. What the guards leave, stated rather than implied: aurora_migrator, as the
+            // DDL-path role, can still disable or drop either guard or replace this function's
+            // body - the detection-not-prevention boundary ADR-0028 section 2 draws, whose cover
+            // is the chain head recorded in operator_audit_event by FOLLOWUP-031's job
+            // (FOLLOWUP-026). aurora_app never reaches either guard: its UPDATE, DELETE and
+            // TRUNCATE are 42501 from the privilege check, and the ACL comparison keeps it so.
             foreach (string table in new[] { "operator_audit_event", "erasure_replay_log" })
             {
                 migrationBuilder.Sql(
                     $"CREATE TRIGGER trg_{table}_append_only BEFORE UPDATE OR DELETE ON catalog.{table} " +
                     "FOR EACH ROW EXECUTE FUNCTION catalog.refuse_append_only_change();");
                 migrationBuilder.Sql($"ALTER TABLE catalog.{table} ENABLE ALWAYS TRIGGER trg_{table}_append_only;");
+                migrationBuilder.Sql(
+                    $"CREATE TRIGGER trg_{table}_append_only_truncate BEFORE TRUNCATE ON catalog.{table} " +
+                    "FOR EACH STATEMENT EXECUTE FUNCTION catalog.refuse_append_only_change();");
+                migrationBuilder.Sql($"ALTER TABLE catalog.{table} ENABLE ALWAYS TRIGGER trg_{table}_append_only_truncate;");
             }
         }
 

@@ -141,32 +141,37 @@ mechanisms:
    the provisioning saga (B-07.1, B-07.4), ADR-0010 rule 8's support-access grant, ADR-0018 §1's
    chain-head job, the erasure path. As the role, an `INSERT` succeeds and `UPDATE`/`DELETE` are
    `42501` from the privilege check, before a row is looked at.
-2. **The guard.** A `BEFORE UPDATE OR DELETE … FOR EACH ROW` trigger on each table, `ENABLE ALWAYS`,
-   raising `42501` with its own message, so the owner — whom privileges do not restrain — is
-   refused too. What is asserted is that it *refuses*, never that it exists: as `aurora_migrator`,
-   inside a transaction that is rolled back, an `UPDATE` and a `DELETE` of a seeded row on each
-   table must return `42501` and the guard's message, and the probe reports
-   `relations probed / statements refused / silent` by name, floored at the two tables the record
-   names. A fault theory hollows the function body (`CREATE OR REPLACE FUNCTION … RETURN
-   COALESCE(NEW, OLD)`, one statement that leaves every `pg_trigger` column byte-identical),
-   disables the trigger, and drops it, and watches the probe name the silenced table and go green
-   again once rolled back. The `pg_trigger` enumeration (`tgtype 27`, `tgenabled 'A'`) stays as the
-   locator that says which table and why; it is blind to a hollow body by construction. Under
-   `session_replication_role = 'replica'`, which suppresses an ordinary trigger with `pg_trigger`
-   unchanged, the `ALWAYS` guard still refuses.
+2. **The guards.** On each table a `BEFORE UPDATE OR DELETE … FOR EACH ROW` trigger and a
+   `BEFORE TRUNCATE … FOR EACH STATEMENT` trigger, both `ENABLE ALWAYS`, raising `42501` with the
+   guard's own message, so the owner — whom privileges do not restrain — is refused too. The
+   truncate guard is on these unpartitioned tables deliberately: §6.4 item 5's "does not arise"
+   is about cloning, and the `TRUNCATE` statement does not care whether a table is partitioned —
+   without it the owner emptied either trail in one statement. What is asserted is that they
+   *refuse*, never that they exist: as `aurora_migrator`, inside a transaction that is rolled
+   back, an `UPDATE` and a `DELETE` of a seeded row on each table and a `TRUNCATE` of it must
+   return `42501` and the guard's message, and the probe reports
+   `relations probed / statements refused / silent` by `table/VERB`, floored at the two tables the
+   record names. A fault theory hollows the function body two ways (`RETURN COALESCE(NEW, OLD)` and
+   `RETURN NULL` — one statement each, leaving every `pg_trigger` column byte-identical), and
+   disables and drops each of the two guards in turn, and watches the probe name exactly the
+   silenced statements and go green again once rolled back. The `pg_trigger` enumeration
+   (`tgtype 27` and `34`, `tgenabled 'A'`) stays as the locator that says which table and why;
+   it is blind to a hollow body by construction. Under `session_replication_role = 'replica'`,
+   which suppresses an ordinary trigger with `pg_trigger` unchanged, the `ALWAYS` guards still
+   refuse.
 3. **No default privilege for the schema.** `pg_default_acl` holds zero rows scoped to `catalog`. A
    copied `ALTER DEFAULT PRIVILEGES … IN SCHEMA catalog GRANT` takes the count to one and is caught;
    the `REVOKE` form writes no row and is not — survivable, because mechanism 1 asserts the
    resulting ACL of every catalog relation and never which statement produced it.
 
-**What this does not cover, stated rather than implied.** Neither table is partitioned, and §6.4
-item 5 asks for no truncate guard on them: `TRUNCATE` on either is held by `aurora_migrator` alone
-(the ACL keeps `aurora_app` out) and is *not* refused for the owner, who as the DDL-path role can
-also disable or drop the guard. That is the detection-not-prevention boundary ADR-0028 §2 draws; its
-cover is a chain head recorded outside the tenant database — in `operator_audit_event`, by
-`FOLLOWUP-031`'s job — carried as `FOLLOWUP-026`. And the writers, not this module, keep personal
-data and erased values out of `detail` and `affected` (ADR-0018 §4, §6 point 6): a column cannot
-enforce that, and no test here claims to.
+**What this does not cover, stated rather than implied.** `aurora_migrator`, as the DDL-path role,
+can disable or drop either guard or replace the function's body, and then rewrite, remove or empty
+a trail; nothing here detects that. That is the detection-not-prevention boundary ADR-0028 §2
+draws; its cover is a chain head recorded outside the tenant database — in `operator_audit_event`,
+by `FOLLOWUP-031`'s job — carried as `FOLLOWUP-026`. Neither table is partitioned, so Amendment 2's
+partition clause (a guard created on every partition) does not arise here. And the writers, not
+this module, keep personal data and erased values out of `detail` and `affected` (ADR-0018 §4, §6
+point 6): a column cannot enforce that, and no test here claims to.
 
 ---
 
