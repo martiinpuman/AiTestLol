@@ -32,6 +32,20 @@ a { color: var(--color-accent); }
   outline-offset: -2px;
 }
 
+/* ---------- skip link (WCAG 2.2 SC 2.4.1 Bypass Blocks) ---------- */
+/* Promoted here from sign-in.html's page-local <style> by DESIGN-001: the
+   shell repeats a ~10-item nav rail on every screen, so every shell screen
+   needs the same bypass mechanism, and a mechanism that exists on one page
+   only is not a shell guarantee. See
+   docs/design/screens/SPEC-002-company-create.md, "Design-system findings". */
+.skip-link {
+  position: absolute; left: -9999px; top: 0;
+  background: var(--color-surface); color: var(--color-text);
+  padding: 8px 14px; border-radius: var(--radius-sm); border: 2px solid var(--color-border-focus);
+  z-index: 200; font-size: 13px; text-decoration: none;
+}
+.skip-link:focus { left: var(--space-3); top: var(--space-3); }
+
 /* ---------- utility ---------- */
 .visually-hidden {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
@@ -266,8 +280,24 @@ a { color: var(--color-accent); }
    =========================================================================== */
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label { font-size: 12px; font-weight: 600; color: var(--color-text-muted); }
-.field .hint { font-size: 11px; color: var(--color-text-subtle); }
+/* DESIGN-001 contrast correction: hint text is REAL CONTENT (it carries the
+   field's constraint, e.g. "Up to 200 characters"), so tokens.md's own rule
+   applies — `text-subtle` is reserved for placeholder text and disabled-control
+   labels, the two cases WCAG 1.4.3 exempts, and nothing else. Measured:
+   text-subtle is 3.50:1 on light `surface`, 3.38:1 on dark `surface`, and
+   2.94:1 on dark `surface-raised` (a dialog) — all below the 4.5:1 this text
+   needs. `text-muted` is 6.30:1 / 7.47:1 / 6.51:1 on the same three. */
+.field .hint { font-size: 11px; color: var(--color-text-muted); }
 .field .error-msg { font-size: 12px; color: var(--color-danger); }
+/* Character counter for a length-limited field (components.md §2: shown only
+   once the user is within 20% of the limit). Tabular numerals so the number
+   does not jitter horizontally as it counts down. */
+.field .field-foot { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
+.field .counter {
+  font-size: 11px; color: var(--color-text-muted); white-space: nowrap;
+  font-feature-settings: var(--font-feature-numeric); font-variant-numeric: tabular-nums;
+}
+.field .counter[hidden] { display: none; }
 .input, select.input, textarea.input {
   height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong);
   background: var(--color-surface); color: var(--color-text); padding: 0 var(--space-2);
