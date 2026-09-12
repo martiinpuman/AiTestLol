@@ -58,7 +58,12 @@ echo "branches"
 merged_left=0
 while read -r b; do
   [ -z "${b}" ] && continue
-  if git merge-base --is-ancestor "${b}" "${INTEGRATION}" 2>/dev/null; then
+  if [ "$(git rev-parse "${b}")" = "$(git rev-parse "${INTEGRATION}")" ]; then
+    # Tip equal to the integration tip is a branch that has not started, not one whose
+    # work is merged — the same distinction the worktree check already makes, and the
+    # same false positive: this reported a branch created 30 seconds earlier as prunable.
+    say "${b} — branched, no commits yet"
+  elif git merge-base --is-ancestor "${b}" "${INTEGRATION}" 2>/dev/null; then
     fail "${b} is fully merged into ${INTEGRATION} and should be deleted"
     merged_left=$((merged_left + 1))
   else
@@ -115,6 +120,37 @@ bash scripts/file-claims.sh 2>/dev/null | grep -E 'CONTESTED|no file is claimed'
 if ! bash scripts/file-claims.sh >/dev/null 2>&1; then
   fail "$(bash scripts/file-claims.sh 2>/dev/null | tail -3 | head -1)"
 fi
+echo
+
+# 3c. `ready` in this backlog means "the spec is ready to build", not "dispatchable
+#     now" — most ready rows are waiting on a predecessor, which is normal and not a
+#     defect. So report what is *actually* dispatchable, and fail only on the real
+#     inconsistency: a row marked done whose dependencies are not.
+#     (The first version of this check failed on every ready-but-waiting row. Twenty
+#     rows red at once is a check nobody reads — it fired on a convention, not a fault.)
+echo "backlog readiness"
+python3 - <<'READY'
+import re, sys
+rows = {}
+for line in open('docs/BACKLOG.md'):
+    m = re.match(r'\|\s*(B-[0-9.]+)\s*\|', line)
+    if not m:
+        continue
+    cells = [c.strip() for c in line.split('|')]
+    if len(cells) < 9:
+        continue
+    rows[m.group(1)] = (cells[6], cells[8])
+def unmet(deps):
+    return [d for d in re.findall(r'B-[0-9.]+', deps) if rows.get(d, ('', ''))[1] != 'done']
+dispatchable = sorted(r for r, (d, st) in rows.items() if st == 'ready' and not unmet(d))
+broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet(d)]
+print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row waits on a predecessor)'}")
+for r, u in broken:
+    print(f"  {r} is done but depends on un-done {', '.join(sorted(set(u)))}")
+print(f"  {len(rows)} row(s) read")
+sys.exit(1 if broken else 0)
+READY
+[ $? -eq 0 ] || fail "a row is marked done while a dependency is not"
 echo
 
 # 4. Dangling document references. The architect once shipped forward references
