@@ -298,6 +298,21 @@ a { color: var(--color-accent); }
   font-feature-settings: var(--font-feature-numeric); font-variant-numeric: tabular-nums;
 }
 .field .counter[hidden] { display: none; }
+/* Verbatim system/diagnostic text (a saga's last_error, an expired-export
+   block) — added by DESIGN-002, shared so a second operator screen didn't
+   redefine it locally the way an earlier draft of this file did. */
+.last-error { font-family: var(--font-family-mono); font-size: 12px; background: var(--color-surface-sunken); padding: var(--space-2); border-radius: var(--radius-sm); white-space: pre-wrap; }
+.actions-row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.section { display: flex; flex-direction: column; gap: var(--space-2); }
+.section h2 { font-size: var(--font-size-heading-sm); font-weight: 600; }
+/* Promoted from list.html's own local <style> (pre-DESIGN-002 bootstrap
+   prototype), which defined it privately rather than sharing it — a gap
+   this task's tenant-list.html would otherwise have repeated a third time.
+   Flagged as a design-system finding in DESIGN-002's handback. */
+select.view-select {
+  height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong);
+  background: var(--color-surface); font-size: 12px; padding: 0 var(--space-2); color: var(--color-text);
+}
 .input, select.input, textarea.input {
   height: 32px; border-radius: var(--radius-sm); border: 1px solid var(--color-border-strong);
   background: var(--color-surface); color: var(--color-text); padding: 0 var(--space-2);
@@ -519,7 +534,23 @@ table.grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var
 }
 .dialog h2 { font-size: var(--font-size-heading-sm); font-weight: 600; }
 .dialog p { font-size: var(--font-size-small); color: var(--color-text-muted); }
-.dialog .actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-2); }
+/* Seated on surface-sunken, full-bleed to the dialog's own edges, not left
+   sitting directly on the dialog's surface-raised background. Fixes a real,
+   measured failure (tokens.build.py, re-run this round): a solid accent or
+   danger button fill against surface-raised is 2.65:1 / 2.69:1 in dark
+   theme, below the 3.0:1 SC 1.4.11 needs — this was flagged once already
+   (SPEC-002-company-create.md finding 2, measured only in prose, never
+   fixed) and is the "raised twice and left" case CLAUDE.md calls out.
+   surface-sunken clears 3.46:1 / 3.52:1 for the same two fills — see
+   tokens.md's audit for both the failing and the passing measurements. */
+.dialog .actions {
+  display: flex; justify-content: flex-end; gap: var(--space-2);
+  margin: var(--space-3) calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-surface-sunken);
+  border-top: 1px solid var(--color-border);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
 
 /* ===========================================================================
    THEME TOGGLE CONTROL (shared widget)
@@ -546,3 +577,101 @@ table.grid input[type="checkbox"] { width: 15px; height: 15px; accent-color: var
 @media (max-width: 900px) {
   .search-box { display: none; }
 }
+
+/* ===========================================================================
+   OPERATOR CONSOLE SHELL — added by DESIGN-002 (app-shell.md, "Operator
+   console" section). A separate composition root's chrome, not a theme of
+   the tenant shell above: no nav rail (three screens, nothing to organize
+   yet), no tenant/company switcher (no active tenant), and a deliberately
+   different top-bar background so a screenshot can never be mistaken for the
+   tenant-facing product. Everything else — buttons, grid, badges, dialogs,
+   toasts — is the same design system, unchanged.
+   =========================================================================== */
+.shell-operator {
+  grid-template-columns: 1fr;
+  grid-template-areas: "topbar" "main" "banner";
+}
+.topbar-operator {
+  background: var(--color-surface-sunken);
+  border-bottom: 1px solid var(--color-border-strong);
+}
+.topbar-operator .operator-user {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--font-size-small); color: var(--color-text-muted);
+}
+.topbar-operator .operator-user .company-badge { width: 24px; height: 24px; }
+
+/* ---------- Attention summary strip (components.md #19) ---------- */
+.attention-strip {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-3) var(--space-4) 0;
+}
+.attention-segment {
+  display: inline-flex; align-items: center; gap: 6px;
+  border-radius: var(--radius-full); padding: 5px 12px 5px 10px;
+  font-size: var(--font-size-small); font-weight: 600;
+  border: 1px solid transparent; cursor: pointer;
+}
+.attention-segment:hover { filter: brightness(0.97); }
+.attention-segment.needs-action { background: var(--color-danger-muted); color: var(--color-danger); }
+.attention-segment.pending-deletion { background: var(--color-warning-muted); color: var(--color-warning); }
+.attention-segment .ic { font-size: 13px; }
+
+/* ---------- Danger zone panel (components.md #14) ---------- */
+.danger-zone {
+  border: 1px solid var(--color-danger); border-radius: var(--radius-md);
+  padding: var(--space-4); background: var(--color-surface);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.danger-zone h2, .danger-zone h3 { color: var(--color-danger); font-size: var(--font-size-heading-sm); font-weight: 600; }
+.safe-panel {
+  border: 1px solid var(--color-border); border-radius: var(--radius-md);
+  padding: var(--space-4); background: var(--color-surface);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.panel-row { display: flex; gap: var(--space-4); align-items: flex-start; flex-wrap: wrap; }
+.panel-row > * { flex: 1; min-width: 260px; }
+
+/* ---------- Vertical, always-expanded stepper (offboarding) ---------- */
+/* components.md #13's horizontal stepper collapses to this vertical,
+   current-step-expanded form on tablet; this screen uses it at every
+   width, because every stage here carries dates/links/warnings a
+   horizontal bar with a side detail panel would hide — see
+   SPEC-003-tenant-offboarding.md, "Layout." */
+.vstepper { display: flex; flex-direction: column; }
+.vstep { display: flex; gap: var(--space-3); padding-bottom: var(--space-4); position: relative; }
+.vstep:not(:last-child)::before {
+  content: ""; position: absolute; left: 10px; top: 26px; bottom: 0; width: 2px;
+  background: var(--color-border);
+}
+.vstep.done:not(:last-child)::before { background: var(--color-success); }
+.vstep .vdot {
+  width: 22px; height: 22px; border-radius: 50%; flex: none; z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; border: 2px solid var(--color-border-strong);
+  color: var(--color-text-muted); background: var(--color-surface);
+}
+.vstep.done .vdot { background: var(--color-success); border-color: var(--color-success); color: #fff; }
+.vstep.current .vdot { border-color: var(--color-accent); color: var(--color-accent); }
+.vstep.upcoming .vdot { color: var(--color-text-subtle); border-color: var(--color-border); }
+.vstep .vbody { flex: 1; display: flex; flex-direction: column; gap: var(--space-2); padding-top: 1px; }
+.vstep .vlabel { font-weight: 700; font-size: var(--font-size-body); }
+.vstep.upcoming .vlabel { color: var(--color-text-muted); font-weight: 600; }
+.vstep .vmeta { font-size: 12px; color: var(--color-text-muted); }
+.download-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: 12px; padding: var(--space-2); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm); background: var(--color-surface-sunken);
+}
+.download-row a { color: var(--color-accent); font-weight: 600; text-decoration: none; }
+.download-row a:hover { text-decoration: underline; }
+.download-row.expired { color: var(--color-text-subtle); }
+.download-row.pending { color: var(--color-text-muted); }
+.countdown-badge {
+  display: inline-flex; align-items: center; gap: 6px; font-weight: 700;
+  color: var(--color-warning); font-size: var(--font-size-body-lg);
+}
+.gate-status { font-size: 12px; color: var(--color-text-muted); }
+.gate-status.all-met { color: var(--color-success); font-weight: 600; }
+.checkbox-field { display: flex; align-items: flex-start; gap: var(--space-2); font-size: 12px; }
+.checkbox-field input { margin-top: 2px; accent-color: var(--color-accent-solid); }

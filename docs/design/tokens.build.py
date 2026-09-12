@@ -1,4 +1,5 @@
 import json
+import os
 
 def hex_to_rgb(h):
     h = h.lstrip('#')
@@ -153,6 +154,31 @@ def audit_theme(name, p):
         ("danger-solid fill vs surface (button visibility)", p["dangerSolid"], p["surface"], 3.0, "1.4.11"),
         ("success-solid fill vs surface (icon/button visibility)", p["successSolid"], p["surface"], 3.0, "1.4.11"),
         ("warning-solid fill vs surface (button visibility)", p["warningSolid"], p["surface"], 3.0, "1.4.11"),
+        # surface-raised pairs — added by DESIGN-002 rework. Every dialog,
+        # popover and menu in this system is painted on surfaceRaised
+        # (tokens.md's own semantic-roles table says so), and until this
+        # pass NOT ONE of the 54 rows above used it — every dialog-hosted
+        # text, input boundary, focus ring and button fill in the audit had
+        # only ever been checked against `surface`. SPEC-002's own finding 2
+        # measured the accent-solid/dark case ad hoc in prose and never
+        # promoted it into this array, so the mechanism that is supposed to
+        # keep this audit authoritative never actually re-ran over it. Fixed
+        # here, not just written about here.
+        ("text on surface-raised",        p["text"], p["surfaceRaised"], 4.5, "1.4.3"),
+        ("text-muted on surface-raised",  p["textMuted"], p["surfaceRaised"], 4.5, "1.4.3"),
+        ("border-strong vs surface-raised (input boundary)", p["borderStrong"], p["surfaceRaised"], 3.0, "1.4.11"),
+        ("focus ring vs surface-raised",  p["borderFocus"], p["surfaceRaised"], 3.0, "1.4.11"),
+        ("accent-solid fill vs surface-raised (button visibility)", p["accentSolid"], p["surfaceRaised"], 3.0, "1.4.11"),
+        ("danger-solid fill vs surface-raised (button visibility)", p["dangerSolid"], p["surfaceRaised"], 3.0, "1.4.11"),
+        # The two rows above are a combination `components.md` #14 / app.css
+        # now guarantee never actually occurs (a dialog's own solid button
+        # never sits on the bare surface-raised background — its action row
+        # is seated on surface-sunken instead, checked below). Both rows
+        # stay in this audit anyway, deliberately failing, as the permanent
+        # record of why that CSS rule exists — removing an inconvenient
+        # failing row is not how this project fixes a contrast problem.
+        ("accent-solid fill vs surface-sunken (dialog action row)", p["accentSolid"], p["surfaceSunken"], 3.0, "1.4.11"),
+        ("danger-solid fill vs surface-sunken (dialog action row)", p["dangerSolid"], p["surfaceSunken"], 3.0, "1.4.11"),
     ]
     out = []
     for label, fg, bg, threshold, sc in rows:
@@ -245,7 +271,7 @@ tokens = {
     "meta": {
         "product": "Aurora ERP",
         "version": "1.0.0",
-        "generated": "2026-09-10",
+        "generated": "2026-09-12",
         "generator": "docs/design/tokens.build.py — re-run after editing any value in this file's source arrays; do not hand-edit the color blocks without re-running the WCAG audit.",
         "usage": "This file is the single source of truth. Generate CSS custom properties from color.light/color.dark (as [data-theme] blocks), typography.scale, spacing, radius, elevation and motion. Do not hand-author a second copy of these values in code.",
     },
@@ -260,11 +286,21 @@ tokens = {
     "density": density,
 }
 
-with open("/tmp/claude-0/-home-user-AiTestLol/f1f81bc6-99af-5f21-932b-5566536d4140/scratchpad/tokens.json", "w") as f:
+# Regenerates docs/design/tokens.json IN PLACE, next to this script, no
+# matter what directory the script is invoked from. This was previously a
+# hard-coded path into a specific agent's temp scratchpad — meaning running
+# this script never actually updated the checked-in tokens.json at all, so
+# this file's own "re-run after editing any value" instruction pointed at a
+# mechanism that did not do what it claimed. Fixed by DESIGN-002's rework,
+# found while adding the surface-raised pairs below and needing this script
+# to genuinely write them back.
+OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tokens.json")
+with open(OUTPUT_PATH, "w") as f:
     json.dump(tokens, f, indent=2)
+    f.write("\n")
 
 print("Total audit rows:", len(audit))
 print("Failed rows:", len(failed))
 for a in failed:
     print(a)
-print("\nWrote tokens.json")
+print("Wrote", OUTPUT_PATH)
