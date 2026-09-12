@@ -27,6 +27,19 @@ namespace Aurora.Platform.Tenancy.Tests;
 /// construction, and <c>ux_tenant_key</c> makes that unique. This type is the projection that
 /// contains the destination and nothing else.
 /// </para>
+/// <para>
+/// <b>What the comparison backstops, precisely, and what it leaves to the catalog.</b> Two hosts
+/// are refused by <see cref="Parse"/> rather than projected, because neither is one endpoint and a
+/// triple would silently name something else: a multi-host list (Npgsql opens whichever host
+/// answers) and a Unix-socket directory (a path, whose case is significant and which names no
+/// server) — the two shapes ADR-0036 §6 names. Equality folds case and one trailing dot, the two
+/// spellings of one name a resolver treats as one. Everything else non-canonical — a leading or
+/// doubled dot, a hyphen at a label's edge, a non-ASCII letter — is parsed as given and compared
+/// as given, and <c>ck_database_cluster_host_well_formed</c> is what keeps such a value out of the
+/// catalog. Executed with that check removed from the migration (PR #18, third review): the list
+/// and the socket directory make the fleet scan error, the trailing dot makes it report the
+/// collision, and nothing else here would notice a fourth spelling.
+/// </para>
 /// </remarks>
 public sealed class ResolvedEndpoint : IEquatable<ResolvedEndpoint>
 {
@@ -37,15 +50,21 @@ public sealed class ResolvedEndpoint : IEquatable<ResolvedEndpoint>
         Database = database;
     }
 
-    /// <summary>The host as the string spelled it; equality folds case, this does not.</summary>
+    /// <summary>The host as the string spelled it; equality folds case and a trailing dot, this does not.</summary>
     public string Host { get; }
 
     public int Port { get; }
 
     public string Database { get; }
 
+    /// <summary>The host as compared: one trailing dot removed, case folded by the comparer.</summary>
+    private string ComparableHost => Host.EndsWith('.') ? Host[..^1] : Host;
+
     /// <summary>The triple, read back by the same parser that composed the string.</summary>
-    /// <exception cref="ArgumentException">The string names no host or no database, so it addresses nothing.</exception>
+    /// <exception cref="ArgumentException">
+    /// The string names no host or no database, so it addresses nothing; or its host is a
+    /// multi-host list or a Unix-socket directory, which is not one endpoint (ADR-0036 §6).
+    /// </exception>
     public static ResolvedEndpoint Parse(string connectionString)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
@@ -56,14 +75,17 @@ public sealed class ResolvedEndpoint : IEquatable<ResolvedEndpoint>
             throw new ArgumentException("A resolved connection string names a host and a database; this one does not.", nameof(connectionString));
         }
 
-        // A multi-host list is not one endpoint and cannot be projected to a triple (ADR-0036 §6):
-        // Npgsql opens whichever of the hosts answers, so a row carrying one is a second name for
-        // a server the comparison would otherwise take for a different one. Refused here, so the
-        // fleet scan errors on such a row rather than passing over it (PR #18, second review).
         if (parsed.Host.Contains(',', StringComparison.Ordinal))
         {
             throw new ArgumentException(
                 $"'{parsed.Host}' is a multi-host list, which is not one endpoint and cannot be compared as one (ADR-0036 §6).",
+                nameof(connectionString));
+        }
+
+        if (parsed.Host.StartsWith('/'))
+        {
+            throw new ArgumentException(
+                $"'{parsed.Host}' is a Unix-socket directory, which is not one endpoint and cannot be compared as one (ADR-0036 §6).",
                 nameof(connectionString));
         }
 
@@ -74,11 +96,11 @@ public sealed class ResolvedEndpoint : IEquatable<ResolvedEndpoint>
         other is not null
         && Port == other.Port
         && string.Equals(Database, other.Database, StringComparison.Ordinal)
-        && string.Equals(Host, other.Host, StringComparison.OrdinalIgnoreCase);
+        && string.Equals(ComparableHost, other.ComparableHost, StringComparison.OrdinalIgnoreCase);
 
     public override bool Equals(object? obj) => Equals(obj as ResolvedEndpoint);
 
-    public override int GetHashCode() => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(Host), Port, StringComparer.Ordinal.GetHashCode(Database));
+    public override int GetHashCode() => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(ComparableHost), Port, StringComparer.Ordinal.GetHashCode(Database));
 
     public override string ToString() => $"{Host}:{Port}/{Database}";
 }

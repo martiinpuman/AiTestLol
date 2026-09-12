@@ -24,8 +24,11 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// in the B-05 summary rather than reproduced.
 /// </para>
 /// <para>
-/// <b>The host is what <see cref="CanonicalHost"/> says a host is</b> (ADR-0036 §3, as
-/// <see cref="TenantHost"/> does): a canonical host name or an IPv4 literal, and nothing else.
+/// <b>The host is what <see cref="CanonicalHost"/> says a host is</b> (ADR-0036 §3): a canonical
+/// host name or an IPv4 literal, and nothing else. <see cref="TenantHost"/> keeps a private
+/// declaration of essentially the same grammar for <c>tenant_host.host</c>; there are two
+/// declarations and nothing compares them — the pattern ADR-0043 chose for the analogous pair is
+/// two declarations plus a fitness rule that holds them equal, and that rule is a separate row.
 /// <c>ck_database_cluster_host_well_formed</c> evaluates the same grammar in the database beside
 /// <c>ck_database_cluster_host_lower_case</c>, so every writer meets it, raw SQL included — the
 /// rule here binds only callers of <see cref="Register"/>, of which there is none in production

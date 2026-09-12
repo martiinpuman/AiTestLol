@@ -76,27 +76,48 @@ public sealed class CatalogHostGrammarTests
     }
 
     [Fact]
-    public async Task The_entitys_grammar_and_the_check_constraints_grammar_agree_on_every_case()
+    public async Task The_entitys_grammar_and_the_check_constraints_grammar_agree_on_every_case_under_both_collations()
     {
-        // The same expression the constraint evaluates, over a parameter instead of the column.
+        // The same expression the constraint evaluates, over a parameter instead of the column -
+        // on the fixture's en_US.utf8 catalog and on a C-collated one, because a POSIX class in a
+        // regular expression follows the database's lc_ctype and this check must mean the same
+        // thing on every catalog (PR #18, third review). The expression uses explicit ranges only.
         string sql = "SELECT " + CanonicalHost.CheckConstraintSql.Replace("host ~ ", "@host ~ ", StringComparison.Ordinal);
+        CanonicalHost.CheckConstraintSql.ShouldNotContain("[[:", customMessage: "a POSIX class is ctype-dependent; the grammar uses explicit ranges");
+        await using ScratchCatalog underC = await ScratchCatalog.CreateAsync(_catalog, locale: "C");
         await using NpgsqlConnection owner = await _catalog.OpenMigratorConnectionAsync();
+        string ctype = (string)(await new NpgsqlCommand("SELECT datctype FROM pg_database WHERE datname = current_database()", owner).ExecuteScalarAsync())!;
 
         List<string> disagreements = [];
+        int agreeUnderCtype = 0;
+        int agreeUnderC = 0;
         foreach ((string host, bool expected) in Cases)
         {
             bool entity = CanonicalHost.IsWellFormed(host);
             await using var command = new NpgsqlCommand(sql, owner);
             command.Parameters.AddWithValue("host", host);
-            bool database = (bool)(await command.ExecuteScalarAsync())!;
-            if (entity != expected || database != expected)
+            bool databaseUnderCtype = (bool)(await command.ExecuteScalarAsync())!;
+            bool databaseUnderC = await underC.ScalarAsync<bool>(sql, ("host", host));
+
+            if (entity == expected && databaseUnderCtype == expected)
             {
-                disagreements.Add($"'{host}': expected {expected}, entity {entity}, database {database}");
+                agreeUnderCtype++;
+            }
+
+            if (entity == expected && databaseUnderC == expected)
+            {
+                agreeUnderC++;
+            }
+
+            if (entity != expected || databaseUnderCtype != expected || databaseUnderC != expected)
+            {
+                disagreements.Add($"'{host}': expected {expected}, entity {entity}, database under {ctype} {databaseUnderCtype}, under C {databaseUnderC}");
             }
         }
 
-        _output.WriteLine($"cases: {Cases.Count}; agree: {Cases.Count - disagreements.Count}");
+        _output.WriteLine($"cases: {Cases.Count}; agree under {ctype}: {agreeUnderCtype}; agree under C: {agreeUnderC}");
         Cases.Count.ShouldBeGreaterThanOrEqualTo(20);
+        ctype.ShouldStartWith("en_US");
         disagreements.ShouldBeEmpty();
     }
 

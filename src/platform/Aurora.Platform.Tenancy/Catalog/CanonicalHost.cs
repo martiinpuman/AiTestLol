@@ -36,9 +36,12 @@ internal static class CanonicalHost
 
     /// <summary>
     /// The grammar as a PostgreSQL regular expression over the <c>host</c> column: one label,
-    /// then any number of dot-and-label. Character classes are by code point, so a non-ASCII
-    /// letter is outside <c>[a-z]</c> under every collation; the column's <c>varchar(253)</c> is
-    /// the total-length bound.
+    /// then any number of dot-and-label. Explicit ranges only — <c>[a-z0-9-]</c>, never a POSIX
+    /// class such as <c>[[:alpha:]]</c> — because a POSIX class is evaluated against the database's
+    /// <c>lc_ctype</c> and this check must mean the same thing on a <c>C</c>-collated catalog as
+    /// on an <c>en_US.utf8</c> one; a range is matched by code point under every collation, which
+    /// <c>CatalogHostGrammarTests</c> executes under both. The column's <c>varchar(253)</c> is the
+    /// total-length bound.
     /// </summary>
     public const string CheckConstraintSql =
         "host ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$'";

@@ -29,7 +29,12 @@ namespace Aurora.Platform.Tenancy.Migrations
     /// walked past the index, the lower-case check and the endpoint comparison as a fifth variant),
     /// a Unix-socket directory (for which <c>lower()</c> would be wrong: ADR-0036 §6 names both), a
     /// non-ASCII letter (whose <c>lower()</c> depends on the catalog's collation), a stray dot. The
-    /// grammar is evaluated here so that raw SQL meets it, not only the entity (ADR-0036 §4.2). The
+    /// grammar is evaluated here so that raw SQL meets it, not only the entity (ADR-0036 §4.2), and
+    /// it is written with explicit ranges — <c>[a-z0-9-]</c>, never <c>[[:alpha:]]</c> — because a
+    /// POSIX class follows the database's <c>lc_ctype</c> while a range is matched by code point,
+    /// and this check must mean the same thing on a <c>C</c>-collated catalog as on the
+    /// <c>en_US.utf8</c> one the tests run on; <c>CatalogHostGrammarTests</c> executes its cases
+    /// under both. The
     /// property, not the constraints, is what the tests assert (<c>CatalogRoutingUniquenessTests</c>,
     /// ADR-0036 §2.3).
     /// </para>

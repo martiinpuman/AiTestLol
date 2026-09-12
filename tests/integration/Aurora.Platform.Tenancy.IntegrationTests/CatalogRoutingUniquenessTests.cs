@@ -38,8 +38,9 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// cluster copying the victim's <c>database_name</c>; variant 3, a second <c>database_cluster</c>
 /// row on the victim's cluster's host and port with a tenant on it copying the victim's
 /// <c>database_name</c>, once with an <c>Active</c> attacker and once with a <c>Provisioning</c>
-/// one (PR #18 M-3); and variant 3 with the host spelled in another case (PR #18 M-1,
-/// ADR-0036 §3). Each attempt is either admitted or refused by a constraint — SQLSTATE
+/// one (PR #18 M-3); variant 3 with the host spelled in another case (PR #18 M-1, ADR-0036 §3);
+/// and variant 3 as a multi-host list, with a trailing dot, and as a Unix-socket directory (PR #18,
+/// second and third reviews). Each attempt is either admitted or refused by a constraint — SQLSTATE
 /// <c>23505</c> or <c>23514</c>; the refusal is recorded and printed, not asserted, and a failure
 /// for any other reason propagates. Then the property is asserted over every non-deleted tenant
 /// the catalog now holds — the attacker's rows included, if any were admitted. Before the
@@ -70,18 +71,22 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// </para>
 /// <para>
 /// <b>What the comparison establishes, and what it does not</b> (ADR-0036 §2.4, the link D1 and
-/// D2 stop at). Host folded, port and database exact — never the whole string, which carries the
-/// tenant's key in <c>Application Name</c> and so never collides (executed both ways over one
-/// catalog in PR #18's review: endpoints <c>collisions: 1</c>, whole strings <c>collisions: 0</c>;
-/// kept executable in D1). The property therefore establishes that no two non-deleted tenants
-/// name the same host in any spelling, port and database, so a further variant that differs in
-/// none of those fails here whichever index it walked around. It does <em>not</em> establish that
-/// no two tenants reach the same server: two different names for one machine — an IP literal
-/// beside a host name, a CNAME, a second DNS record, a failover alias — are different triples here
-/// and different rows in the catalog (executed in the same review: <c>localhost</c> and
-/// <c>127.0.0.1</c> as rows, one database, <c>collisions: 0</c>). No comparison of stored names
-/// can close that; <c>TenantIdentityStamp</c> is the control (ADR-0034 §4), on every physical
-/// connection, and no test over catalog rows can claim it.
+/// D2 stop at). Host folded — case and one trailing dot — port and database exact; never the
+/// whole string, which carries the tenant's key in <c>Application Name</c> and so never collides
+/// (executed both ways over one catalog in PR #18's review: endpoints <c>collisions: 1</c>, whole
+/// strings <c>collisions: 0</c>; kept executable in D1). A row the comparison cannot project to
+/// one endpoint — a multi-host list, a Unix-socket directory — is reported as unprojectable and
+/// fails the test on its own, so an admitted one is never passed over; every other non-canonical
+/// spelling is compared as given and is <c>ck_database_cluster_host_well_formed</c>'s to refuse.
+/// The property therefore establishes that no two non-deleted tenants name the same host in any
+/// spelling, port and database, so a further variant that differs in none of those fails here
+/// whichever index it walked around. It does <em>not</em> establish that no two tenants reach the
+/// same server: two different names for one machine — an IP literal beside a host name, a CNAME,
+/// a second DNS record, a failover alias — are different triples here and different rows in the
+/// catalog (executed in the same review: <c>localhost</c> and <c>127.0.0.1</c> as rows, one
+/// database, <c>collisions: 0</c>). No comparison of stored names can close that;
+/// <c>TenantIdentityStamp</c> is the control (ADR-0034 §4), on every physical connection, and no
+/// test over catalog rows can claim it.
 /// </para>
 /// </remarks>
 [Collection(CatalogDatabaseSuite.Name)]
@@ -134,6 +139,12 @@ public sealed class CatalogRoutingUniquenessTests
             await AttemptAsync(
                 "variant 3 as a multi-host list: a second cluster row whose host is the victim's host followed by a comma and a second name, on its port, and an Active tenant on it copying its database_name",
                 (owner, attempt) => SecondClusterRowOnTheSameEndpointAsync(owner, attempt, victim, victimCluster, "Active", HostSpelling.MultiHostList)),
+            await AttemptAsync(
+                "variant 3 with a trailing dot: a second cluster row on the victim's host spelled fully qualified, on its port, and an Active tenant on it copying its database_name",
+                (owner, attempt) => SecondClusterRowOnTheSameEndpointAsync(owner, attempt, victim, victimCluster, "Active", HostSpelling.TrailingDot)),
+            await AttemptAsync(
+                "variant 3 as a socket directory: a second cluster row whose host is a Unix-socket directory, on the victim's port, and an Active tenant on it copying its database_name",
+                (owner, attempt) => SecondClusterRowOnTheSameEndpointAsync(owner, attempt, victim, victimCluster, "Active", HostSpelling.SocketDirectory)),
         ];
 
         Resolution resolution = await ResolveEveryNonDeletedTenantAsync();
@@ -151,7 +162,13 @@ public sealed class CatalogRoutingUniquenessTests
             + $" {resolution.Composed.Count} refused by its state gate and composed from the row it read"
             + $" ({string.Join(", ", resolution.Composed.GroupBy(tenant => tenant.State).Select(group => $"{group.Key}: {group.Count()}"))});"
             + $" resolver and composition agree on {resolution.Agreements} of {resolution.Resolved.Count};"
+            + $" unprojectable: {resolution.Unprojectable.Count};"
             + $" pairs compared: {comparison.PairsCompared}; collisions: {comparison.Collisions.Count}");
+        foreach ((TenantKey key, TenantState state, string reason) in resolution.Unprojectable)
+        {
+            _output.WriteLine($"  {key} ({state}): {reason}");
+        }
+
         foreach ((ResolvedTenant first, ResolvedTenant second) in comparison.Collisions)
         {
             _output.WriteLine($"  {first.Key} ({first.State}) and {second.Key} ({second.State}) -> {first.Endpoint}");
@@ -159,6 +176,9 @@ public sealed class CatalogRoutingUniquenessTests
 
         resolution.Resolved.Count.ShouldBeGreaterThanOrEqualTo(2, "the property is vacuous over fewer than two resolved tenants");
         comparison.PairsCompared.ShouldBeGreaterThan(0, "the property is vacuous over zero pairs");
+        resolution.Unprojectable.ShouldBeEmpty(
+            "a row the comparison cannot project to one endpoint is a row the catalog should never have admitted - "
+            + string.Join("; ", resolution.Unprojectable.Select(row => $"{row.Key} ({row.State}): {row.Reason}")));
         compared.Count.ShouldBe(resolution.NonDeleted, "every non-deleted tenant is compared, routable or not");
         resolution.Agreements.ShouldBe(resolution.Resolved.Count, "the composition over the row must yield the endpoint the resolver emits, or it cannot stand in for the resolver on the tenants it refuses");
         resolution.Resolved.Select(tenant => tenant.Id).ShouldContain(victim.Id, "the victim was not among the tenants resolved");
@@ -172,8 +192,10 @@ public sealed class CatalogRoutingUniquenessTests
     /// <summary>
     /// Every non-deleted tenant, one scope each from the production registration: resolved through
     /// the resolver where the application path may connect, and composed from the row the resolver
-    /// read where it may not — with the two shown to agree wherever both exist. See the remarks on
-    /// the class.
+    /// read where it may not — with the two shown to agree wherever both exist. A row the
+    /// comparison cannot project to one endpoint is recorded and asserted against at the end,
+    /// beside the collisions, rather than ending the scan at the first one, so a mutation run shows
+    /// every admitted shape at once. See the remarks on the class.
     /// </summary>
     private async Task<Resolution> ResolveEveryNonDeletedTenantAsync()
     {
@@ -189,20 +211,38 @@ public sealed class CatalogRoutingUniquenessTests
 
         List<ResolvedTenant> resolved = [];
         List<ResolvedTenant> composed = [];
+        List<(TenantKey Key, TenantState State, string Reason)> unprojectable = [];
         int agreements = 0;
         foreach ((TenantId id, TenantKey key) in tenants)
         {
             await using AsyncServiceScope scope = requestPath.CreateAsyncScope();
             TenantRouting routing = await scope.ServiceProvider.GetRequiredService<ITenantRoutingReader>().ReadAsync(id, CancellationToken.None)
                 ?? throw new InvalidOperationException($"catalog.tenant {key} was listed a moment ago and now has no routing row.");
-            ResolvedEndpoint fromComposition = await ComposeAsEverythingAfterTheStateGateAsync(routing, secrets, pool);
+            string composedString = await ComposeAsEverythingAfterTheStateGateAsync(routing, secrets, pool);
 
+            string? resolvedString = null;
             try
             {
                 TenantConnection connection = await scope.ServiceProvider
                     .GetRequiredService<ITenantConnectionResolver>()
                     .ResolveAsync(id, CancellationToken.None);
-                ResolvedEndpoint fromResolver = ResolvedEndpoint.Parse(connection.ConnectionString.Reveal());
+                resolvedString = connection.ConnectionString.Reveal();
+            }
+            catch (TenantNotRoutableException)
+            {
+                // Compared from the composition instead.
+            }
+
+            try
+            {
+                ResolvedEndpoint fromComposition = ResolvedEndpoint.Parse(composedString);
+                if (resolvedString is null)
+                {
+                    composed.Add(new ResolvedTenant(id, key, routing.State, fromComposition));
+                    continue;
+                }
+
+                ResolvedEndpoint fromResolver = ResolvedEndpoint.Parse(resolvedString);
                 if (fromResolver.Equals(fromComposition))
                 {
                     agreements++;
@@ -210,22 +250,21 @@ public sealed class CatalogRoutingUniquenessTests
 
                 resolved.Add(new ResolvedTenant(id, key, routing.State, fromResolver));
             }
-            catch (TenantNotRoutableException)
+            catch (ArgumentException cannotProject)
             {
-                composed.Add(new ResolvedTenant(id, key, routing.State, fromComposition));
+                unprojectable.Add((key, routing.State, cannotProject.Message));
             }
         }
 
-        return new Resolution(tenants.Count, resolved, composed, agreements);
+        return new Resolution(tenants.Count, resolved, composed, unprojectable, agreements);
     }
 
     /// <summary>
     /// What <c>TenantConnectionResolver.ResolveAsync</c> does once the state gate is passed: the
     /// app credential through the secret store, then the real composer over the row the real
-    /// reader read; the endpoint is parsed out of the string that comes back, as it is for a
-    /// resolved tenant.
+    /// reader read. The string that comes back is parsed as a resolved tenant's is.
     /// </summary>
-    private static async Task<ResolvedEndpoint> ComposeAsEverythingAfterTheStateGateAsync(TenantRouting routing, ISecretStore secrets, TenantPoolSettings pool)
+    private static async Task<string> ComposeAsEverythingAfterTheStateGateAsync(TenantRouting routing, ISecretStore secrets, TenantPoolSettings pool)
     {
         if (routing.Cluster is null || routing.DatabaseName is null)
         {
@@ -235,8 +274,7 @@ public sealed class CatalogRoutingUniquenessTests
         }
 
         string appPassword = await secrets.ReadAsync(SecretReference.Of(routing.Cluster.AppSecretRef), CancellationToken.None);
-        string connectionString = TenantConnectionStringComposer.Compose(routing.Cluster, routing.DatabaseName, routing.TenantKey, appPassword, pool);
-        return ResolvedEndpoint.Parse(connectionString);
+        return TenantConnectionStringComposer.Compose(routing.Cluster, routing.DatabaseName, routing.TenantKey, appPassword, pool);
     }
 
     /// <summary>The domain of the property: every tenant row that is not a tombstone, read as the request path reads.</summary>
@@ -297,6 +335,8 @@ public sealed class CatalogRoutingUniquenessTests
         {
             HostSpelling.UpperCased => "upper(c.host)",
             HostSpelling.MultiHostList => "c.host || ',pg-decoy.internal'",
+            HostSpelling.TrailingDot => "c.host || '.'",
+            HostSpelling.SocketDirectory => "'/var/run/postgresql'",
             _ => "c.host",
         };
 
@@ -348,6 +388,8 @@ public sealed class CatalogRoutingUniquenessTests
         AsStored,
         UpperCased,
         MultiHostList,
+        TrailingDot,
+        SocketDirectory,
     }
 
     private sealed record TakeoverAttempt(string Shape, string? RefusedBy);
@@ -358,6 +400,7 @@ public sealed class CatalogRoutingUniquenessTests
         int NonDeleted,
         IReadOnlyList<ResolvedTenant> Resolved,
         IReadOnlyList<ResolvedTenant> Composed,
+        IReadOnlyList<(TenantKey Key, TenantState State, string Reason)> Unprojectable,
         int Agreements);
 
     /// <summary>

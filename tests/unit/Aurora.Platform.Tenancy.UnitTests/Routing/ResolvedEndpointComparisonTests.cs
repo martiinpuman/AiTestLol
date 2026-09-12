@@ -45,6 +45,7 @@ public sealed class ResolvedEndpointComparisonTests
         // dimension varied, key, the other tenant's value, one endpoint?
         { "Application Name (the discriminator that made ADR-0034 §3.3 vacuous)", "Application Name", "aurora-web:globex", true },
         { "Host case", "Host", "PG-1.INTERNAL", true },
+        { "Host trailing dot (the fully-qualified spelling of one name)", "Host", "pg-1.internal.", true },
         { "Password", "Password", "pw-two", true },
         { "Username", "Username", "aurora_migrator", true },
         { "Maximum Pool Size (an ADR-0007 §5.2 pool setting, Web against Worker)", "Maximum Pool Size", "5", true },
@@ -135,6 +136,28 @@ public sealed class ResolvedEndpointComparisonTests
             () => ResolvedEndpoint.Parse(new NpgsqlConnectionStringBuilder(Base) { Host = "pg-1.internal,pg-decoy.internal" }.ConnectionString));
 
         refused.Message.ShouldContain("multi-host list");
+    }
+
+    [Fact]
+    public void A_socket_directory_is_not_one_endpoint_and_is_refused_rather_than_projected_as_a_host()
+    {
+        // The second shape ADR-0036 §6 names: a path, whose case is significant, naming no server.
+        ArgumentException refused = Should.Throw<ArgumentException>(
+            () => ResolvedEndpoint.Parse(new NpgsqlConnectionStringBuilder(Base) { Host = "/var/run/postgresql" }.ConnectionString));
+
+        refused.Message.ShouldContain("Unix-socket directory");
+    }
+
+    [Fact]
+    public void A_leading_or_doubled_dot_is_compared_as_given_because_the_catalogs_check_is_what_refuses_it()
+    {
+        // Stated so the backstop is not credited with more than it does: these are not spellings
+        // of one name to a resolver, the comparison does not fold them, and only
+        // ck_database_cluster_host_well_formed keeps them out of the catalog.
+        ResolvedEndpoint.Parse(new NpgsqlConnectionStringBuilder(Base) { Host = ".pg-1.internal" }.ConnectionString)
+            .ShouldNotBe(ResolvedEndpoint.Parse(Base));
+        ResolvedEndpoint.Parse(new NpgsqlConnectionStringBuilder(Base) { Host = "pg-1..internal" }.ConnectionString)
+            .ShouldNotBe(ResolvedEndpoint.Parse(Base));
     }
 
     [Fact]
