@@ -354,23 +354,12 @@ Three things a reader will want stated:
   absent from this branch's tree. It exists as a type on `task/B-06.1a` and is wired into a
   connection nowhere until B-06.2 puts `AssertAsync` in the data source's physical-connection
   initializer. Until both land, a connection string this resolver composes is opened with no proof
-  that the database on the other end is the tenant's. And the catalog itself does not yet refuse
-  the shape PR #14 H-1 executed: `ux_tenant_cluster_id_database_name` is keyed on `cluster_id`, a
-  physical database is `(host, port, database_name)`, and nothing makes `database_cluster (host,
-  port)` unique — two cluster rows for one server, one tenant each, the attacker's `database_name`
-  copied, and both resolve to one physical database. The M-1 check above does not catch that (the
-  row genuinely is the attacker's); the fix is a catalog migration on the physical axis, which is the
-  architect's and not this branch's (the catalog migration chain is one branch at a time, and
-  `task/B-19` holds it). `aurora_app` can write neither row; the shape needs the owner. B-07.1, the
-  row that writes cluster rows, is held on it. **The thing that expires with the hole** is
-  `Two_cluster_rows_on_one_server_still_route_two_tenants_to_one_physical_database`, an inertness
-  guard in the pattern of B-04's and B-19's: green while two cluster rows on one server still resolve
-  to one physical database (it prints both endpoints), red the day the catalog refuses either insert
-  with `23505` — and its message then says to delete it and write ADR-0034 §3.3's real property in
-  its place, that no two non-deleted tenant rows produce the same resolved connection string,
-  computed by the real resolver over real rows. That day reds five more tests in the same file,
-  because the test bed registers a cluster row per bed on one endpoint — the fixture shape ADR-0034
-  §3.2 forbids — so the bed needs one shared cluster row, or a second container, first.
+  that the database on the other end is the tenant's. The catalog's own half of the routing
+  question — that two cluster rows cannot name one endpoint, PR #14 H-1 — is closed by B-20
+  (below): `ux_database_cluster_host_port`, ADR-0034 §3.3's property in
+  `CatalogRoutingUniquenessTests` in place of this file's inertness guard, and one cluster row per
+  container in the test bed. The M-1 check above never caught that shape (the row genuinely is the
+  attacker's); the index does, and the stamp is what decides identity where a name cannot.
 - **What invalidation promises, and what it does not.** The interceptor sees every state change
   written through the entity; a change written around the change tracker (raw SQL, `ExecuteUpdate`)
   is bounded by the entry's 60 s lifetime, as is another instance's copy until an L2 exists
@@ -398,6 +387,186 @@ in `Aurora.Platform.Tenancy.Contracts`; **ADR-0034 §6 decides they are `interna
 §3.5's own goal by construction. Every consumer named so far (B-06.2, B-06.3, B-07.1) lives here;
 the first consumer outside, `Aurora.TestKit`'s counting resolver (B-18.5, consumed by B-10), gets
 `[InternalsVisibleTo]` under ADR-0034 §6.1's three conditions, never promotion.
+
+---
+
+## What B-20 adds: the catalog constrains the physical endpoint
+
+`ux_database_cluster_host_port` — `CREATE UNIQUE INDEX … ON catalog.database_cluster (host, port)`,
+the `ClusterEndpointUniqueness` migration, declared on the EF model — is ADR-0034 §3.1, and it
+closes the **third** executed variant of the tenant-takeover finding: two cluster rows on one
+server, one tenant each, the attacker's `database_name` copied from the victim's, both resolving to
+one connection string. With it the composition is a proof: `cluster_id → (host, port)` is injective,
+`fk_tenant_cluster_in_region` makes it total for every non-deleted tenant,
+`ux_tenant_cluster_id_database_name` makes `(cluster_id, database_name)` unique, so
+`(host, port, database_name)` — the triple the resolver composes — is unique across `catalog.tenant`.
+Beside it, in the same migration, `ck_database_cluster_host_lower_case` (`host = lower(host)`;
+ADR-0036 §3, added to ADR-0034 as §3.4) holds the host to its canonical spelling as `tenant_host`
+already was: the index is byte-exact, so it can only make `cluster_id → (host, port)` injective on
+the endpoint if one endpoint has one spelling. And the host is *one host*: `CanonicalHost` states what
+a `database_cluster.host` is — RFC 1123 labels of lower-case ASCII letters, digits and inner
+hyphens, 1 to 63 each, joined by single dots, 253 at most, of which an IPv4 literal is a special
+case — and `ck_database_cluster_host_well_formed` evaluates the same grammar in the database, so
+raw SQL meets it as `DatabaseCluster.Register` does (ADR-0036 §4.2 chose the constraint as the
+mechanism; the entity's copy binds only callers of `Register`, of which there is none in production
+yet). A grammar, not a deny-list: three characters had been refused one review at a time — `/`,
+then a dot in the wrong place, then `,`, the multi-host separator that let
+`pg-1.internal,pg-2.internal` past the index, the lower-case check and the endpoint comparison as a
+fifth takeover shape (PR #18, second review; Npgsql opens whichever host answers, so it is the
+same server under another string). Excluded by construction: a multi-host list and a Unix-socket
+directory — the two shapes ADR-0036 §6 names as breaking the endpoint triple — a scheme, a port
+suffix, a path, a stray or doubled dot, and any upper-case or non-ASCII character. That last is
+why the grammar is ASCII, **executed on `postgres:17-alpine` in `CatalogHostGrammarTests`** rather
+than reasoned: the lower-case check's `lower()` depends on the database's `lc_ctype` for a
+non-ASCII letter —
+
+```
+datctype of the catalog: en_US.utf8
+lower('pg.Über.internal') under C: pg.Über.internal (host = lower(host) holds: admitted)
+lower('pg.Über.internal') under en_US.utf8: pg.über.internal (host = lower(host) fails: refused)
+lower('pg.ÜBER.internal') under C: pg.Über.internal; under en_US.utf8: pg.über.internal
+C: 'pg.Über.internal' = lower(host) is True; insert refused 23514 on ck_database_cluster_host_well_formed
+en_US.utf8: insert refused 23514 on ck_database_cluster_host_lower_case
+```
+
+— so `pg.Über.internal` beside `pg.über.internal` is two rows on a `C`-collated catalog and one on
+the fixture's, with the lower-case check alone. `pg.ÜBER.internal` is **not** that witness: `B`,
+`E` and `R` are ASCII upper case and fold under both (an earlier version of this paragraph cited
+it; it does not reproduce). The shape check refuses both spellings under both collations, and the
+entity's grammar and the constraint's regular expression are held equal over 25 cases by executing
+both — on the fixture's `en_US.utf8` catalog and on a `C`-collated one (`cases: 25; agree under
+en_US.utf8: 25; agree under C: 25`), because a POSIX class such as `[[:alpha:]]` follows the
+database's `lc_ctype` while an explicit range is matched by code point, so the expression uses
+ranges only and the migration's remarks say why. The catalog's `lc_ctype` is pinned nowhere
+(`FOLLOWUP-061`). `TenantHost` keeps a private declaration of essentially the same grammar for
+`tenant_host.host`: two declarations, and nothing compares them — the fitness rule ADR-0043 chose
+for the analogous pair is a separate row. An internationalised name is stored as punycode, which is what DNS carries. An IPv6 literal
+(`::1`, `[::1]`) is outside the grammar pending the architect: ADR-0036 §3 reasons about folding
+one, the row has never accepted one, and admitting it is a decision about what a cluster endpoint
+may be, not a spelling rule.
+
+**The acceptance criterion is the property, not the index** — ADR-0036 §2.3, which replaced
+ADR-0034 §3.3 after this row found §3.3 vacuous: *no two non-deleted tenants resolve to the same
+physical endpoint*, the endpoint being the `(host, port, database)` triple parsed with
+`NpgsqlConnectionStringBuilder` out of the string the real resolver produced, host compared
+ignoring case, database ordinally, port exactly — never the whole string. A connection string is a
+serialisation of an intent, not a description of a destination (§2.1): `Application Name` carries
+the tenant key by construction, `Username`, `Password` and every ADR-0007 §5.2 pool setting can
+differ between two strings that open one database, so equality over the whole string cannot fail.
+ADR-0036 §2.4 splits the demonstration in three, and this module carries all three:
+
+- **D1, the comparator, as a unit test** (`ResolvedEndpointComparisonTests`, over
+  `ResolvedEndpoint`/`EndpointCollisions` in a source file linked into both test projects as
+  `CatalogSchemaGuard.cs` is). One realistic string with every §5.2 field set, one dimension varied
+  per case, each case first proving the two strings differ: `Application Name`, host case,
+  `Password`, `Username`, `Maximum Pool Size` and `Command Timeout` are one endpoint; database
+  case, database name, port and host name are not. Beside it, ADR-0034 §3.3 as written is executed
+  over the same input — whole-string collisions `0` where endpoint collisions are `6` — so the
+  vacuity stays executable. D1 never touches the catalog and so nothing the catalog refuses can
+  disarm it.
+- **D2, the fleet scan, as an integration test** (`CatalogRoutingUniquenessTests`). It asks the
+  catalog, as the owner, to store every executed shape — variant 1; variant 3 with an `Active`
+  attacker and with a `Provisioning` one (PR #18 M-3); variant 3 with the host in another case
+  (M-1); variant 3 as a multi-host list, the fifth shape, which printed `ADMITTED … collisions: 0`
+  and passed against the previous migration — records whether each was admitted or refused by a
+  constraint, then takes an endpoint for
+  every non-deleted tenant from the production registration: parsed out of the string the real
+  `ITenantConnectionResolver` produced where the application path may connect, and where it
+  refuses on state, out of the string the real composer produces over the row the real reader read
+  — what the resolver does after its state gate — with the two required to agree on every tenant
+  that has both, so the assertion stays a property of the resolver's output and a `Provisioning`
+  row, the one B-07.1's adoption rule acts on, is compared rather than skipped. It compares every
+  pair with the same comparator, prints tenants, pairs compared and collisions, and fails on zero
+  of either. **What the comparison backstops, stated exactly** (PR #18, third review): `Parse`
+  refuses the two shapes ADR-0036 §6 names — a multi-host list and a Unix-socket directory — and
+  a row it cannot project is reported as unprojectable and fails the scan on its own; equality
+  folds case and one trailing dot, the two spellings of one name a resolver treats as one;
+  everything else non-canonical (a leading or doubled dot, a hyphen at a label's edge, a non-ASCII
+  letter) is compared as given and is the shape check's to refuse. Executed with the shape check
+  removed from `Up` only, so all three are admitted:
+
+  ```
+  variant 3 as a multi-host list …: ADMITTED
+  variant 3 with a trailing dot …: ADMITTED
+  variant 3 as a socket directory …: ADMITTED
+  tenants: 5 non-deleted; 3 resolved …; unprojectable: 2; pairs compared: 3; collisions: 1
+    t-f8473afdfc4e (Active): 'pg-05eb98736c77.internal,pg-decoy.internal' is a multi-host list, which is not one endpoint …
+    t-cbe953ddec85 (Active): '/var/run/postgresql' is a Unix-socket directory, which is not one endpoint …
+    t-326db14263e1 (Active) and t-bd58b4dbadf0 (Active) -> pg-05eb98736c77.internal:5432/aurora_t_t_326db14263e1
+  ```
+
+  — the list and the socket directory error, the trailing dot collides. D2 is a regression guard,
+  not a proof: once the index and the checks are in place no seed can construct a collision
+  through the normal write path.
+- **D3, the one-shot demonstration, recorded rather than standing** — the fix removed the
+  evidence. D2 run before `ux_database_cluster_host_port` existed, against a catalog seeded with
+  variant 3, verbatim:
+
+  ```
+  takeover shapes attempted: 2
+    variant 1: a second tenant row on the victim's cluster, copying its database_name: refused, 23505 on ux_tenant_cluster_id_database_name
+    variant 3: a second cluster row on the victim's cluster's host and port, and a tenant on it copying its database_name: ADMITTED
+  tenants: 3 non-deleted, 3 resolved, 0 not routable (); pairs compared: 3; collisions: 1
+    t-19e54e1994e3 and t-acbe37ef31b3 -> pg-9312cf93ed70.internal:5432/aurora_t_t_19e54e1994e3
+  Shouldly.ShouldAssertException : collisions should be empty but had
+    ADR-0034 §3.3: two non-deleted tenants resolve to one physical database - t-19e54e1994e3 and t-acbe37ef31b3 -> pg-9312cf93ed70.internal:5432/aurora_t_t_19e54e1994e3.
+  ```
+
+  Reproduced after the migration by making the index non-unique and removing the check from `Up`
+  only: `collisions: 6` over 10 pairs, the `Provisioning` attacker and the upper-cased attacker
+  (host folded onto the victim's) among them. Both runs are on PR #18.
+
+**What the comparison establishes:** no two non-deleted tenants name the same host in any
+spelling, port and database, so a further variant that differs in none of those fails D2 whichever
+index it walked around. **What it does not:** that no two tenants reach the same server.
+`localhost` beside `127.0.0.1` — an IP literal beside a host name, a CNAME, a second DNS record, a
+failover alias — are different triples here and different rows in the catalog (executed in PR #18's
+review: three rows, one database, `collisions: 0`), and no comparison of stored names can close
+that; `TenantIdentityStamp` is the control (ADR-0034 §4). D2 replaced B-06.1's inertness guard,
+deleted rather than repaired the day the hole closed, as its message directed. The model's
+own declaration of the index (`CatalogModelTests`) and the SQL the migration emits
+(`ClusterEndpointUniquenessMigrationTests`, unit) are checked in stage 6 with Docker stopped; both
+are tripwires on the configuration and say so, and neither stands in for the property.
+
+**The migration fails loudly against a catalog that already holds the defect** (ADR-0034 §5.1).
+`ClusterEndpointUniquenessMigrationTests` (integration) creates a catalog of its own, migrates it to
+the state before this migration, seeds two rows on one endpoint and runs the migration: SQLSTATE
+`23505`, `could not create unique index "ux_database_cluster_host_port"`, `Key (host, port)=(…) is
+duplicated` — and, because the migration is transactional, no index, no history row, both rows
+intact and the migration still pending for the runner to retry once an operator has resolved the
+duplicate. A mixed-case host at the same state fails it with `23514`, `check constraint
+"ck_database_cluster_host_lower_case" of relation "database_cluster" is violated by some row`, and a
+multi-host list with `23514` naming `ck_database_cluster_host_well_formed` — and the index and
+check created a statement earlier are rolled back with it, the row left as it was spelled.
+Transactional on purpose: `CONCURRENTLY` cannot run in a transaction and leaves an
+`INVALID` index behind on failure, and ADR-0007 §7.2 reserves it for tables a live tenant writes to,
+which the catalog's operator seed data is not. Rows on distinct endpoints — one host on two ports,
+two hosts on one port — migrate, keep every row and re-run as a no-op. Npgsql redacts a `DETAIL`
+on the client unless the connection asks (`Include Error Detail`); the test's connection asks, so
+the server is held to naming the duplicate, and the runner's connection (B-08) decides what an
+operator sees.
+
+**What the index does not and cannot cover, stated rather than left to be inferred** (ADR-0034 §2,
+§3.2; ADR-0036 §2.4). Two names for one server — a CNAME, a second DNS record, a failover alias, an
+IP literal beside a host name. (A host spelled in another case, and a multi-host list, were on this
+list until ADR-0036 §3 and PR #18's second review; the two checks, the grammar and the comparator's
+folding close those halves, and only those.) The catalog stores what it was told; a
+constraint over a name narrows what can be stored and never establishes identity.
+`TenantIdentityStamp` is the control for that (ADR-0034 §4), on every physical connection, and it
+is in effect on no path until B-06.2 and B-07.1 wire it. Two shapes the index is wrong for if they
+ever become rows: a read replica, which ADR-0007 §3.5 keeps inside the resolver and never as a row;
+and PgBouncer, which arrives as a second endpoint pair on one row with a unique index of its own,
+never as a second row. Either is ADR-0034 §9's revisit trigger. A tenant `database_name` equal to a
+cluster's `maintenance_database` on the same endpoint is not on this axis either; the `aurora_t_`
+naming convention and B-07.1's safe-adoption rule are what cover it.
+
+**One cluster row per container in the tests.** `CatalogDatabaseFixture.ThisServerAsClusterAsync`
+seeds the one `database_cluster` row for the test container on first use, with an app secret
+reference the resolver's `EnvironmentSecretStore` can answer for the life of the fixture; every
+routing test bed and the end-to-end resolve test place their tenants on it. Until B-20 each seeded a
+row of its own for that endpoint — variant 3 as a fixture, the shape ADR-0034 §3.2 forbids — and
+under the index, measured before the fixture changed, every such test but the first in the run
+failed with `23505`: five of the six that seeded a row, plus the guard, six red where one was meant.
 
 ---
 

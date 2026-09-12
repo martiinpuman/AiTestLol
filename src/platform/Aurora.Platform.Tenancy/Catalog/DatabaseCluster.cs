@@ -23,10 +23,32 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// referenced from the cluster's row like the other two; the omission is reported as an ADR gap
 /// in the B-05 summary rather than reproduced.
 /// </para>
+/// <para>
+/// <b>The host is what <see cref="CanonicalHost"/> says a host is</b> (ADR-0036 §3): a canonical
+/// host name or an IPv4 literal, and nothing else. <see cref="TenantHost"/> keeps a private
+/// declaration of essentially the same grammar for <c>tenant_host.host</c>; there are two
+/// declarations and nothing compares them — the pattern ADR-0043 chose for the analogous pair is
+/// two declarations plus a fitness rule that holds them equal, and that rule is a separate row.
+/// <c>ck_database_cluster_host_well_formed</c> evaluates the same grammar in the database beside
+/// <c>ck_database_cluster_host_lower_case</c>, so every writer meets it, raw SQL included — the
+/// rule here binds only callers of <see cref="Register"/>, of which there is none in production
+/// yet. A host name is case-insensitive, so two spellings of one host would be two rows on one
+/// endpoint that <c>ux_database_cluster_host_port</c> could not tell apart; and a value that is
+/// not one host — a multi-host list, a Unix-socket directory, the two shapes ADR-0036 §6 names —
+/// is not an endpoint the triple can project. Why the grammar is ASCII, executed on
+/// <c>postgres:17-alpine</c> in <c>CatalogHostGrammarTests</c>: the lower-case check's
+/// <c>lower()</c> depends on the database's <c>lc_ctype</c> for a non-ASCII letter — under <c>C</c>
+/// <c>lower('pg.Über.internal')</c> is unchanged and <c>host = lower(host)</c> admits the row,
+/// under <c>en_US.utf8</c> it folds to <c>pg.über.internal</c> and refuses it — so a catalog could
+/// hold two spellings of one such name on one collation and not another. (<c>pg.ÜBER.internal</c>
+/// is not that witness: <c>B</c>, <c>E</c> and <c>R</c> are ASCII upper case and fold under both.)
+/// An internationalised name is stored in its punycode form, which is what DNS carries. An IP
+/// literal beside a host name is the half no spelling rule closes.
+/// </para>
 /// </remarks>
 internal sealed class DatabaseCluster
 {
-    public const int MaxHostLength = 253;
+    public const int MaxHostLength = CanonicalHost.MaxLength;
     public const int MinPort = 1;
     public const int MaxPort = 65535;
 
@@ -62,8 +84,9 @@ internal sealed class DatabaseCluster
 
     /// <summary>Registers a cluster as accepting tenants.</summary>
     /// <exception cref="ArgumentException">
-    /// An identifier is unassigned, <paramref name="host"/> or <paramref name="maintenanceDatabase"/>
-    /// is malformed, or a secret reference is unassigned.
+    /// An identifier is unassigned, <paramref name="host"/> is not what <see cref="CanonicalHost"/>
+    /// accepts, <paramref name="maintenanceDatabase"/> is malformed, or a secret reference is
+    /// unassigned.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">
     /// <paramref name="port"/> is not a TCP port or <paramref name="maxTenants"/> is not positive.
@@ -90,11 +113,13 @@ internal sealed class DatabaseCluster
         RequireSpecified(migratorSecretRef.IsSpecified, nameof(migratorSecretRef), "migrator secret reference");
         RequireSpecified(appSecretRef.IsSpecified, nameof(appSecretRef), "app secret reference");
 
-        if (!IsWellFormedHost(host))
+        if (!CanonicalHost.IsWellFormed(host))
         {
             throw new ArgumentException(
-                $"'{host}' is not a host name or address: expected 1 to {MaxHostLength} characters " +
-                "with no whitespace, no port suffix and no scheme.",
+                $"'{host}' is not a host the registry accepts: a host name in canonical form - labels of lower-case " +
+                $"ASCII letters, digits and inner hyphens, 1 to {CanonicalHost.MaxLabelLength} characters each, joined by " +
+                $"single dots, {CanonicalHost.MaxLength} characters at most - or an IPv4 literal; one host, not a list, " +
+                "not a socket directory, not a scheme, port or path.",
                 nameof(host));
         }
 
@@ -131,24 +156,6 @@ internal sealed class DatabaseCluster
         }
 
         State = DatabaseClusterState.Closed;
-    }
-
-    private static bool IsWellFormedHost(string host)
-    {
-        if (host.Length is 0 or > MaxHostLength)
-        {
-            return false;
-        }
-
-        foreach (char character in host)
-        {
-            if (char.IsWhiteSpace(character) || char.IsControl(character) || character is '/' or ':' or '=' or ';')
-            {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     private static void RequireSpecified(bool isSpecified, string parameterName, string what)

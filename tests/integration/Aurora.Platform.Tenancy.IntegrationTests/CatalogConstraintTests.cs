@@ -256,6 +256,78 @@ public sealed class CatalogConstraintTests
         refused.ConstraintName.ShouldBe("fk_tenant_cluster_in_region");
     }
 
+    [Fact]
+    public async Task Two_cluster_rows_cannot_share_a_host_and_port()
+    {
+        // The third shape of the tenant-takeover finding (ADR-0034 §1 variant 3), at the row that
+        // admitted it: ux_tenant_cluster_id_database_name is keyed on cluster_id, a physical
+        // database is (host, port, database_name), and a second cluster row on one endpoint carried
+        // a second tenant to one database. The entity cannot say "the same endpoint as that row", so
+        // the only way to write this is SQL, as the owner. The property this index serves is
+        // asserted in CatalogRoutingUniquenessTests; this is the mechanism, shown to bite.
+        DatabaseCluster cluster = Unique.Cluster();
+        await SaveAsync(cluster);
+
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
+            "SELECT @id, c.region, c.host, c.port, c.maintenance_database, c.admin_secret_ref, c.migrator_secret_ref, c.app_secret_ref, c.max_tenants, c.state " +
+            "FROM catalog.database_cluster c WHERE c.id = @existing",
+            ("id", Unique.ClusterId().Value),
+            ("existing", cluster.Id.Value)));
+
+        refused.SqlState.ShouldBe(UniqueViolation);
+        refused.ConstraintName.ShouldBe("ux_database_cluster_host_port");
+    }
+
+    [Fact]
+    public async Task The_endpoint_is_the_pair_so_one_host_may_carry_a_second_cluster_on_another_port()
+    {
+        // Two PostgreSQL instances on one machine are two clusters, and an index on host alone
+        // would refuse the second. ADR-0034 §3.1 draws the axis at (host, port); this is the
+        // shape that tells an index on the pair from an index on the host.
+        DatabaseCluster cluster = Unique.Cluster();
+        await SaveAsync(cluster);
+
+        await ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
+            "SELECT @id, c.region, c.host, c.port + 1, c.maintenance_database, c.admin_secret_ref, c.migrator_secret_ref, c.app_secret_ref, c.max_tenants, c.state " +
+            "FROM catalog.database_cluster c WHERE c.id = @existing",
+            ("id", Unique.ClusterId().Value),
+            ("existing", cluster.Id.Value));
+    }
+
+    [Fact]
+    public async Task A_cluster_host_in_any_spelling_but_lower_case_is_refused()
+    {
+        // A host name is case-insensitive, so two spellings of one host would be two cluster rows
+        // on one endpoint that ux_database_cluster_host_port cannot tell apart (ADR-0034 §3.2;
+        // PR #18 M-1/M-2). The entity refuses the spelling; this is the database refusing it too.
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
+            "VALUES (@id, 'nz', 'PG.Internal', 5432, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')",
+            ("id", Unique.ClusterId().Value)));
+
+        refused.SqlState.ShouldBe(CheckViolation);
+        refused.ConstraintName.ShouldBe("ck_database_cluster_host_lower_case");
+    }
+
+    [Fact]
+    public async Task A_cluster_host_that_is_not_one_host_name_is_refused()
+    {
+        // The fifth takeover shape (PR #18, second review): a multi-host list is accepted by
+        // Npgsql, which opens whichever host answers, so pg-1.internal,pg-2.internal reaches
+        // pg-1.internal's server under a string the index took for another endpoint. The check is
+        // CanonicalHost's grammar, so it binds raw SQL as it binds the entity; a socket directory
+        // and an IPv6 literal are outside the grammar the same way (CatalogHostGrammarTests).
+        PostgresException refused = await ShouldBeRefusedAsync(() => ExecuteAsOwnerAsync(
+            "INSERT INTO catalog.database_cluster (id, region, host, port, maintenance_database, admin_secret_ref, migrator_secret_ref, app_secret_ref, max_tenants, state) " +
+            "VALUES (@id, 'nz', 'pg-1.internal,pg-2.internal', 5432, 'postgres', 'ref:a', 'ref:m', 'ref:p', 10, 'Accepting')",
+            ("id", Unique.ClusterId().Value)));
+
+        refused.SqlState.ShouldBe(CheckViolation);
+        refused.ConstraintName.ShouldBe("ck_database_cluster_host_well_formed");
+    }
+
     /// <summary>The cluster and the tenant, if any, as the owner: the request path reads both and creates neither.</summary>
     private Task SaveAsync(DatabaseCluster cluster, Tenant? tenant = null) =>
         _catalog.SeedAsync(owner =>

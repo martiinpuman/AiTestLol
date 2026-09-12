@@ -7,7 +7,6 @@ using Aurora.SharedKernel;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Hybrid;
 using Microsoft.Extensions.DependencyInjection;
-using Npgsql;
 using Shouldly;
 using Xunit;
 
@@ -15,9 +14,7 @@ namespace Aurora.Platform.Tenancy.IntegrationTests.Routing;
 
 /// <summary>
 /// The non-negotiable proof of B-06.1: the routing entry is served from the cache, and a tenant
-/// state change makes the next resolve read the catalog again. Plus an inertness guard over the
-/// one shape the catalog does not yet refuse (PR #14 H-1): green while the hole is open, red the day
-/// it closes, to be deleted then rather than repaired.
+/// state change makes the next resolve read the catalog again.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -37,11 +34,20 @@ namespace Aurora.Platform.Tenancy.IntegrationTests.Routing;
 /// invalidator's removal and the third count stays at one; that is the failure this test exists
 /// to produce, and it was produced before this file was committed.
 /// </para>
+/// <para>
+/// <b>One cluster row for the container, not one per bed.</b> Every bed places its tenants on the
+/// row the fixture keeps for this container's endpoint
+/// (<see cref="CatalogDatabaseFixture.ThisServerAsClusterAsync"/>). Until B-20 each bed seeded a
+/// cluster row of its own for that endpoint, and this file carried an inertness guard asserting
+/// that the catalog still admitted a second such row — PR #14 H-1, ADR-0034 §1 variant 3. The
+/// catalog refuses it now (<c>ux_database_cluster_host_port</c>); the guard was deleted rather than
+/// repaired, as its own message directed, and the property it stood in for — no two non-deleted
+/// tenant rows resolve to one physical database, computed by this resolver over real rows — is
+/// <c>CatalogRoutingUniquenessTests</c>.
+/// </para>
 /// </remarks>
 public sealed partial class TenantConnectionResolverTests
 {
-    private const string UniqueViolation = "23505";
-
     [Fact]
     public async Task Suspending_a_tenant_invalidates_its_routing_entry_so_the_next_resolve_reads_the_catalog_again()
     {
@@ -164,122 +170,20 @@ public sealed partial class TenantConnectionResolverTests
         (await bed.CachedRowAsync(suspended.Id)).State.ShouldBe(TenantState.Suspended);
     }
 
-    [Fact]
-    public async Task Two_cluster_rows_on_one_server_still_route_two_tenants_to_one_physical_database()
-    {
-        // INERTNESS GUARD: green while the hole is open, red the day it closes - and then DELETED,
-        // not repaired. The pattern of B-04's rule over the not-yet-existing kernel types and
-        // B-19's PartitionPrivileges guard: a test that asserts a gap exists, so that whoever closes
-        // the gap is stopped here and made to write the real assertion in its place.
-        //
-        // The hole (PR #14 H-1): ux_tenant_cluster_id_database_name is keyed on cluster_id; the
-        // identity of a physical database is (host, port, database_name); and nothing makes
-        // database_cluster (host, port) unique. Two cluster rows for one server - a replica row, a
-        // re-registration after a failover, a Draining row kept beside its replacement - one tenant
-        // each, the attacker's database_name copied from the victim's, and both resolve to one
-        // physical database. The single-cluster shape is refused correctly by the B-05 index; this
-        // one walks around it. Reachability: aurora_app cannot write either row; this needs the owner.
-        //
-        // The fix is ADR-0034 §3.1's index, ux_database_cluster_host_port - a CatalogDbContext
-        // migration this branch must not add while the catalog migration chain is one branch at a
-        // time. When it lands, the catalog refuses one of the two inserts below with 23505, this
-        // test fails, and its message says what to do: delete it and write the real property -
-        // no two non-deleted tenant rows produce the same resolved connection string, computed by
-        // the real resolver over real rows (ADR-0034 §3.3) - in its place.
-        //
-        // It will not be the only red that day (PR #14 n-4): RoutingTestBed registers a cluster row
-        // per bed, every bed on this one container's endpoint, so the index reds the five other
-        // tests in this file as well - ADR-0034 §3.2 forbids exactly that fixture shape. Before the
-        // real property can be written, the bed needs one shared cluster row across beds, or a
-        // second container. One planned change, not six surprises.
-        await using RoutingTestBed bed = await RoutingTestBed.WithActiveTenantAsync(_catalog);
-        Tenant victim = bed.Tenant;
-        DatabaseCluster secondRow = bed.AnotherClusterRowForTheSameServer();
-        Tenant attacker = RoutingTestBed.ActiveTenantOn(secondRow);
-
-        string? refusedBy = null;
-        try
-        {
-            await bed.SeedAsync(owner =>
-            {
-                owner.DatabaseClusters.Add(secondRow);
-                owner.Tenants.Add(attacker);
-            });
-            await CopyDatabaseNameAsync(from: victim, to: attacker);
-        }
-        catch (Exception refusal) when (UniqueViolationIn(refusal) is { } constraint)
-        {
-            refusedBy = constraint;
-        }
-
-        refusedBy.ShouldBeNull(
-            $"the catalog now refuses a second cluster row on one server ({UniqueViolation} on {refusedBy}): the PR #14 H-1 "
-            + "hole is closed and this inertness guard is obsolete. Delete it and write the real property in its place - "
-            + "no two non-deleted tenant rows produce the same resolved connection string, computed by the real resolver "
-            + "over real rows (ADR-0034).");
-
-        string victimEndpoint = PhysicalEndpointOf(await bed.ResolveAsync(victim.Id));
-        string attackerEndpoint = PhysicalEndpointOf(await bed.ResolveAsync(attacker.Id));
-
-        _output.WriteLine($"victim   -> {victimEndpoint}");
-        _output.WriteLine($"attacker -> {attackerEndpoint}");
-        _output.WriteLine("the PR #14 H-1 hole is still open: two tenants resolve to one physical database (inertness guard, green)");
-        attackerEndpoint.ShouldBe(
-            victimEndpoint,
-            "the two tenants no longer resolve to one physical database, so something closed the PR #14 H-1 hole "
-            + "without a 23505 at either insert: this inertness guard is obsolete. Delete it and write the real property "
-            + "in its place (ADR-0034).");
-    }
-
-    /// <summary>The constraint a unique violation names, whether PostgreSQL threw directly or through EF's save.</summary>
-    private static string? UniqueViolationIn(Exception exception) =>
-        (exception as PostgresException ?? exception.InnerException as PostgresException) is { SqlState: UniqueViolation } violation
-            ? violation.ConstraintName
-            : null;
-
-    /// <summary>What the server would be asked to open: host, port and database, read back by Npgsql's own parser.</summary>
-    private static string PhysicalEndpointOf(TenantConnection connection)
-    {
-        var parsed = new NpgsqlConnectionStringBuilder(connection.ConnectionString.Reveal());
-        return $"{parsed.Host}:{parsed.Port}/{parsed.Database}";
-    }
-
-    /// <summary>As the owner, the one principal that may rewrite where a tenant resolves: the attacker's row takes the victim's database name.</summary>
-    private async Task CopyDatabaseNameAsync(Tenant from, Tenant to)
-    {
-        await using NpgsqlConnection owner = await _catalog.OpenMigratorConnectionAsync();
-        await using var command = new NpgsqlCommand("UPDATE catalog.tenant SET database_name = @name WHERE id = @id", owner);
-        command.Parameters.AddWithValue("name", from.DatabaseName!);
-        command.Parameters.AddWithValue("id", to.Id.Value);
-        (await command.ExecuteNonQueryAsync()).ShouldBe(1);
-    }
-
     /// <summary>
     /// Two composition roots over one cache: the request path as <c>aurora_app</c> with a statement
     /// counter on its catalog context, and the operator console as the owner. Both are built with
     /// the production DI extensions; nothing about the resolver, the cache or the invalidator is
-    /// hand-wired. Seeds one cluster row for the test container and two active tenants on it.
+    /// hand-wired. Seeds two active tenants on the fixture's cluster row for the test container.
     /// </summary>
     private sealed class RoutingTestBed : IAsyncDisposable
     {
-        private readonly CatalogDatabaseFixture _catalog;
-        private readonly NpgsqlConnectionStringBuilder _server;
-        private readonly string _secretName;
         private readonly ServiceProvider _cacheOwner;
         private readonly ServiceProvider _requestPath;
         private readonly ServiceProvider _operatorConsole;
 
-        private RoutingTestBed(
-            CatalogDatabaseFixture catalog,
-            NpgsqlConnectionStringBuilder server,
-            string secretName,
-            DatabaseCluster cluster,
-            Tenant tenant,
-            Tenant otherTenant)
+        private RoutingTestBed(CatalogDatabaseFixture catalog, DatabaseCluster cluster, Tenant tenant, Tenant otherTenant)
         {
-            _catalog = catalog;
-            _server = server;
-            _secretName = secretName;
             Cluster = cluster;
             Tenant = tenant;
             OtherTenant = otherTenant;
@@ -312,21 +216,12 @@ public sealed partial class TenantConnectionResolverTests
 
         public static async Task<RoutingTestBed> WithActiveTenantAsync(CatalogDatabaseFixture catalog)
         {
-            var server = new NpgsqlConnectionStringBuilder(catalog.AppConnectionString);
-            string secretName = "AURORA_TEST_APP_SECRET_" + Guid.NewGuid().ToString("N");
-            Environment.SetEnvironmentVariable(secretName, server.Password);
-
-            DatabaseCluster cluster = ClusterRowFor(server, secretName);
+            DatabaseCluster cluster = await catalog.ThisServerAsClusterAsync();
             Tenant tenant = ActiveTenantOn(cluster);
             Tenant otherTenant = ActiveTenantOn(cluster);
-            await catalog.SeedAsync(owner =>
-            {
-                owner.DatabaseClusters.Add(cluster);
-                owner.Tenants.Add(tenant);
-                owner.Tenants.Add(otherTenant);
-            });
+            await catalog.SeedAsync(owner => owner.Tenants.AddRange(tenant, otherTenant));
 
-            return new RoutingTestBed(catalog, server, secretName, cluster, tenant, otherTenant);
+            return new RoutingTestBed(catalog, cluster, tenant, otherTenant);
         }
 
         /// <summary>An active tenant reserved on <paramref name="cluster"/>, not yet seeded.</summary>
@@ -339,11 +234,6 @@ public sealed partial class TenantConnectionResolverTests
 
         public static Task<Tenant> LoadTrackedAsync(CatalogDbContext catalog, TenantId tenantId) =>
             catalog.Tenants.AsTracking().SingleAsync(candidate => candidate.Id == tenantId);
-
-        /// <summary>A second <c>catalog.database_cluster</c> row for the same server: a different id, the same host and port.</summary>
-        public DatabaseCluster AnotherClusterRowForTheSameServer() => ClusterRowFor(_server, _secretName);
-
-        public Task SeedAsync(Action<CatalogDbContext> seed) => _catalog.SeedAsync(seed);
 
         /// <summary>One request: a fresh scope, the resolver from the container, one resolve.</summary>
         public Task<TenantConnection> ResolveAsync() => ResolveAsync(Tenant.Id);
@@ -388,22 +278,9 @@ public sealed partial class TenantConnectionResolverTests
 
         public async ValueTask DisposeAsync()
         {
-            Environment.SetEnvironmentVariable(_secretName, null);
             await _requestPath.DisposeAsync();
             await _operatorConsole.DisposeAsync();
             await _cacheOwner.DisposeAsync();
         }
-
-        private static DatabaseCluster ClusterRowFor(NpgsqlConnectionStringBuilder server, string secretName) =>
-            DatabaseCluster.Register(
-                Unique.ClusterId(),
-                Region.Parse("nz", null),
-                server.Host!,
-                server.Port,
-                CatalogDatabaseFixture.MaintenanceDatabaseName,
-                SecretReference.Of("vault://kv/aurora/test/admin"),
-                SecretReference.Of("vault://kv/aurora/test/migrator"),
-                SecretReference.Of("env:" + secretName),
-                1_000);
     }
 }

@@ -3,6 +3,7 @@ using System.Linq;
 using Aurora.Platform.Tenancy.Catalog;
 using Aurora.Platform.Tenancy.Tests;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Shouldly;
 using Xunit;
@@ -50,6 +51,26 @@ public sealed class CatalogModelTests
         // added without `dotnet ef migrations add` fails here, in the unit stage, not in production.
         context.Database.HasPendingModelChanges().ShouldBeFalse(
             "the catalog model differs from Migrations/CatalogDbContextModelSnapshot.cs; scaffold a migration");
+    }
+
+    [Fact]
+    public void The_cluster_endpoint_is_unique_in_the_model()
+    {
+        using CatalogDbContext context = OfflineCatalog.Open();
+
+        // A tripwire on the configuration, not the acceptance criterion: an index in the model
+        // proves nothing about what the catalog refuses, which CatalogRoutingUniquenessTests asserts
+        // against PostgreSQL (ADR-0034 §3.3). What this catches with Docker stopped is the index
+        // being taken out of DatabaseClusterConfiguration with a migration scaffolded to match, which
+        // the snapshot check above would let through.
+        // The design-time model: EF's read-optimised runtime model drops check constraints.
+        IEntityType cluster = context.GetService<IDesignTimeModel>().Model.FindEntityType(typeof(DatabaseCluster))!;
+        IIndex endpoint = cluster.GetIndexes().Single(index => index.GetDatabaseName() == "ux_database_cluster_host_port");
+
+        endpoint.IsUnique.ShouldBeTrue();
+        endpoint.Properties.Select(property => property.GetColumnName()).ShouldBe(["host", "port"]);
+        cluster.GetCheckConstraints().Single(check => check.Name == "ck_database_cluster_host_lower_case").Sql.ShouldBe("host = lower(host)");
+        cluster.GetCheckConstraints().Single(check => check.Name == "ck_database_cluster_host_well_formed").Sql.ShouldBe(CanonicalHost.CheckConstraintSql);
     }
 
     [Fact]

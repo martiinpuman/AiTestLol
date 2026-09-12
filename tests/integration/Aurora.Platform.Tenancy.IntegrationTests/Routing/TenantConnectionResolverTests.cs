@@ -1,4 +1,3 @@
-using System;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using Aurora.Platform.Tenancy.Catalog;
@@ -111,23 +110,11 @@ public sealed partial class TenantConnectionResolverTests
     [Fact]
     public async Task A_resolved_connection_string_opens_the_tenants_database_as_aurora_app_under_the_tenants_application_name()
     {
-        // The whole chain, end to end: a cluster row pointing at this container, a tenant on it, the
-        // app secret reachable through the reference the row holds, and the string the resolver
-        // composes actually opening the tenant's database. Nothing is asserted from the composer's
-        // constants; the server reports what it was connected to and as whom.
-        var endpoint = new NpgsqlConnectionStringBuilder(_catalog.AppConnectionString);
-        string secretName = "AURORA_TEST_APP_SECRET_" + Guid.NewGuid().ToString("N");
-        Environment.SetEnvironmentVariable(secretName, endpoint.Password);
-        DatabaseCluster cluster = DatabaseCluster.Register(
-            Unique.ClusterId(),
-            Region.Parse("nz", null),
-            endpoint.Host!,
-            endpoint.Port,
-            CatalogDatabaseFixture.MaintenanceDatabaseName,
-            SecretReference.Of("vault://kv/aurora/test/admin"),
-            SecretReference.Of("vault://kv/aurora/test/migrator"),
-            SecretReference.Of("env:" + secretName),
-            1_000);
+        // The whole chain, end to end: the cluster row the fixture keeps for this container, a
+        // tenant on it, the app secret reachable through the reference the row holds, and the
+        // string the resolver composes actually opening the tenant's database. Nothing is asserted
+        // from the composer's constants; the server reports what it was connected to and as whom.
+        DatabaseCluster cluster = await _catalog.ThisServerAsClusterAsync();
         Tenant tenant = Unique.Tenant(cluster);
         tenant.Activate(1, Unique.Now);
         string databaseName = tenant.DatabaseName!;
@@ -135,11 +122,7 @@ public sealed partial class TenantConnectionResolverTests
         await CreateHardenedTenantDatabaseAsync(databaseName);
         try
         {
-            await _catalog.SeedAsync(owner =>
-            {
-                owner.DatabaseClusters.Add(cluster);
-                owner.Tenants.Add(tenant);
-            });
+            await _catalog.SeedAsync(owner => owner.Tenants.Add(tenant));
 
             await using ServiceProvider provider = BuildRequestPath();
             await using AsyncServiceScope scope = provider.CreateAsyncScope();
@@ -171,7 +154,6 @@ public sealed partial class TenantConnectionResolverTests
         }
         finally
         {
-            Environment.SetEnvironmentVariable(secretName, null);
             await DropTenantDatabaseAsync(databaseName);
         }
     }

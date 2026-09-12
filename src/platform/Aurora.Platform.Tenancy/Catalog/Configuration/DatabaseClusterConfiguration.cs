@@ -33,6 +33,20 @@ internal sealed class DatabaseClusterConfiguration : IEntityTypeConfiguration<Da
                 $"admin_secret_ref !~ '{CredentialShapedPattern}' " +
                 $"AND migrator_secret_ref !~ '{CredentialShapedPattern}' " +
                 $"AND app_secret_ref !~ '{CredentialShapedPattern}'");
+
+            // A host name is case-insensitive, so two spellings of one host would be two rows on one
+            // endpoint that ux_database_cluster_host_port below could not tell apart (ADR-0036 3;
+            // ADR-0034 3.4). The same rule tenant_host keeps, for the same reason.
+            table.HasCheckConstraint("ck_database_cluster_host_lower_case", "host = lower(host)");
+
+            // And the host is one host: CanonicalHost's grammar, evaluated here so that every
+            // writer meets it, raw SQL included - the entity's copy binds only callers of Register
+            // (ADR-0036 4.2 chose the constraint as the mechanism). A multi-host list walked past
+            // the index, the lower-case check and the endpoint comparison as a fifth variant of the
+            // takeover shape (PR #18, second review); a socket directory would make the lower-case
+            // check wrong (ADR-0036 6 names both). Alphabetically after the lower-case check, so a
+            // host that breaks both is reported by the constraint ADR-0036 3 names.
+            table.HasCheckConstraint("ck_database_cluster_host_well_formed", CanonicalHost.CheckConstraintSql);
         });
 
         builder.HasKey(cluster => cluster.Id).HasName("pk_database_cluster");
@@ -57,5 +71,20 @@ internal sealed class DatabaseClusterConfiguration : IEntityTypeConfiguration<Da
 
         // Placement (ADR-0007 8 step 1) asks for accepting clusters in one region.
         builder.HasIndex(cluster => new { cluster.Region, cluster.State }).HasDatabaseName("ix_database_cluster_region_state");
+
+        // The routing-uniqueness axis is the physical endpoint (ADR-0034 3.1): with this index
+        // cluster_id -> (host, port) is injective, fk_tenant_cluster_in_region makes it total for
+        // every non-deleted tenant, and ux_tenant_cluster_id_database_name makes
+        // (cluster_id, database_name) unique - so (host, port, database_name), the triple the
+        // resolver composes into a connection string, is unique across catalog.tenant. It closes
+        // the third executed variant of the tenant-takeover finding: two cluster rows on one
+        // server, one tenant each, the attacker's database_name copied from the victim's. It does
+        // not cover two names for one server (a CNAME, a second DNS record, a failover alias, an
+        // IP literal beside a host name); that is TenantIdentityStamp's job (ADR-0034 4). A read
+        // replica or a pooler endpoint is not a row here (3.2); if either ever becomes one, this
+        // index is wrong as written and ADR-0034 9 is where to start.
+        builder.HasIndex(cluster => new { cluster.Host, cluster.Port })
+            .IsUnique()
+            .HasDatabaseName("ux_database_cluster_host_port");
     }
 }
