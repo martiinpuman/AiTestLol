@@ -1,20 +1,43 @@
 # Screen spec — Companies (list)
 
-Status: ready · Author: ui-designer · Date: 2026-09-11
-Backlog: `DESIGN-01` (this task); satisfies the **list** portion of the draft backlog item `DESIGN-001` ("Company — create form and list") — see "Out of scope" below for exactly what is not covered here.
+Status: ready · Author: ui-designer · Date: 2026-09-11 · **Amended 2026-09-12 by `DESIGN-001`**
+Backlog: `DESIGN-01` (original); the **list** half of `DESIGN-001`. The create half is `SPEC-002-company-create.md`, written 2026-09-12; the two together are the whole of `DESIGN-001`.
 Product spec: `../../product/specs/SPEC-002-company-create-and-list.md` (BR-1, BR-4, BR-8, AC-6, AC-7, AC-8, AC-9)
 Architecture: `../../decisions/ADR-0010-authorization-roles-and-permissions.md`
 Prototype: `../prototypes/companies-list.html` (open directly in a browser — no build step, no network fetch)
 Components referenced: App shell (`app-shell.md`, including its nav sub-navigation), Empty states (`components.md` §17, all four variants), Buttons (§1), Status/permission microcopy per §1's disabled-reason rule
 
+## Amendment — 2026-09-12 (`DESIGN-001`)
+
+`SPEC-002-company-create.md` now specifies the create dialog, and four things in this document
+changed as a direct consequence. Each is applied inline below; they are listed here so a reader
+does not have to diff.
+
+1. **`+ New company` opens the create dialog.** It previously raised a toast saying the form was
+   specified separately. It was; it now is.
+2. **The "no permission" state became the neutral "unavailable" state.** It no longer names a
+   permission, because the same state must also serve a tenant for which the resource does not
+   exist at all — otherwise the screen answers "does this exist here?" for a caller who is not
+   allowed to know. See the create spec, "Permission, and why this screen is not an existence
+   oracle". Keys `companies.noAccessHeading`/`Body` are replaced by
+   `companies.unavailableHeading`/`Body`.
+3. **The table gained a visually hidden `<caption>`** (`companies.tableCaption`, naming the tenant)
+   and `scope="col"` on its headers — the table previously had no accessible name (SC 1.3.1).
+4. **The footer count is computed from the rendered rows and formatted per locale**, not carried
+   as a literal in the markup — the same correction this document already records for the
+   many-rows footer, which the default state had not received.
+
+A skip link (SC 2.4.1) was also added to the prototype, and the scale note moved off `text-subtle`;
+both are recorded as design-system findings in the create spec rather than as list behaviour.
+
 ## Out of scope (read this first)
 
-This spec covers only `GET /api/v1/companies` — the list — matching exactly what this task's brief asked for ("Companies list — the resource behind `/api/v1/companies`, B-15.2"). It does **not** cover:
-- The create-company form or dialog (`POST /api/v1/companies`, B-15.1/B-15.3's own UI). Clicking "+ New company" in this prototype shows a toast explaining the form is specified separately, rather than opening a fake or partially-designed form.
+This spec covers `GET /api/v1/companies` — the list. It does **not** cover:
+- The create-company dialog — that is `SPEC-002-company-create.md`. This spec keeps only the list's
+  own side of it: where the trigger sits and when it is disabled.
 - A company detail/edit view — SPEC-002 itself defers editing to Milestone 2.
-- The full data-grid chrome (sorting, filter chips, saved views, column settings, bulk actions) — see "Why not the Data grid" below.
-
-If a create-form spec is picked up next, it is the natural continuation of the draft `DESIGN-001` backlog item, not a new one.
+- The full data-grid chrome (sorting, filter chips, saved views, column settings, bulk actions) — see
+  "Why not the Data grid" below, and `GRID-001`/`GRID-002`.
 
 ## Purpose
 
@@ -69,7 +92,14 @@ SPEC-002 names one permission explicitly (`organization.company.manage`, exact c
 Two distinct permission states follow from this:
 
 1. **Holds `.view` but not `.manage`.** Full list renders; "+ New company" is visible but disabled, with a reachable reason ("Requires the organization.company.manage permission") per the Buttons component's disabled-state rule (`components.md` §1) — never a silently missing button, which would look like a bug rather than a permission boundary.
-2. **Holds neither.** The entire list surface — including the page's own "+ New company" action — is withheld. Per `components.md` §17's "No permission" rule: state plainly, do not expose whether any Companies actually exist, and do not offer an action the viewer isn't authorized for.
+2. **Holds neither — or the resource is not served for this tenant at all.** One state, deliberately
+   identical for both causes: the entire list surface, including the page's own "+ New company"
+   action, is withheld, and the copy names **no permission** and **no count**. Per `components.md`
+   §17's "No permission" rule, plus the stronger rule the create spec adds: a message that names a
+   permission cannot also serve a tenant that has no such resource, and the difference between the
+   two messages is exactly what would turn this screen into an oracle for whether a Company exists.
+   Full rule and its acceptance criterion: `SPEC-002-company-create.md`, "Permission, and why this
+   screen is not an existence oracle".
 
 ## Locale and formatting (Principle 6)
 
@@ -81,6 +111,8 @@ Like the first-run landing screen, this tenant (Nordwind Group) has zero install
 |---|---|
 | en | 6/2/2026 |
 | sv-SE | 2026-06-02 |
+
+Both footer counts are computed from the rendered rows and pushed through the number formatter; neither is a literal in the markup.
 
 **The footer count, in the "many rows" demo state** (this is where the thousands-separator difference is actually visible — three real companies is too small a number to show it):
 
@@ -114,7 +146,8 @@ An earlier draft of this prototype embedded the raw number `1204` directly into 
 | Action | Key |
 |---|---|
 | Standard shell navigation | Per `app-shell.md` |
-| Reach "+ New company" (when enabled) | `Tab`, then `Enter`/`Space` |
+| Skip past the nav rail to the content | `Tab` to the first focusable element ("Skip to main content"), then `Enter` |
+| Reach "+ New company" (when enabled) | `Tab`, then `Enter`/`Space` — opens the create dialog (`SPEC-002-company-create.md` for its own focus order) |
 | Reach a disabled "+ New company" and discover why | `Tab` moves focus to it — it is `aria-disabled`, not natively `disabled`, specifically so it stays in the tab order; `aria-describedby` announces the reason on focus (see `components.md` §1's correction, found while building this screen) |
 | Retry after an error | `Tab` to Retry, `Enter`/`Space` |
 | Page through the "many rows" demo state | `Tab` to Prev/Next, `Enter`/`Space` |
@@ -123,7 +156,7 @@ This screen has no row-level interaction (no detail view exists yet per "Out of 
 
 ## Accessibility notes
 
-- The table uses real `<table>`/`<th>`/`<td>` markup (not styled `<div>`s), so screen readers announce column headers per cell in the normal way, with no extra ARIA needed for a two-column, non-interactive table.
+- The table uses real `<table>`/`<th scope="col">`/`<td>` markup (not styled `<div>`s), so screen readers announce column headers per cell in the normal way, with no extra ARIA needed for a two-column, non-interactive table. It carries a visually hidden `<caption>` naming the tenant, which is the table's accessible name (SC 1.3.1) and gives a screen-reader user the same "which books am I looking at" confirmation the switcher gives a sighted one.
 - The disabled "+ New company" button uses `aria-disabled="true"` plus `aria-describedby` pointing at the reason text, never the native `disabled` attribute — a control a user cannot yet use is still information a keyboard/screen-reader user needs to discover, and native `disabled` would remove it from the tab order entirely. This is a correction to `components.md` §1 itself (previously said "not focusable," which cannot coexist with "reason reachable on focus" for the same control) made while building this screen, not a one-off choice for this screen alone.
 - The permission-denied panel's heading and body are read as ordinary page content (no `role="alert"` — this is not a transient error interrupting an in-progress action, it is the entire page's steady-state content for this user, and should be navigable like any other heading rather than announced urgently).
 - The nav rail's expanded sub-item ("Organization · Companies") is reachable and marked current via the same `.active` treatment as its parent, so a screen reader user gets both levels of "where am I" that a sighted user gets from the breadcrumb and the highlighted nav rail together.

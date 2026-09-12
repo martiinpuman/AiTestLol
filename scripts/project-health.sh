@@ -148,8 +148,15 @@ import re, sys
 import subprocess
 
 # A row with a task branch ahead of the integration branch is started, not waiting.
+# A row is started if its branch is ahead of the integration branch, OR if a worktree
+# holds that branch at all. The commits-ahead signal alone reported B-09 dispatchable
+# while an agent was actively building it: the agent had a locked worktree on
+# task/B-09 but had not committed yet, so "ahead" was 0. Dispatching a second agent
+# onto that row is exactly the collision this check exists to prevent, and the
+# earlier signal — the worktree — was sitting in `git worktree list` the whole time.
 INTEGRATION = 'claude/multi-tenant-saas-erp-pv2nap'
-in_flight = set()
+in_flight, started_by = set(), {}
+
 for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', 'refs/heads/task'],
                           capture_output=True, text=True).stdout.split():
     row = ref.split('/', 1)[1] if '/' in ref else ref
@@ -157,6 +164,26 @@ for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', '
                            capture_output=True, text=True).stdout.strip()
     if ahead.isdigit() and int(ahead) > 0:
         in_flight.add(row)
+        started_by[row] = f'{ahead} commit(s) ahead'
+
+def _merged(ref):
+    # A branch already contained in the integration branch is finished, whatever
+    # still points at it. Without this the worktree arm below reported a MERGED
+    # branch as in flight -- task/B-19 merged, its worktree outlived it, and
+    # B-18.1 stayed held on a branch that no longer existed to conflict with.
+    # That is the eighth form on CLAUDE.md's list, in this file: the worktree arm
+    # was added to catch a row with no commits, and nothing re-checked what it did
+    # to a row whose commits had all landed.
+    return subprocess.run(['git', 'merge-base', '--is-ancestor', ref, INTEGRATION],
+                          capture_output=True).returncode == 0
+
+for line in subprocess.run(['git', 'worktree', 'list', '--porcelain'],
+                           capture_output=True, text=True).stdout.split('\n'):
+    if line.startswith('branch refs/heads/task/'):
+        row = line[len('branch refs/heads/task/'):].strip()
+        if row and row not in in_flight and not _merged(f'refs/heads/task/{row}'):
+            in_flight.add(row)
+            started_by[row] = 'a worktree holds it, no commits yet'
 
 # The concurrency constraint is prose. These are the only phrases read; anything
 # worded differently is not seen, which is why the list is printed below.
@@ -177,10 +204,22 @@ for line in open('docs/BACKLOG.md'):
 def unmet(deps):
     return [d for d in re.findall(r'B-[0-9.]+[a-z]?', deps) if rows.get(d, ('', ''))[1] != 'done']
 
+# An explicit marker holds a row whatever else its notes say. The phrase list below
+# can only hold a row that NAMES an in-flight B- row, so a hold waiting on an
+# architecture decision, an ADR or anything outside the B- namespace was invisible to
+# it -- B-07.1 is held on task/ARCH-SCOPE-RUNTIME and would have read dispatchable the
+# moment its three dependencies merged. This marker needs no row id and no phrasing.
+HOLD_MARKER = 'held - do not dispatch'   # compared against _norm(), which lowercases
+
+def _norm(text):
+    return text.replace('\u2014', '-').replace('\u2013', '-').replace('**', '').lower()
+
 def held_by(row):
     # Only the sentences carrying a hold phrase are read for row ids: the notes cell
     # as a whole names every neighbour, so scanning all of it would hold every row.
     text = notes.get(row, '')
+    if HOLD_MARKER in _norm(text):
+        return ['an explicit HELD marker in its own row']
     blockers = set()
     for sentence in re.split(r'(?<=[.;])\s+', text):
         low = sentence.lower()
@@ -197,10 +236,13 @@ dispatchable = sorted(r for r in ready
 broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet(d)]
 
 print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row is started, held or waiting on a predecessor)'}")
-if started:
-    print(f"  already started: {', '.join(started)}")
+for r in started:
+    print(f"  already started: {r} — {started_by.get(r, 'in flight')}")
 for r, b in held:
-    print(f"  {r} held — its row forbids running concurrently with {', '.join(b)}, in flight")
+    if b == ['an explicit HELD marker in its own row']:
+        print(f"  {r} held — its row carries an explicit HELD marker")
+    else:
+        print(f"  {r} held — its row forbids running concurrently with {', '.join(b)}, in flight")
 for r, u in broken:
     print(f"  {r} is done but depends on un-done {', '.join(sorted(set(u)))}")
 
@@ -208,7 +250,7 @@ scanned = sum(1 for r in rows if notes.get(r))
 unread = sum(1 for l in open('docs/BACKLOG.md')
              if re.match(r'\|\s*B-', l) and not re.match(r'\|\s*B-[0-9.]+[a-z]?\s*\|', l))
 print(f"  {len(rows)} row(s) read" + (f", {unread} row id(s) the parser could not read" if unread else ""))
-print(f"  {scanned} notes cell(s) scanned for a concurrency hold, matching only: {'; '.join(HOLD_PHRASES)}")
+print(f"  {scanned} notes cell(s) scanned for a hold: the marker '{HOLD_MARKER}', or a sentence matching {'; '.join(HOLD_PHRASES)}")
 print(f"  a hold worded any other way is not seen here — FOLLOWUP-042 asks for a machine-readable field")
 sys.exit(1 if broken else 0)
 READY
