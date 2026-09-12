@@ -20,6 +20,18 @@ internal interface IScopeSource
 }
 
 /// <summary>
+/// A base declared outside the scanned set, carrying the explicit implementation its derived types
+/// are reached through and leaving the scope itself to a hook only a derived type supplies (fifth
+/// review, second shape).
+/// </summary>
+internal abstract class ScopeSourceBase : IScopeSource
+{
+    TenantScope? IScopeSource.Provide() => Hook();
+
+    protected abstract TenantScope? Hook();
+}
+
+/// <summary>
 /// Every shape by which a public member or a public type can hand a tenant proof to code outside
 /// the friend set, plus the inbound shape and members that mention no proof at all. Link 3's two
 /// scans are proven against this type: each door must be reported, the negatives must not be.
@@ -37,6 +49,10 @@ internal interface IScopeSource
 /// interface declared elsewhere, private in IL and named by nothing the type inherits, which only
 /// the interface map reaches. <see cref="OpenedHost"/> is that review's nit: a derivable type whose
 /// protected doors are all inherited, which the verdict must still list.
+/// <see cref="IDimScopeSource"/> and <see cref="InheritedExplicitSource"/> are the fifth review's:
+/// an explicit implementation carried by an interface as a default interface member, which no
+/// interface map describes, and one inherited from a base outside the scanned set, which no type
+/// in the set would otherwise examine.
 /// </para>
 /// <para>
 /// The rest are the shapes that scan already caught (kept as controls, so a rewrite cannot lose
@@ -135,6 +151,27 @@ internal static class ProofDoorProbes
     public sealed class ExplicitScopeSource : IScopeSource
     {
         TenantScope? IScopeSource.Provide() => null;
+    }
+
+    /// <summary>
+    /// Fifth-review probe, first shape: a public interface whose only door is a default interface
+    /// member explicitly implementing a proof-returning member of an interface outside the scanned
+    /// set. Private in IL, no interface map to walk, no protected member, nothing proof-bearing
+    /// among its base interfaces: only the declared-with-a-body walk reaches it.
+    /// </summary>
+    public interface IDimScopeSource : IScopeSource
+    {
+        TenantScope? IScopeSource.Provide() => null;
+    }
+
+    /// <summary>
+    /// Fifth-review probe, second shape: sealed and declaring no door of its own - the explicit
+    /// implementation it is reached through is <see cref="ScopeSourceBase"/>'s, and that base is
+    /// outside the scanned set, so nothing examines it there.
+    /// </summary>
+    public sealed class InheritedExplicitSource : ScopeSourceBase
+    {
+        protected override TenantScope? Hook() => null;
     }
 
     /// <summary>

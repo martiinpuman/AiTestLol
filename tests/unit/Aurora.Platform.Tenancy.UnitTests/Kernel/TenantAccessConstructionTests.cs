@@ -54,10 +54,15 @@ namespace Aurora.Platform.Tenancy.UnitTests.Kernel;
 /// refuses, not one that passes for real.</description></item>
 /// </list>
 /// <para>
-/// <b>What this file does not claim:</b> that reflection is blocked. Any code with reflection
-/// permission can invoke an internal constructor; .NET has no mechanism against that and this
-/// project does not pretend to one. The guarantee is a compile-time one (ADR-0007 §12.3), and
-/// these tests examine the compiled metadata the compiler enforces.
+/// <b>What this file does not claim:</b> that the internal constructor cannot be reached. Neither
+/// reflection nor <c>[UnsafeAccessor]</c> is blocked, and neither is claimed to be: accessibility
+/// is a compile-time construct that any code in the same process can step around, and the
+/// <c>[UnsafeAccessor]</c> form needs no permission, no API call and no cast, and runs the
+/// constructor - so link 5 does not apply to what it mints. What <c>internal</c> restricts is
+/// origination, not naming: <c>TenantScope</c> is public and any assembly may name, hold and use
+/// one. So the set of assemblies permitted to load beside this one is the real boundary
+/// (ADR-0007 §12.3, ADR-0040 §2.2, <c>ARCH-Q-SCOPE-BOUNDARY</c>); these tests examine the compiled
+/// metadata, which is the honest surface and not the whole of it.
 /// </para>
 /// </remarks>
 public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
@@ -283,6 +288,11 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
         scan.VisitedTypes.ShouldContain(
             "Aurora.Platform.Tenancy.CatalogServiceCollectionExtensions",
             "the DI extension Aurora.Platform.Tenancy exports; without it the scan read one assembly, not two");
+        ProofMentionScan.Over([typeof(ProofDoorProbes.ExplicitScopeSource)]).ExplicitImplementations.ShouldBe(
+            1,
+            "the shipping assemblies declare no explicit implementation of their own today - the ones counted "
+            + "above are System.Enum's, reached through the two public enums - so that count cannot show that "
+            + "a declared one would be examined: the same walk, over the same function, must reach one where one exists");
 
         scan.Mentions
             .Where(mention => !allowed.Contains(mention, StringComparer.Ordinal))
@@ -360,6 +370,8 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
                 typeof(ProofDoorProbes.DeeperCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeSource).FullName!,
+                typeof(ProofDoorProbes.IDimScopeSource).FullName!,
+                typeof(ProofDoorProbes.InheritedExplicitSource).FullName!,
                 typeof(ProofDoorProbes.LockedHost).FullName!,
                 nested,
                 typeof(ProofDoorProbes.OpenScopeCollection).FullName!,
@@ -378,9 +390,11 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
             + "explicit collection's ToString; the hosts' protected members are not public and are the "
             + "derivability check's to see");
         scan.ExplicitImplementations.ShouldBe(
-            4,
-            "the explicit collection's Count getter and two GetEnumerator methods, and the explicit "
-            + "source's Provide - private in IL, reached through the interface map");
+            6,
+            "the explicit collection's Count getter and two GetEnumerator methods, the explicit source's "
+            + "Provide, the default interface member's Provide and the inherited source's Provide - private "
+            + "in IL, reached through the interface map, the interface's own declared bodies, and the base "
+            + "outside the set");
         scan.Mentions.Order(StringComparer.Ordinal).ShouldBe(
             new[]
             {
@@ -389,6 +403,8 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
                 typeof(ProofDoorProbes.ExplicitScopeCollection).FullName
                     + ".System.Collections.Generic.IEnumerable<Aurora.Platform.Tenancy.Contracts.TenantScope>.GetEnumerator()",
                 typeof(ProofDoorProbes.ExplicitScopeSource).FullName + "." + typeof(IScopeSource).FullName + ".Provide()",
+                typeof(ProofDoorProbes.IDimScopeSource).FullName + "." + typeof(IScopeSource).FullName + ".Provide()",
+                typeof(ProofDoorProbes.InheritedExplicitSource).FullName + "." + typeof(IScopeSource).FullName + ".Provide()",
                 nested + ".Held",
                 nested + ".get_Held()",
                 Inherits(typeof(ProofDoorProbes.OpenScopeCollection), listAncestry),
@@ -438,6 +454,8 @@ public sealed class TenantAccessConstructionTests(ITestOutputHelper output)
                 typeof(ProofDoorProbes.DeeperCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeCollection).FullName!,
                 typeof(ProofDoorProbes.ExplicitScopeSource).FullName!,
+                typeof(ProofDoorProbes.IDimScopeSource).FullName!,
+                typeof(ProofDoorProbes.InheritedExplicitSource).FullName!,
                 typeof(ProofDoorProbes.LockedHost).FullName!,
                 typeof(ProofDoorProbes.Nested).FullName!,
                 typeof(ProofDoorProbes.OpenScopeCollection).FullName!,

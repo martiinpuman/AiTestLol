@@ -357,14 +357,21 @@ third), each entry required to match exactly one mention; **and no public type o
 can be derived from outside it** — sealed, static, an interface with no protected member, or a class
 with no public or protected constructor — so a `protected` door has no type to hang on (EF scaffolds
 migrations public and unsealed; the two here are sealed by hand, and a new one fails this check
-until it is). Public members, explicit interface implementations and protected members are the
-three ways a member is reached from outside without reflection, and those three are what the scans
-read; the claim is that those three are covered, not that the list is finished. Both scans are
-proven against `ProofDoorProbes` — a fixture of every door shape, including the event and callback
-parameter PR #13's first review walked through a direction-inferring scan, the inheriting
-collections its second review walked through a declared-members scan, the protected host its third
-review walked through a public-members scan, and the explicit implementation its fourth review
-walked through both — with the member and type counts printed on every run and the member
+until it is). What the scans read: public members, explicit interface implementations reachable
+through a type of the scanned set — declared on it, carried by an interface of the set as a
+default interface member, or inherited from a base outside the set — and, through the derivability
+check, protected members. **These scans read signatures.** A member that does not *name* a proof in
+its signature is invisible to them by construction — `public static object Open()` in this
+assembly, cast back by any caller that can name `TenantScope`, which is every caller, is a door no
+signature scan can detect (ADR-0040 ran fourteen such members through both scans: zero reported).
+The scans narrow the honest surface; they are not a boundary, and the list of routes they miss does
+not converge. Both scans are proven against `ProofDoorProbes` — a fixture of every door shape,
+including the event and callback parameter PR #13's first review walked through a
+direction-inferring scan, the inheriting collections its second review walked through a
+declared-members scan, the protected host its third review walked through a public-members scan,
+the explicit implementation its fourth review walked through both, and the default interface member
+and inherited implementation its fifth review walked through the interface-map walk — with the
+member and type counts printed on every run and the member
 count held to a round-down floor; no parameterless constructor at
 any accessibility, tried through `Activator`, System.Text.Json and `DataContractSerializer`; and,
 for the one route no accessibility rule closes, `RuntimeHelpers.GetUninitializedObject` yields a
@@ -374,8 +381,12 @@ property that claims an absent reading must actually be read — a throw from it
 with its exception. **What the signature scan cannot see, stated so nobody over-trusts it:** a
 member typed `object`, `dynamic` or a non-generic interface whose value is a proof at runtime; a
 proof inside a serialised form (link 4's territory); and every route reflection or
-`GetUninitializedObject` takes (links 4 and 5). Reflection invoking the internal constructor is not
-blocked and not claimed to be: the guarantee is a compile-time one (ADR-0007 §12.3).
+`GetUninitializedObject` takes (links 4 and 5). Neither reflection nor `[UnsafeAccessor]` is
+blocked, and neither is claimed to be: accessibility is a compile-time construct that any code in
+the same process can step around, and what `internal` restricts is origination, not naming —
+`TenantScope` is public and any assembly may name, hold and use one — so the set of assemblies
+permitted to load beside this one is the real boundary (ADR-0007 §12.3, ADR-0040 §2.2,
+`ARCH-Q-SCOPE-BOUNDARY`).
 
 **Not built here, on purpose, because the backlog row says so:** the scope factory, and the lease
 that clears `IsActive` and makes a reused scope throw `TenantScopeExpiredException` (ADR-0007 §10.4).
@@ -408,6 +419,7 @@ is why the identity travels inside the data. Then the matching case for both rol
 check, the unstamped table, the not-a-tenant-database case, a second row refused both ways with the
 count read back, `aurora_app` able to read and refused four write shapes with `42501`, and
 cancellation before any query.
+
 ---
 
 ## What B-06.1 adds: the connection resolver

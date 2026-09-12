@@ -70,10 +70,17 @@ internal sealed record DerivabilityScanResult(SortedSet<string> Examined, List<s
 /// left every test green while an assembly with no grant minted a live scope through it. So
 /// <see cref="Over"/> follows the link the interface list only hints at: for every interface a
 /// type implements, <see cref="Type.GetInterfaceMap"/> names the implementing methods whatever
-/// their accessibility, and every non-public one declared on the type is examined and keyed like a
-/// public member. A public implementation is already examined as a public member; an inherited one
-/// is its declaring type's - examined there if that type is in the population, reported through
-/// the inheritance check if it is a proof-bearing base outside it.
+/// their accessibility, and every non-public one is examined and keyed like a public member. The
+/// fifth review found the two shapes the first cut of that walk still missed, both executed to a
+/// minted scope: a <i>default interface member</i> on a public interface of the set, explicitly
+/// implementing a proof-returning member of an interface outside it - an interface has no map, so
+/// its declared non-public methods with a body are read instead - and an explicit implementation
+/// <i>inherited</i> from a public base outside the set, which the walk had dropped as "its
+/// declaring type's" when no type in the set would ever examine that base. So the population is
+/// collected first, and an inherited implementation is examined at the type it is reached through
+/// unless its declaring type is in the set or is itself proof-bearing - a
+/// <c>List&lt;TenantScope&gt;</c> base is already reported whole, with the derived type, by the
+/// inheritance check. A public implementation is already examined as a public member.
 /// </para>
 /// <para>
 /// <b>The default arm throws.</b> A member kind this scan does not classify is a member kind it
@@ -81,19 +88,25 @@ internal sealed record DerivabilityScanResult(SortedSet<string> Examined, List<s
 /// skipped on purpose (link 1 covers them) and nested types are expanded rather than classified.
 /// </para>
 /// <para>
-/// <b>What this scan cannot see, stated so nobody over-trusts it.</b> It is a signature scan. A
-/// member whose signature names no proof but whose value is one at runtime is invisible to it:
-/// a return, field or parameter typed <c>object</c> or <c>dynamic</c>, a non-generic
-/// <c>IEnumerable</c>, a base type or interface that does not itself carry the proof type.
-/// So is a proof handed out inside something a signature does not describe - a serialised form
-/// (link 4 covers the serialisers) - and every route reflection or <c>GetUninitializedObject</c>
-/// takes (links 4 and 5). What the two functions together prove is this, and only this: in the
-/// friend set, no public member's signature, no explicitly implemented interface member's
-/// signature and no public type's inheritance names a proof except by allow-listed key, and no
-/// public type can be derived from outside the set. Public members, explicit implementations and
-/// protected members are the three ways a member is reached from outside without reflection, and
-/// those three are what the scans read. Three reviews each found one of them unread; the honest
-/// claim is that these three are covered now, not that the list is finished.
+/// <b>What these scans cannot see, stated so nobody over-trusts them.</b> They read signatures. A
+/// member that does not <i>name</i> a proof in its signature is invisible to them by construction:
+/// <c>public static object Open()</c> in a friend assembly, cast back to <c>TenantScope</c> by any
+/// caller - and any caller can name <c>TenantScope</c>, which ADR-0007 §4.5 makes public - is a
+/// door no signature scan can detect, and the same erasure works through <c>dynamic</c>, a
+/// non-generic <c>IEnumerable</c>, <c>IAsyncDisposable</c>, <c>out object</c>, an
+/// <c>event Action&lt;object&gt;</c> or a <c>ValueTask&lt;object&gt;</c>: ADR-0040 ran fourteen
+/// such members, every one a working door, through these two functions and both reported zero. So
+/// is a proof inside a serialised form (link 4), and every route reflection,
+/// <c>GetUninitializedObject</c> or <c>[UnsafeAccessor]</c> takes (links 4 and 5,
+/// <c>ARCH-Q-SCOPE-BOUNDARY</c>). What the two functions prove is this, and only this: in the
+/// scanned set, no public member's signature, no explicit interface implementation reachable
+/// through a type of the set - declared on it, carried by an interface of the set as a default
+/// interface member, or inherited from a base outside the set - and no public type's inheritance
+/// names a proof except by allow-listed key, and no public type can be derived from outside the
+/// set. The scans narrow the honest surface; they are not a boundary, and the list of routes they
+/// miss does not converge. The boundary is origination, not naming (ADR-0040 §2.2): what
+/// <c>internal</c> restricts is who can construct a scope, and only against code that respects
+/// accessibility.
 /// </para>
 /// </remarks>
 internal static class ProofMentionScan
@@ -112,19 +125,13 @@ internal static class ProofMentionScan
     /// <summary>Scans the given types and, recursively, their nested public types, for mentions of a proof.</summary>
     public static ProofMentionScanResult Over(IEnumerable<Type> roots)
     {
+        HashSet<Type> population = Population(roots);
         int examined = 0;
         int explicitImplementations = 0;
         SortedSet<string> visited = new(StringComparer.Ordinal);
         List<string> mentions = [];
 
-        foreach (Type root in roots)
-        {
-            Visit(root);
-        }
-
-        return new ProofMentionScanResult(examined, explicitImplementations, visited, mentions);
-
-        void Visit(Type type)
+        foreach (Type type in population)
         {
             visited.Add(type.FullName!);
 
@@ -136,13 +143,9 @@ internal static class ProofMentionScan
 
             foreach (MemberInfo member in type.GetMembers(EveryPublicMember))
             {
-                switch (member)
+                if (member is ConstructorInfo or Type)
                 {
-                    case ConstructorInfo:
-                        continue;
-                    case Type nested:
-                        Visit(nested);
-                        continue;
+                    continue;
                 }
 
                 examined++;
@@ -152,7 +155,7 @@ internal static class ProofMentionScan
                 }
             }
 
-            foreach (MethodInfo implementation in ExplicitImplementations(type))
+            foreach (MethodInfo implementation in ExplicitImplementations(type, population))
             {
                 explicitImplementations++;
                 if (SignatureMentionsProof(implementation))
@@ -161,22 +164,83 @@ internal static class ProofMentionScan
                 }
             }
         }
+
+        return new ProofMentionScanResult(examined, explicitImplementations, visited, mentions);
     }
 
     /// <summary>
-    /// The interface members <paramref name="type"/> implements explicitly - emitted private, so
-    /// <see cref="EveryPublicMember"/> never sees them, yet called by anyone holding the interface.
-    /// Only the ones declared on this type: an inherited one is its declaring type's. An interface
-    /// has no map, and a public implementation is already examined as a public member.
+    /// The scanned set: the roots and, recursively, their nested public types - collected before
+    /// any member is read, because whether an inherited explicit implementation is examined at the
+    /// type it is reached through or at the type that declares it depends on whether the declaring
+    /// type is in the set (fifth review).
     /// </summary>
-    private static IEnumerable<MethodInfo> ExplicitImplementations(Type type) =>
+    private static HashSet<Type> Population(IEnumerable<Type> roots)
+    {
+        HashSet<Type> population = [];
+        foreach (Type root in roots)
+        {
+            Add(root);
+        }
+
+        return population;
+
+        void Add(Type type)
+        {
+            if (!population.Add(type))
+            {
+                return;
+            }
+
+            foreach (Type nested in type.GetNestedTypes(BindingFlags.Public))
+            {
+                Add(nested);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The explicitly implemented interface members reachable through <paramref name="type"/> -
+    /// emitted private, so <see cref="EveryPublicMember"/> never sees them, yet called by anyone
+    /// holding the interface. For a class or struct: every non-public target in its interface
+    /// maps that it declares itself or inherits from a base nothing else reports - one outside the
+    /// scanned set and not itself proof-bearing (a base inside the set is examined in its own
+    /// right; a proof-bearing base is reported whole by the inheritance check; fifth review). For
+    /// an interface, which has no map: its
+    /// declared non-public methods with a body - a default interface member that explicitly
+    /// implements another interface's member is exactly that shape, and a private helper with a
+    /// body that names a proof is worth the same look (fifth review). A public implementation is
+    /// already examined as a public member.
+    /// </summary>
+    private static IEnumerable<MethodInfo> ExplicitImplementations(Type type, HashSet<Type> population) =>
         type.IsInterface
-            ? []
+            ? type.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(static method => !method.IsAbstract)
+                .OrderBy(static method => method.Name, StringComparer.Ordinal)
             : type.GetInterfaces()
                 .SelectMany(implemented => type.GetInterfaceMap(implemented).TargetMethods)
-                .Where(target => target.DeclaringType == type && !target.IsPublic)
+                .Where(target => !target.IsPublic && ExaminedHere(type, target, population))
                 .Distinct()
                 .OrderBy(static target => target.Name, StringComparer.Ordinal);
+
+    /// <summary>
+    /// Whether <paramref name="target"/> is <paramref name="type"/>'s to examine: declared on it, or
+    /// declared on a base that nothing else reports - neither in the scanned set (where it is
+    /// examined in its own right) nor itself proof-bearing (where <see cref="InheritedProofMention"/>
+    /// already reports the whole derived type, <c>List&lt;TenantScope&gt;</c>'s fifteen explicit
+    /// implementations included). A constructed generic base is looked up by its definition, which
+    /// is what the set holds.
+    /// </summary>
+    private static bool ExaminedHere(Type type, MethodInfo target, HashSet<Type> population)
+    {
+        Type declaring = target.DeclaringType!;
+        if (declaring == type)
+        {
+            return true;
+        }
+
+        Type declared = declaring.IsConstructedGenericType ? declaring.GetGenericTypeDefinition() : declaring;
+        return !population.Contains(declared) && !Mentions(declaring);
+    }
 
     /// <summary>
     /// Examines the given types and, recursively, their nested public types, reporting every one
