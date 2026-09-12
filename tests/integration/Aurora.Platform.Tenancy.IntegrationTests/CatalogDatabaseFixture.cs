@@ -189,7 +189,7 @@ public sealed class CatalogDatabaseFixture : IAsyncLifetime
         ArgumentException.ThrowIfNullOrWhiteSpace(database);
 
         await using NpgsqlConnection superuser = await OpenSuperuserConnectionAsync();
-        await ExecuteAsync(superuser, $"DROP DATABASE IF EXISTS {database} WITH (FORCE)");
+        await ExecuteAsync(superuser, $"DROP DATABASE IF EXISTS \"{database}\" WITH (FORCE)");
 
         await using var remaining = new NpgsqlCommand("select count(*) from pg_database where datname = @name", superuser);
         remaining.Parameters.AddWithValue("name", database);

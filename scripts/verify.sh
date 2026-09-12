@@ -60,7 +60,7 @@ readonly FAIL_TAIL_LINES=40
 # red stage 6 on a branch that did nothing wrong. The floor is here to catch a
 # whole assembly dropping out of Aurora.sln, a misspelled Category trait or a
 # discovery failure, all of which move the count by tens or to zero; the smallest
-# assembly is 91, so any assembly dropping out still lands below it. Re-round it
+# assembly is 105, so any assembly dropping out still lands below it. Re-round it
 # whenever a test project joins or leaves Aurora.sln.
 # 924 executed with B-06.1a merged onto B-21 and B-06.1 (SharedKernel 231,
 # Countries.Contracts 141, Countries.Hosting 105, Platform.Tenancy 312, Architecture
@@ -69,7 +69,8 @@ readonly FAIL_TAIL_LINES=40
 # four rework-3 tests); the integration branch's own line, 854, is confirmed.
 # Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
 # B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854, B-06.1a 924.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-920}"
+readonly DEFAULT_MIN_UNIT_TESTS=920
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-${DEFAULT_MIN_UNIT_TESTS}}"
 readonly MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
@@ -155,7 +156,9 @@ OPT_FILTER=""
 OPT_ONLY_STAGE=""
 
 usage() {
-  cat <<'USAGE'
+  # Unquoted heredoc on purpose: the default floor is interpolated from the one constant that
+  # defines it, so the help cannot advertise a number the gate does not use.
+  cat <<USAGE
 Usage: scripts/verify.sh [options]
 
 The single quality gate for Aurora ERP (docs/architecture/solution-layout.md 5).
@@ -178,7 +181,7 @@ Options:
 
 Environment:
   AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
-                          it may report PASS (default 830, the greatest multiple
+                          it may report PASS (default ${DEFAULT_MIN_UNIT_TESTS}, the greatest multiple
                           of ten strictly below the suite's count). The count is always
                           printed in the summary, whatever the floor is. Set it
                           to 0 when running a deliberately narrow --filter.
