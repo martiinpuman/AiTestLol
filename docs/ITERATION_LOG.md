@@ -360,3 +360,63 @@ in the system, outside the population the audit measured.
 B-06.3, which complete the no-`DbContext`-without-a-tenant guarantee.
 | B-06.1 | #14 | APPROVE (second reviewer, Full) | security-reviewer ×2 | The first review executed the **third** variant of the tenant-takeover finding — two `database_cluster` rows on one server give two tenants the same connection string, because the unique index is keyed on `cluster_id` while a physical database is `(host, port, database_name)`. The branch-local half closed here: the routing row's tenant id is compared at **both** places a row can enter the cache, each proved independently. The structural half is ADR-0034's index (B-20), and this branch ships an **inertness guard** asserting the hole is still open and failing the day it closes — the second reviewer applied the index and watched it fire, then found it reds **six** integration tests rather than one, because `RoutingTestBed` builds a cluster row per bed on one endpoint, the fixture shape ADR-0034 §3.2 forbids. Also closed: redaction became a property of the **value** (`ConnectionSecret` with a `JsonConverter`), and the reviewer hunted a seventh rendering path across **fourteen** more — `TypeDescriptor`, `IncludeFields`, boxing, `Convert.ToString`, a containing record's `PrintMembers`, a dictionary, an anonymous type — and found none; the only leak is private-**field** reflection, which no log sink performs. And the watched-column list now partitions the tenant row with a count, where removing a routing column from both lists in lockstep had left 218/218 green **and silently widened a second security control**. Five minors taken after approval, two of them *a test that passes for the wrong reason*: the read-through identity check was unexercised because its test could not tell "never stored" from "stored, then evicted", and a theory row varied two columns so it could not isolate the one it named. **The stage-6 floor rule changed here and binds every branch:** the greatest multiple of ten *strictly below* the count, because rounding down to the nearest ten makes the floor an exact count whenever the count is a multiple of ten — at 840 it was 840, so deleting one obsolete test would fail the gate on a branch that did nothing wrong. Gate PASS at 840, floor 830, integration 87/87. Routed: FOLLOWUP-051. |
 | B-21 (slice 1) | #17 | APPROVE (first pass, Full) | security-reviewer | The admission floor — the control ADR-0033 calls the **only** one, since a package runs in-process and .NET offers no in-process privilege boundary against loaded managed code. The reviewer found **no route past it**: `Load`, `Inspect` (proven inert by the branch's own witness), the catalogue scan, a cached context and a second loader entry point all closed, and D3 has no fifth configuration route. **The fault injection worth remembering is the third:** the same refusal, same message, moved to *after* the package activates — every assertion about the error still passes, and only the module-initialiser witness notices, reporting that the floor fired after execution, which is not a refusal. A `Result`-based test could never have written it. **The branch also reported two injections that proved the wrong thing rather than counting them** — one red on a description assertion instead of the behaviour, one that failed to build. Both look like successful demonstrations in a summary and neither is evidence; volunteering them is what made the rest of the handback trustworthy. Narrowed before merge on an executed reviewer finding: the signature covers the **manifest-bearing assembly only**, so an unsigned sibling DLL dropped into an admitted package's directory after signing loads through the normal dependency probe and runs its module initialiser — the floor is not bypassed, but the claim was wider than the mechanism. Narrowed in five places, two of which the author found itself. Four places record what the suite does **not** claim: none of it shows a package cannot reach tenant data. Gate PASS at 854, floor 850. Routed: FOLLOWUP-055 (the ADR-0033 residual), FOLLOWUP-056 (**the reviewer added a plausible floor-free loader to `src/` and the whole gate stayed PASS** — the floor is a chokepoint only while one place loads package code, and nothing enforces that), FOLLOWUP-057. |
+
+## Iteration 9 — 2026-09-12
+
+**Five merges — B-19 (#12), ADR-0028 Amendment 2 (#9), ADR-0033/0034/0035 (#15), B-06.1 (#14) and
+B-21 (#17)** — taking the project from nine merged tasks to fourteen, and the integration branch from
+764 unit tests to 854.
+
+**The floor rule itself changed, and the reason is worth keeping.** B-06.1 found that rounding the
+stage-6 floor *down* to the nearest ten made the floor an **exact count** whenever the count was
+itself a multiple of ten — at 840 executed the floor was 840, so deleting a single obsolete test
+would red the gate on a branch that had done nothing wrong. The rule is now the greatest multiple of
+ten **strictly below** the count, `10 * ((executed - 1) / 10)`. Every branch re-rounds it against the
+merged result and never inherits the incoming line, because git cannot see that conflict.
+
+**PR #9 took seven rounds on a docs-only change, and what finally settled it generalises.** The
+reviews that closed it did not read the clause — they **implemented it from its own text**, and three
+independent from-the-text implementations all reached 360 column comparisons. Reading a
+specification tells you whether it is plausible; building from it tells you whether it is a
+specification.
+
+**The tenant-takeover finding reached a fourth variant, and the fourth one indicts the criterion.**
+Variants 1–3 were closed as a class by ADR-0034: a uniqueness constraint defined over a *logical*
+identifier where the thing that must be unique is the *physical* endpoint. Then PR #18's reviewer
+found `localhost` beside `LOCALHOST` beside `127.0.0.1` — three spellings, one machine — which the
+class-closing criterion does not catch. And PR #18 then proved that **ADR-0034 §3.3's acceptance
+criterion could not fail as written**: comparing whole connection strings gives `collisions: 0`
+where comparing physical endpoints gives `collisions: 1`, because `Application Name` carries the
+tenant key. ADR-0036 replaces it with the `(host, port, database)` triple and states the
+generalisation so it cannot be simplified back — *a connection string is a serialisation of an
+intent, not a description of a destination*, and any discriminator anywhere in it makes equality
+vacuous.
+
+**The eighth failure form was earned five separate times this iteration**, across unrelated branches
+and twice in the orchestrator's own code: *a fix that silently invalidates the evidence for the claim
+it was fixing.* `CLAUDE.md` now carries it with the rule that follows — when you change a mechanism,
+re-run every demonstration resting on it and say in the handback which ones you re-ran and what each
+printed. A table of executed results is evidence only for the version of the code that produced it.
+
+**Three orchestrator errors, recorded as errors rather than bad luck.** Five agents with four
+building, sustained, exhausted the session limit and killed all four mid-task — about three hours of
+wall clock, nothing lost, every branch pushed and every agent resumable. Four building is the stated
+cap and it is a cap, not a target. Second: `scripts/project-health.sh` needed fixing three times in
+one iteration, each fix closing a gap the previous one left — a merged branch counted as in flight, a
+dispatch counted as nothing because status was set at the end of the turn rather than the start.
+Third: PR #13's Counts section went stale for **three consecutive reviews** after the orchestrator
+twice said it owned it. The durable fix was not the numbers but attaching the sha they were measured
+on, so a reader can see staleness instead of discovering it by running the branch.
+
+| Task | PR | Verdict | Reviewer | What the review rested on |
+|---|---|---|---|---|
+| B-19 | #12 | APPROVE (second reviewer, Full) | security-reviewer ×2 | Four executed bypasses of the append-only guard across two reviews, each on a link nothing was reading: the privilege, the trigger's presence, its `tgparentid`, its `WHEN` clause. The merged version asserts effect, not presence. |
+| ADR-0028 A2 | #9 | APPROVE (seventh round, Full) | senior-reviewer ×3 | Three independent implementations **from the ADR's own text**, all reaching 360 column comparisons. The round that mattered caught a fix that flipped a row of the evidence matrix nobody re-ran. |
+| ADR-0033/34/35 | #15 | APPROVE (first pass, Full) | security-reviewer | The reviewer built a *second* hostile package to test the claim that fixing scope-forgery would be wasted work — it read the process's own catalog credential and opened its own connection to a victim tenant, naming no tenancy type at all. |
+| B-06.1 | #14 | APPROVE (second reviewer, Full) | security-reviewer ×2 | The third tenant-takeover variant, executed: two `database_cluster` rows on one server give two tenants the same physical database while every logical uniqueness check stays green. Also the floor-rule defect above. |
+| B-21 (slice 1) | #17 | APPROVE (first pass, Full) | security-reviewer | The admission floor — ADR-0033 calls it the only control, since a package runs in-process and .NET offers no in-process privilege boundary. The reviewer then showed the floor **protects nothing today**: no host composes `CountryPackageHostOptions` (FOLLOWUP-052), and a plausible floor-free loader added to `src/` left the whole gate PASS (FOLLOWUP-056). |
+
+**Next:** four PRs in flight, none waiting on a human — B-06.1a rework 4 (#13), B-09 rework 3 (#16),
+B-20 with a second reviewer (#18), and PR #19's four new ADRs under review. Then B-06.2 and B-06.3,
+which complete the no-`DbContext`-without-a-tenant guarantee, and B-11, which is the row that would
+put the 90-odd integration tests inside the merge gate at last.
