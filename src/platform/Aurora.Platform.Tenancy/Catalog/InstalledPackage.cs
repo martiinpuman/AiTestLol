@@ -21,10 +21,11 @@ namespace Aurora.Platform.Tenancy.Catalog;
 /// The package id is stored as text with the spelling ADR-0008 §4.1 R1 needs for the package's
 /// schema (<c>pkg_&lt;id&gt;</c>), held to <see cref="PackageIdFormat"/> here, in the check
 /// constraint and in the read-path entry alike (ADR-0038 §2.2). The typed package identifier in
-/// <c>Aurora.Countries.Contracts</c> is a different identifier - a dotted global id that this
-/// column's rule refuses - and which of the two this row should carry is left open until the
-/// installer exists (ADR-0038 §2.6). <see cref="InstalledBy"/> is an actor reference, never a
-/// display name (ADR-0018).
+/// <c>Aurora.Countries.Contracts</c> is a different identifier - a dotted global id such as
+/// <c>aurora.country.nz</c>, which <c>ck_installed_package_id_well_formed</c> refuses - so it
+/// cannot replace this text without a schema change. Which of the two this row should carry is
+/// B-13-PRE's decision, taken with the installer's shape in hand (ADR-0038 §2.6).
+/// <see cref="InstalledBy"/> is an actor reference, never a display name (ADR-0018).
 /// </para>
 /// </remarks>
 internal sealed class InstalledPackage
