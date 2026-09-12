@@ -68,6 +68,8 @@ This is ADR-0036 §4's rule; it is restated here because ADR-0007 §11.4 is wher
 | The name that connection reports is the tenant's database name | `current_database()` on that same connection | holds |
 | The statement issued from the maintenance database acts on that database | the name, resolved again by PostgreSQL | **Check-then-act.** Between the read and the statement, nothing holds the name to the same database. ADR-0036 §4 names this window; the 30-day reversible rename and the deletion certificate cover it by detection, not prevention |
 
+**The window's two halves are not equally dangerous, and §3 step 4 is what makes that true.** On the **rename**, a concurrent rename or a restore moving a database under the name between step 1 and step 3 can hit the wrong database: the visible outcome is a live tenant going dark until somebody connects the outage to the offboarding, recoverable by renaming back inside 30 days. On the **drop**, step 4's fresh stamp read is asserted *after* any such divergence would have occurred, so a diverged database is refused and the irreversible statement is never issued. That is a genuine second gate rather than a restatement of the first, and it exists only because step 4 re-reads.
+
 ---
 
 ## 3. Decision 2 — the sequence, corrected
@@ -77,12 +79,15 @@ ADR-0007 §11.4's `PendingDeletion` bullet reads *"database renamed to `deleted_
 > **The destroy path's steps, in order:**
 >
 > 0. **Evict the tenant's data source from the pool registry** (ADR-0007 §5.2). A suspended tenant still has a pooled data source until something removes it, and a pool that reconnects after step 2 makes step 3 fail forever. This step is not optional and is the one an implementer will skip, because the failure it prevents looks like a flake.
-> 1. **Connect to the tenant database, assert the stamp, read `current_database()`.** Everything after this names that value.
-> 2. **`REVOKE CONNECT` from everyone but `aurora_admin`**, then **terminate the remaining backends** on that datname. Revoke first, so termination is not racing a reconnect; terminate second, because revoke alone leaves the room full (P9).
-> 3. **`ALTER DATABASE <read name> RENAME TO deleted_<key>_<date>`**, issued from the maintenance database.
-> 4. Thirty days later, **`DROP DATABASE deleted_<key>_<date>`** — see §4.
+> 1. **Connect to the tenant database with pooling disabled**, assert the stamp, read `current_database()`, **and close the connection**. Everything after this names the value read. *Pooling disabled is not a detail:* Npgsql returns a disposed connection to the pool, where the backend stays open and visible in `pg_stat_activity`, and step 3 then fails on the saga's own session.
+> 2. **`REVOKE CONNECT` from everyone but `aurora_admin`**, then **terminate every backend on that datname — the saga's own included** (`pg_stat_activity WHERE datname = <the read value> AND pid <> pg_backend_pid()`). Revoke first so termination is not racing a reconnect; terminate second, because revoke alone leaves the room full (P9).
+>    **Post-condition, checked before step 3 is issued:** `count(*) FROM pg_stat_activity WHERE datname = <the read value>` is **0**. P9 proves the rename cannot succeed from any other state, so attempting it from one is a retry loop, not an operation.
+> 3. **`ALTER DATABASE <the value read at step 1> RENAME TO deleted_<key>_<date>`**, issued from the maintenance database.
+> 4. Thirty days later, **repeat step 1 against `deleted_<key>_<date>`** — as `aurora_admin`, since step 2 revoked `CONNECT` from everyone else: connect with pooling disabled, **assert the stamp, read `current_database()`, close the connection**, re-check step 2's post-condition (P8: a database cannot be dropped while open), and then issue **`DROP DATABASE <the value read at step 4>`** from the maintenance database. See §4.
 
-**Why step 1 survives step 3.** `platform.tenant_identity` is a table inside the database; the rename changes the name and nothing else. So the drop, thirty days later, can repeat step 1 against the *renamed* database and assert the same stamp. **The irreversible statement is not the one with the weaker check** — both steps can name a database they verified from the inside, and an implementation that verifies only before the rename has thrown away the cheaper of the two assurances.
+**Why step 4 re-reads rather than reusing step 1's value.** `platform.tenant_identity` is a table inside the database, so the rename changes the name and nothing else and the stamp survives it. That earns a **second, independent identity assertion thirty days later, for free** — and the first draft of this ADR earned it and then did not spend it: its step 4 read `DROP DATABASE deleted_<key>_<date>`, a name composed from `catalog.tenant.key`, which is precisely what §2's second sentence forbids, on the one statement that cannot be undone. **A stamp read thirty days ago is not a check on today's statement.**
+
+**And if the name recorded in the catalog and the name read at step 4 differ, stop.** That difference is the finding, not an inconvenience to normalise away.
 
 ---
 
@@ -92,7 +97,9 @@ ADR-0007 §11.4's `PendingDeletion` bullet reads *"database renamed to `deleted_
 
 > **`DROP DATABASE … WITH (FORCE)` is not used on the destroy path.** The plain form is used and its failure is a stop, not an obstacle.
 >
-> **And `DROP DATABASE` is reachable only for a database whose name matches the recorded `deleted_<key>_<date>` for that tenant and whose stamp names that tenant.** A drop targeting a live, tenant-named database is refused by the saga before PostgreSQL is asked.
+> **And `DROP DATABASE` is reachable only for a database whose name matches the recorded `deleted_<key>_<date>` for that tenant and whose stamp, read **fresh at step 4** and not recalled from step 1, names that tenant.** A drop targeting a live, tenant-named database is refused by the saga before PostgreSQL is asked.
+>
+> The catalog name is used to *find* the database and as a *refusal condition*; the name in the DDL is the one `current_database()` returned. Those are two different uses of two different values and conflating them is how the first draft of §3 step 4 came to contradict §2.
 
 That second clause exists because of §1 fact 3. The reversible step is the one that can jam, and the irreversible step is the one with a documented way through; without a gate, the shortest path out of a jammed offboarding is the statement that cannot be undone. **The gate is in the saga, not in the database**, and that is where it stops: an operator with `aurora_admin` and a `psql` prompt is outside every sentence of this ADR. The control there is ADR-0007 §9.2's operator audit trail and §11.4's deletion certificate — detection, not prevention, and named as such.
 
@@ -150,6 +157,7 @@ That second clause exists because of §1 fact 3. The reversible step is the one 
 - **Check-then-act remains** (§2), and it is inherent: PostgreSQL resolves the name when the statement runs, not when the stamp was read.
 - **Every control here is inside the saga.** `aurora_admin` with a prompt bypasses all of it, and the only answer is the audit trail. That is the same shape as ADR-0033 §5.3 and has the same honest limit.
 - **Step 0 depends on a pool registry whose eviction API does not exist** (B-06.2 owns the data-source registry). The step is stated so that it is designed in rather than discovered.
+- **Steps 0 and 1 guard two different pools**, and an implementer who conflates them gets a failure that looks identical to the one step 0 prevents. Step 0 is the *app's* data source for that tenant; step 1 is the *saga's own* ad-hoc connection. Adding a retry to either makes the other worse.
 - **§5's intent record adds a catalog write and a state nobody reconciles.** Named, not solved.
 
 ---

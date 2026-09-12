@@ -141,9 +141,23 @@ Under limb C:
 | `GRANT TRIGGER ON …` | **Destructive.** The grantee may create the §2.4 trigger |
 | `GRANT SET ON PARAMETER session_replication_role` (and `GRANT … ON PARAMETER` of any `SUSET` parameter that suppresses) | **Destructive.** `AppendOnlyTrails`'s own comment names this as the residual it could not close: *"one `GRANT SET ON PARAMETER` away"* |
 | `GRANT <role> TO <role>`; `ALTER ROLE … SUPERUSER` / `BYPASSRLS` / `REPLICATION` | **Destructive.** Role membership and role attributes are delegation by another spelling |
-| `GRANT SELECT / INSERT / UPDATE / DELETE / USAGE` | **Clean.** A data privilege does not let the grantee issue DDL. The two existing catalog migrations contain only these and `ALTER DEFAULT PRIVILEGES … REVOKE`, and both stay clean |
+| `GRANT SELECT / INSERT / UPDATE / DELETE / USAGE`, **including the column form `GRANT <priv> (<column list>) ON <table>`** | **Clean.** A data privilege does not let the grantee issue DDL, and narrowing it to a column list does not change that. The column spelling is named here because it is present in the repository and would otherwise be classified by nobody |
 
-**Population check before ruling, because a rule that reddens a merged migration has cost this project two rounds already.** Every `GRANT`/`REVOKE`/`OWNER` statement in the repository today: `GRANT USAGE ON SCHEMA catalog`, five `GRANT SELECT`/`GRANT SELECT, INSERT`/`GRANT SELECT, INSERT, UPDATE` on catalog tables, and one `ALTER DEFAULT PRIVILEGES FOR ROLE aurora_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC`. **Limb C reddens none of them**, and `OWNER TO` appears nowhere.
+**Population check before ruling, because a rule that reddens a merged migration has cost this project two rounds already.** Executed over **both** migration files, listing every statement:
+
+| Statement | Count | Sites |
+|---|---|---|
+| `GRANT USAGE ON SCHEMA catalog TO aurora_app` | 1 | `InitialCatalog.cs:259` |
+| `GRANT SELECT ON <table> TO aurora_app` | 4 | `InitialCatalog.cs:260, 261, 263, 264` |
+| `GRANT UPDATE (state, core_schema_version, last_activity_at) ON catalog.tenant TO aurora_app` | 1 | `InitialCatalog.cs:262` |
+| `GRANT SELECT, INSERT, UPDATE ON catalog.installed_package TO aurora_app` | 1 | `InitialCatalog.cs:265` |
+| `GRANT SELECT, INSERT ON <trail> TO aurora_app` | 2 | **`AppendOnlyTrails.cs:106, 107`** |
+| `ALTER DEFAULT PRIVILEGES FOR ROLE aurora_migrator REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC` | 1 | `InitialCatalog.cs:291` |
+| **total** | **10** (9 `GRANT` + 1 `ALTER DEFAULT PRIVILEGES … REVOKE`) | **2 files scanned:** `20260911172124_InitialCatalog.cs`, `20260912020620_AppendOnlyTrails.cs` |
+
+And the limb-C statements, counted rather than assumed: `OWNER TO` **0**, `GRANT TRIGGER` **0**, `GRANT SET ON PARAMETER` **0** (the only occurrence of that string is prose in `AppendOnlyTrails.cs:152`), `GRANT <role> TO <role>` **0**, `ALTER ROLE … SUPERUSER/BYPASSRLS/REPLICATION` **0**. **Limb C reddens none of the ten.**
+
+> **This census is a correction, and the correction is the point.** Its first draft reported **7 statements** and had read **one of the two migration files** — `AppendOnlyTrails`'s two grants were absent entirely, and that is the migration §3.2 leans on as its central case four sections later. The `GRANT <priv> (<columns>)` spelling was not enumerated at all; it lands in the Clean row, but it landed there without being looked at. The ruling is unchanged and was verified independently by PR #21's reviewer. What changed is what the paragraph is worth: **a census that reads a subset of its population and reports as though it read all of it is `CLAUDE.md`'s parser failure, inside the one paragraph whose entire job is completeness** — and it was luck, not the method, that the two missed statements were clean.
 
 **What limb C deliberately does not rule.** `REVOKE` of a data privilege narrows what the schema offers a reader and would arguably be limb A; ruling on it would change the category of a *merged* migration (`InitialCatalog`'s `ALTER DEFAULT PRIVILEGES … REVOKE`), it is not what either question asked, and deciding it here would be deciding a merged artefact's category from outside the review that accepted it. **Undecided, and it waits on** whoever next revises ADR-0007 §7.2 rule 2's treatment of privilege statements as a group.
 

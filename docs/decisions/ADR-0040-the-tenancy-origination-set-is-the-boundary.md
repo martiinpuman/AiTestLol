@@ -11,7 +11,7 @@
 - **Related:** ADR-0007 (tenancy), ADR-0008 §9 (the package load seam), ADR-0029 (the `tid` claim and fail-closed permission evaluation), ADR-0030 (fitness rules read IL metadata), ADR-0031 §2 (the package reference allowlist), **ADR-0033 (the tenancy trust boundary is the process — read it before this one)**
 - **Raised by:** `ARCH-Q-SCOPE-BOUNDARY`, from the second, third, fourth and fifth reviews of PR #13 (`task/B-06.1a`)
 
-> Seven reviewers' doors through one rule, and then an eighth that is not a door in that rule at all: **`[UnsafeAccessor]` mints a `TenantScope` from an assembly no `[InternalsVisibleTo]` names, with no reflection, no cast, no permission and no compiler diagnostic.** This ADR does not build an eighth mechanism. It says what the friend set actually buys, what the guarantee may actually claim, and what governs membership — and it executes every load-bearing sentence.
+> Seven doors through one rule across five reviews, and then two routes that are not doors in that rule at all: **`[UnsafeAccessor]` mints a `TenantScope` from an assembly no `[InternalsVisibleTo]` names**, and **`Unsafe.As<TenantScope>` gets a usable reference with no declaration to grep for** — both with no reflection, no friend and no compiler diagnostic. This ADR builds no eighth mechanism. It says what the friend set actually buys, what the guarantee may claim, and what governs membership — and it states no list as closed, because the last two times this document did, execution closed it for us.
 
 ---
 
@@ -87,6 +87,21 @@ Mint.cs(9,13): error CS1729: 'TenantScope' does not contain a constructor that t
 
 One source file was added to produce that error and removed to produce the successful build, so the demonstration fails in both directions rather than asserting one.
 
+**Probe F — `Unsafe.As<TenantScope>(object)`, which is none of the above.** `Aurora.Outsider.FourthRoute`, also on nobody's friend list, referencing only the public contracts assembly. No attribute, no `extern`, no reflection, no friend involved — one line of public BCL API:
+
+```
+4a Unsafe.As<TenantScope>: compiled and ran in a non-friend assembly.
+   static type             : TenantScope (the compiler accepts every member access below)
+   runtime `is TenantScope`: False
+   GetType()               : Impostor
+   reading through it      : IsActive=False Reason=Request  (no exception)
+   constructor executed    : no. None of TenantScope's six argument checks ran.
+```
+
+**What this establishes:** a non-friend obtains a reference the compiler treats as a `TenantScope` and reads members through it without throwing, with no declaration that probe E's signal or a reflection scan could find. The constructor never runs, so every guard in it is bypassed, and unlike `GetUninitializedObject` there is no link-5 defence to apply — link 5 is about an object of the *right* type left uninitialised.
+
+**What this does not establish, in two attempts.** PR #21's reviewer reports `IsActive=True` from the same route. I could not reproduce controlled field values: a stand-in whose fields are declared in the reference assembly's declaration order raised `NullReferenceException` on read, because the CLR lays out auto-layout classes in an order of its own choosing. So the route is a **type-confusion** route, not a forgery route, and matching the physical layout is work I did not do. That distinction is worth keeping, because it is also the route's one cheap detection: `is TenantScope` and `GetType()` both give it away, where probe A's scope is indistinguishable from a real one. **Nothing in the design performs either check.**
+
 **Probe E — the metadata signature of an `[UnsafeAccessor]` member**, read off probe A's own assembly, because §4.6's rule needs to know what it can key on:
 
 ```
@@ -132,6 +147,8 @@ What it cannot be is **the sentence the guarantee rests on**. ADR-0007 §3.4's "
 | 5 | a **default interface member** explicitly implementing a proof-returning member | **population** |
 | 6 | an explicit implementation **inherited from a base outside the scanned population** | **population** |
 | 7 | erasure — `object`, `dynamic`, non-generic `IEnumerable` (§3.5) | **neither: invisible in principle** |
+
+Two things found in the same reviews are **not** in this table, deliberately: `[UnsafeAccessor]` (§2.1 probe A) and `Unsafe.As` (probe F). Neither is a door through the member scan — neither involves a member of a friend assembly at all. They are origination routes, they belong to §5, and counting them here would make the member scan look responsible for something it was never positioned to see.
 
 **Six of the seven were population defects.** The scan enumerated a *filtered* population and asked a correct question of each member in it; each review added one filter term. That is a blocklist over an open set — the CLI's member and accessibility model is not something anyone finishes enumerating from memory — and the examined count stayed healthy through every one. ADR-0032 §4.2.2 had already observed the same for a different clause: *"T17's examined count does not move… a healthy count is exactly what a missing clause hides behind."*
 
@@ -193,13 +210,57 @@ Aurora.Countries.Hosting.csproj:34           -> Aurora.Countries.Hosting.UnitTes
 
 Nothing in the repository asserts anything about the fifth grant or about the sixth.
 
+**Read the branch label on that block.** All five exist on `task/B-06.1a`; the integration branch has **three** (the two `Aurora.Platform.Tenancy.Contracts` grants arrive with B-06.1a). Every count in §4.2 is on the five-grant tree, because that is the tree the rest of this ADR measures.
+
 ### 4.2 G1 — the repository asserts that it contains no grant outside a stated rule
 
-> **Every `<InternalsVisibleTo>` in every `src/**/*.csproj` is either (a) to the declaring assembly's own `<name>.UnitTests` or `<name>.IntegrationTests`, or (b) to an assembly named in the rule's own pinned list.**
->
-> The rule reports **grants found / self-test grants / pinned grants / unlisted**, and an unlisted grant fails.
+**The first draft of this rule shipped red, and its own §4.1 evidence block was the counter-example.** Clause (a) said *"the **declaring assembly's** own `<name>.UnitTests`/`<name>.IntegrationTests`"*, and the declaring assembly of two of the five grants is `Aurora.Platform.Tenancy.Contracts`, whose own test projects would be `Aurora.Platform.Tenancy.Contracts.UnitTests`/`.IntegrationTests` — neither of which is what it grants to. Implemented verbatim and run over the tree §4.1 measures:
 
-Structural, over a population the build already owns, with **no second copy of anything**: the `.csproj` items are the single source of the grants, and the pinned list holds only the exceptions to clause (a) — **empty today**, because all five grants satisfy clause (a).
+```
+OLD clause (a): the DECLARING ASSEMBLY's own <name>.UnitTests/.IntegrationTests
+  found=5  clause-a=3  pinned=0  unlisted=2
+    UNLISTED: Aurora.Platform.Tenancy.Contracts -> Aurora.Platform.Tenancy
+    UNLISTED: Aurora.Platform.Tenancy.Contracts -> Aurora.Platform.Tenancy.UnitTests
+  VERDICT: FAIL (build would go red)
+```
+
+**The obvious repair is the wrong one and is refused here so nobody reaches for it under a red build.** Widening clause (a) to a prefix or a sibling match would admit both, and would also admit a grant from any assembly to any other whose name happens to start the same way — which turns *"every grant is either a module's own test project or a deliberate decision"* into *"every grant is fine"*. The distinction the rule exists to draw is **a test project versus a shipping assembly**, and the fix has to keep drawing it.
+
+> **Every `<InternalsVisibleTo>` in every `src/**/*.csproj` is either**
+>
+> **(a)** to one of the **granting assembly's own module's** test projects — the module being the granting assembly's name with a trailing `.Contracts` removed, the grantee being exactly `<module>.UnitTests` or `<module>.IntegrationTests`, **and** the grantee's project file living under `tests/` and being referenced by no project under `src/`; **or**
+>
+> **(b)** to an assembly named in the rule's own pinned list, with the ADR clause that admits it beside the entry.
+>
+> The rule reports **grants found / module-test grants / pinned grants / unlisted**, and an unlisted grant fails.
+
+**Why the location clause is not decoration.** ADR-0032 §2 is explicit that a rule may key only on an identity the violating code cannot mint for itself, and a `.UnitTests` suffix is a name the grantee chooses. *"Its project file is under `tests/` and no `src/` project references it"* is not — it is ADR-0034 §6.1 condition 2's own test, and `Aurora.Architecture.Tests/Solution/` already reads project files and their `ProjectReference`s. The name and the location are required together: a project named `…UnitTests` that lives under `src/` fails the location test, and one under `tests/` that ships fails the reference test.
+
+**Executed, on the same five-grant tree:**
+
+```
+NEW clause (a): the granting assembly's MODULE's test projects, under tests/, unreferenced by src/
+  found=5  module-test=4  pinned=1  unlisted=0
+    pinned:   Aurora.Platform.Tenancy.Contracts -> Aurora.Platform.Tenancy
+  VERDICT: PASS
+```
+
+**The pinned list holds exactly one entry, and it is the right one.** `Aurora.Platform.Tenancy.Contracts → Aurora.Platform.Tenancy` is not an exception to the rule; it **is** §2.2 clause (a)'s closure — the grant that constitutes the origination set. Admitted by **ADR-0007 §3.4** (*"only `Aurora.Platform.Tenancy` may construct one"*). A rule whose pinned list contains the single most load-bearing grant in the repository, named with the decision that admits it, is a better artefact than one whose list is empty because the clause was widened until nothing needed pinning.
+
+**And a sixth grant, injected four ways, each run separately:**
+
+```
+Aurora.SharedKernel        -> Aurora.Platform.Tenancy            UNLISTED  FAIL
+Aurora.Platform.Tenancy    -> Aurora.TestKit                     UNLISTED  FAIL
+Aurora.Countries.Hosting   -> Aurora.Platform.Tenancy.UnitTests   UNLISTED  FAIL
+Aurora.Platform.Tenancy    -> Aurora.Platform.Tenancy.SmokeTests  UNLISTED  FAIL
+```
+
+The second matters most: it is **exactly the grant ADR-0034 §6.1 says must be a decision**, and clause (a) refuses it rather than absorbing it, because `Aurora.TestKit` is not the granting module's test project. The fourth shows the clause names two exact projects rather than "any test project of the module".
+
+**What clause (a) does not stop, stated rather than left to be discovered.** A grant from `X` or `X.Contracts` to `X.UnitTests`/`X.IntegrationTests` is admitted silently, and for `X = Aurora.Platform.Tenancy` that means both tenancy test assemblies are in the mint set with no entry anywhere. That is the intended design (the contracts `.csproj` says so in as many words) and it is separately pinned by link 2's two exact-set assertions — so G1 is the **completeness** mechanism and link 2 is the **tenancy-specific** one, and neither replaces the other. The residual is a derivation that widens without a diff to any rule's data, which is the same weakness ADR-0032 §4.2 records for its owning-set derivation and contains the same way: creating a project inside an existing module's name is itself a reviewable event.
+
+Structural, over a population the build already owns, with **no second copy of anything**: the `.csproj` items are the single source of the grants, and the pinned list holds only what clause (a) does not reach.
 
 **It deliberately has no table of assembly names in this ADR.** `FOLLOWUP-058` is the record of what a hand-copied restatement of a machine-read value does here: `verify.sh`'s floor and its `--help` text drifted twice in two merges and neither drift could fail anything. A table of grant names here would be the third instance. This ADR governs the **criteria** (§4.3); the names live where the build reads them.
 
@@ -226,23 +287,53 @@ Its factory lives in `Aurora.Platform.Tenancy`, already in the closure; B-06.3 c
 
 > **`SanctionedDoors` and `ProofTakingMembers` are governed by §4.3 exactly as the grant list is**, condition 4 included.
 
-What bounds a sanctioned door is **not accessibility** — the door is public by definition. It is authorization *at the door*: `ITenantScopeFactory.OpenAsync` must decide whether this caller may have *this* tenant, which is ADR-0029's `tid` claim and fail-closed permission evaluation, and ADR-0010's model. That is where the authority control `TenantIdentityStamp` was never able to be (ADR-0033 §2; ADR-0034 §4) actually lives, and B-06.3's acceptance criteria must say so. **Present tense: neither exists.** The stamp is asserted on **no path today** — the type ships with B-06.1a (in rework), the app-path initializer is B-06.2 and the DDL-path factory is B-07.1, neither built (ADR-0034 §5) — and `ITenantScopeFactory` is B-06.3, not built. Nothing here is a mitigation that rests on either.
+What bounds a sanctioned door is **not accessibility** — the door is public by definition. It is authorization *at the door*. And here the honest answer is the short one:
+
+> **No authority control exists at issuance today, and no ADR specifies one.**
+
+The first draft of this section handed that job to ADR-0029's `tid` cross-check. It cannot do it, for three reasons that are all structural rather than schedule-related:
+
+1. **It is upstream of the door, not at it.** ADR-0029 §4's checkpoint table, row 1: *"Every HTTP request carrying an authenticated principal, in the tenant-resolution middleware, **after** host/path resolution and **before** `ITenantScopeFactory.OpenAsync`"*. A check positioned before the door is bypassed by every caller that reaches the door another way — and "carried by middleware ordering" is the exact class of thing ADR-0029's own A1.2 rework existed to remove.
+2. **It covers one of six reasons.** `TenantAccessReason` is `Request | Job | Outbox | Provisioning | Migration | OperatorSupport`. `AccessSubject.ForSystemJob` carries *"no `tid` claim at all"*, deliberately (ADR-0029 §4 and A2.2), so for the five system reasons there is no `tid` to compare. Worse for three of them: A2.2 item 3 has `ForSystemJob` **refuse unless `scope.Reason` is `Job` or `Outbox`**, so `Provisioning`, `Migration` and `OperatorSupport` have no `AccessSubject` factory at all.
+3. **The cited layer consumes the proof, so it cannot gate it.** Both factories take a scope as a parameter — `FromPrincipal(ClaimsPrincipal, TenantScope)` and `ForSystemJob(TenantScope, SystemPrincipalId)`. A mechanism whose input is a `TenantScope` is downstream of origination by construction.
+
+`OperatorSupport` is the most privileged member of the enum and is the reason §2.1 probe A's forged scope carried. Specifying its authorization as "ADR-0029's `tid` check" would have written a cross-tenant escalation path into B-06.3's acceptance criteria.
+
+**What a control at issuance would have to do**, stated as a requirement on B-06.3 rather than as a mechanism this ADR invents — a mechanism is B-06.3's to design:
+
+> `OpenAsync` decides, **inside the factory**, from inputs that do not include a `TenantScope`. Per reason: for **`Request`**, ADR-0029's `tid`-versus-resolved-tenant comparison, moved into the factory rather than trusted from the middleware that ran before it. For **`Job`** and **`Outbox`**, the tenant set is fixed by the job's *registration*, not chosen at call time, and the named system principal is ADR-0010 rule 9's (*"A job never runs 'as nobody'"*). For **`Provisioning`**, **`Migration`** and **`OperatorSupport`**, a named system principal with an explicitly enumerated permission set, and — for `OperatorSupport` — an entry in `catalog.operator_audit_event` (ADR-0007 §9.2) written before the scope is returned, because it is the one reason whose legitimate use is a human reaching into a customer's data.
+
+**Present tense.** `ITenantScopeFactory` is B-06.3 and is not built. ADR-0029's checkpoint 1 is B-18.4 and is not built. `TenantIdentityStamp` is asserted on **no path today** — the type ships with B-06.1a (in rework), the app-path initializer is B-06.2 and the DDL-path factory is B-07.1, neither built (ADR-0034 §5) — and in any case it is a routing control, not an authority one (ADR-0033 §2; ADR-0034 §4). **Nothing in this ADR is a mitigation that rests on any of them**, and until B-06.3 lands, a sanctioned door is bounded by review and by nothing else.
 
 ### 4.6 G4 — `[UnsafeAccessor]` is refused in `src/`, and this is the rule probe A creates
 
 An `[UnsafeAccessor]` declaration is silent to the compiler and **loud in source**. That asymmetry is the whole of §2.2's property, and it is worth a mechanism:
 
-> **No type in `src/` declares an `[UnsafeAccessor]` member.** Population: every method in every production assembly. Report **methods examined / body-less non-P/Invoke methods found / allow-listed**. The allow-list is **empty**, and an entry in it is a Full-tier architecture decision, not a task's choice.
+> **No type in `src/` names an API whose documented purpose is to step around the type system or its accessibility rules.** Population: every method in every production assembly, and every type they reference. Report **methods examined / body-less non-P/Invoke methods found / bypass-API references found / allow-listed**. The allow-list is **empty**, and an entry in it is a Full-tier architecture decision, not a task's choice.
 
-**Why repository-wide rather than "…targeting a tenancy proof".** The same declaration reaches every `internal` member of every assembly — `TenantConnection`'s credential-carrying constructor (ADR-0034 §6), `CatalogDbContext`, a Country Package's internals. A rule scoped to tenancy would be a rule that has to be rewritten the first time somebody points the same attribute somewhere else.
+**The population is a named family, not a single attribute, and that is the correction probe F forced.** The first draft of G4 said *"`[UnsafeAccessor]`"*, and `Unsafe.As` walks straight past it. Enumerating *routes* is the same mistake §3 diagnoses in the member scan one level up; the fix is the same move ADR-0037 §2.3 makes for limb B — enumerate the **surfaces the platform provides for the purpose**, not the uses people find for them:
+
+| # | Surface | Why it is in the family |
+|---|---|---|
+| F1 | `System.Runtime.CompilerServices.UnsafeAccessorAttribute` | Documented to skip the visibility check. Probe A |
+| F2 | `System.Runtime.CompilerServices.Unsafe` (`As`, `AsRef`, `NullRef`, …) | Reinterprets a reference without a type check. Probe F |
+| F3 | `System.Reflection` — `Activator`, `ConstructorInfo.Invoke`, `FieldInfo.SetValue`, `Type.GetType` | ADR-0033 §3.1 |
+| F4 | `System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject` | Allocates without a constructor. Link 5's subject |
+| F5 | `System.Runtime.InteropServices.MemoryMarshal` and pointer `unsafe` blocks | Same capability as F2 by a different door |
+| F6 | `System.Reflection.Emit` / `System.Linq.Expressions.Expression.Compile` | Emits IL that the C# accessibility rules never saw |
+
+**Where the family's enumeration stops: at human knowledge of the BCL.** That is the identical stop ADR-0037 §2.3 takes and names, and the mitigation is the same — the question becomes *"which bypass surfaces have we walked?"*, which has a finite answer somebody can be held to, rather than *"did we think of every trick?"*, which does not. **This list is the routes known on 2026-09-12 and is not claimed complete**; §5 says what would find another.
+
+**Why repository-wide rather than "…targeting a tenancy proof".** These surfaces reach every `internal` member of every assembly — `TenantConnection`'s credential-carrying constructor (ADR-0034 §6), `CatalogDbContext`, a Country Package's internals. A rule scoped to tenancy would have to be rewritten the first time somebody points the same API somewhere else.
 
 **The chain, and where it stops.**
 
 | Link | Established by | Stops at |
 |---|---|---|
 | The declaration exists in the assembly | `UnsafeAccessorAttribute` on the method | **ADR-0032 §1.1: the scanner cannot read custom attributes today.** Either extend it, or use the metadata proxy below |
-| The metadata proxy: a **non-abstract, non-P/Invoke method with no body** | Executed, probe E: `Mint` is `bodyless=True`, `abstract=False`, `pinvoke=False`; `Main` is `bodyless=False` | The proxy is a *superset* — a false positive is loud and fixable, which is the safe direction (ADR-0032 §4.2's own rule about subject versus exclusion matching). The implementing row must report which signal it used |
-| …therefore no first-party assembly steps around accessibility silently | — | **A Country Package's source is not in `src/`.** G4 cannot see it. That is ADR-0033's residual, unchanged, and G4 does not reduce it by one bit |
+| The metadata proxy for F1: a **non-abstract, non-P/Invoke method with no body** | Executed, probe E: `Mint` is `bodyless=True`, `abstract=False`, `pinvoke=False`; `Main` is `bodyless=False` | The proxy is a *superset*, and its one systematic false-positive class is a **`delegate`** — `Invoke`/`BeginInvoke`/`EndInvoke` are non-abstract, non-P/Invoke and carry no IL body. **Executed: `delegate` declarations in `src/` today: 0**, so the allow-list is genuinely empty and will gain its first entry the day somebody declares one. A false positive is loud and fixable, which is the safe direction (ADR-0032 §4.2's subject-versus-exclusion rule). The implementing row reports which signal it used |
+| F2–F6 are caught as **type and member references**, which ADR-0032 §1.1 says the scanner already reads (declaring type, member name, signature per instruction) | — | **Not executed.** I did not build this half. The implementing row must demonstrate that a `Unsafe.As<T>` call site is reported, because that is the case that motivated the widening |
+| …therefore no first-party assembly steps around accessibility **through a surface on this list** | — | **The list is not complete** (F1–F6 above), and **a Country Package's source is not in `src/`** — G4 cannot see it and does not reduce ADR-0033's residual by one bit. The first draft of this row said *"no first-party assembly steps around accessibility silently"*, full stop; probe F falsified it |
 
 ### 4.7 A design change considered and refused: an inaccessible parameter on the constructor
 
@@ -252,9 +343,18 @@ Probe C shows a real mitigation exists. Give `TenantScope`'s internal constructo
 
 > *"A countermeasure aimed at scope forgery would not reduce this threat. Anyone tempted to 'fix' §2 by hardening `TenantScope` should read this paragraph twice."*
 
-The marginal value of the seed parameter over G4 is exactly "raises a loaded Country Package's cost from one attribute to reflection" — and ADR-0033 §5.4 R2 records that the same package can read the process's secret material and open its own `NpgsqlConnection` to any tenant database while naming no tenancy type at all. Adding a structural defence against a threat the architecture has explicitly accepted elsewhere buys nothing and produces an inconsistent claim, which is how a design starts believing itself.
+**And it buys less than it looks.** The seed parameter works by making the *accessor declaration's signature* unwritable (probe C, `CS0122`) or unbindable (probe B, `MissingMethodException`). Both only bite on routes that **resolve and call the constructor**. Against §5's four known routes:
 
-**Revisit trigger, stated so this refusal has an expiry test:** if ADR-0033 §5.5's out-of-process package host is ever built, in-process reflection stops being available to package code and `[UnsafeAccessor]` becomes the top of the residual list. **That** is when the seed parameter earns its keep, and it is one internal type and one parameter when it does.
+| Route | Closed by the seed parameter? |
+|---|---|
+| (a) `[UnsafeAccessor]` | **yes** |
+| (b) reflection | no — `GetUninitializedObject` never calls a constructor |
+| (c) a friend's erasure door | no — the friend has the internal type |
+| (d) `Unsafe.As` | no — it allocates nothing and calls no constructor, so no constructor signature can stop it |
+
+**One of four**, and the three it misses include the two that produce a scope reading as live. ADR-0033 §5.4 R2 records that the same package can read the process's secret material and open its own `NpgsqlConnection` to any tenant database while naming no tenancy type at all. Adding a structural defence against a threat the architecture has explicitly accepted elsewhere, which moves the adversary one line sideways, buys nothing and produces an inconsistent claim.
+
+**Revisit trigger, narrowed so the expiry test is true.** The first draft said *"if the out-of-process host is built, `[UnsafeAccessor]` becomes the top of the residual list"* — but in that world `Unsafe.As` sits at the top alongside it and the seed parameter still does not reach it. The honest trigger is: **the seed parameter earns its keep only when something else closes type-identity forgery** — an out-of-process host (ADR-0033 §5.5), or a runtime that checks reference types on reinterpretation. Until then it is a contract change that closes one of four.
 
 ---
 
@@ -266,25 +366,32 @@ The marginal value of the seed parameter over G4 is exactly "raises a loaded Cou
 
 **As it holds:**
 
-> **No assembly outside the tenancy origination set obtains a `TenantScope` unless some first-party source file declares the route, and every such declaration is visible in source and greppable.** Exactly three routes work:
+> **No assembly outside the tenancy origination set obtains a `TenantScope` through ordinary member lookup.** `new` is refused (`CS1729`, probe D), no parameterless constructor exists at any accessibility, and both in-box serializers refuse (link 4).
 >
-> - **(a)** an `[UnsafeAccessor]` declaration in the obtaining assembly — §2.1 probe A, executed;
-> - **(b)** a reflection call in the obtaining assembly — ADR-0033 §3.1, executed;
-> - **(c)** a member on a *friend* assembly whose signature erases the type, after which the obtaining assembly needs no declaration at all — §3.5, executed. The declaration exists, on the friend's side.
+> **Every other route runs through §4.6's bypass family, and the routes known on 2026-09-12 are these four:**
 >
-> Nothing else works: `new` is refused (`CS1729`, probe D), no parameterless constructor exists at any accessibility, and both in-box serializers refuse (link 4).
+> | | Route | Constructor runs? | Reads as live? | Executed |
+> |---|---|---|---|---|
+> | (a) | `[UnsafeAccessor]` in the obtaining assembly | **yes** | **yes** | §2.1 probe A |
+> | (b) | reflection in the obtaining assembly | no (`GetUninitializedObject`) or yes (`ConstructorInfo.Invoke`) | inert, or **yes** | ADR-0033 §3.1; probe D |
+> | (c) | a *friend* assembly's member whose signature erases the type | yes — the friend's own call | yes | §3.5 |
+> | (d) | `Unsafe.As<TenantScope>(object)` in the obtaining assembly | **no** | type-confused; `is TenantScope` is **False** | §2.1 probe F |
 >
-> **And for a Country Package, (a) and (b) are available and nothing in this repository can see them**, because a package's source is not in `src/`. That is ADR-0033's residual, unchanged and not reduced by anything here.
+> **This list is not claimed exhaustive, and the claim that it was is what this sentence replaces.** The first draft said *"exactly three routes work… nothing else works"*; route (d) falsified it within one review. §3 of this ADR argues that the class of ways to reach a type cannot be enumerated; a closed list here would contradict that argument two sections later.
+>
+> **What would find a fifth.** Not a proof, but a method with a finite answer, and it is the one §4.6 already uses: **walk the platform surfaces whose documented purpose is to step around the type system or its accessibility rules** (F1–F6), rather than walking the uses people find for them. A route that is not one of those is a runtime bug, not a design gap. Every route found so far — `[UnsafeAccessor]`, reflection, `Unsafe.As` — is an F-row, and the two that were missed were missed because nobody had walked the list.
+>
+> **And for a Country Package, all four are available and nothing in this repository can see any of them**, because a package's source is not in `src/`. That is ADR-0033's residual, unchanged and not reduced by anything here.
 
 ### 5.1 The chain, and the link each part stops at
 
 | # | Link | Enforced by | Stops at |
 |---|---|---|---|
 | O1 | Every constructor of `TenantAccess` and `TenantScope` is `internal`; `TenantScope` is sealed; no parameterless constructor at any accessibility | the C# compiler, on **ordinary member lookup**; asserted by B-06.1a links 1 and 4 | **`[UnsafeAccessor]`.** Executed, probe A. The check is on the accessor's *signature*, not its *target* — probes B and C |
-| O1a | No assembly in `src/` declares an `[UnsafeAccessor]` member | **Nothing today.** §4.6 proposes it | A package's source, which is not in `src/` |
+| O1a | No assembly in `src/` names a bypass surface (§4.6 F1–F6) | **Nothing today.** §4.6 proposes it | **The family's enumeration**, which stops at human knowledge of the BCL; and a package's source, which is not in `src/` |
 | O2 | `internal` reaches exactly the assemblies the two grant lists name | `[InternalsVisibleTo]`; exact-set assertions at link 2 | **A list a task edits**, seen by two assemblies only. §4.2 closes the second half; §4.3 prices the first |
 | O3 | No assembly in the closure publishes origination through a member signature, an inheritance, an explicit implementation, a default interface member or a protected member on a derivable type | `ProofMentionScan` + `DerivableTypes`. Executed: `155 public members … 1 mention, 1 allow-listed; floor 140`; `20 public types … 0 derivable` | **Erasure.** Executed: 14 doors, 0 reported (§3.5) |
-| O4 | …therefore no assembly outside the closure can originate a scope | — | **Broken three ways**: `[UnsafeAccessor]` (O1), erasure (O3), reflection (ADR-0033 §3.1). **This is where the chain stops** |
+| O4 | …therefore no assembly outside the closure can originate a scope | — | **Broken four ways known today**: `[UnsafeAccessor]` (O1), reflection (ADR-0033 §3.1), erasure (O3), `Unsafe.As` (probe F). **This is where the chain stops**, and §5's list is open |
 | O5 | The code that could exercise O1a's, O3's or O4's gaps is first-party, in the friend set, and Full-tier reviewed | `CLAUDE.md` review tiers; ADR-0033 §5.3 | **A human.** It degrades quietly, as ADR-0033 §8 already says of its own control |
 
 ### 5.2 What the proof scan is, and what it is not
@@ -296,7 +403,7 @@ An assembly that wants a scope without a grant needs neither a missed member sha
 **Two consequences, and they are the operative part of this ADR for reviewers:**
 
 1. **A newly found member shape is a normal finding on the rule**, at the tier its owning task carries. It is not a re-opening of ADR-0007 §3.4's guarantee, and it does not block a branch *on the guarantee's account*. Five consecutive reviews escalated on that reading, and the reading was reasonable because nothing said otherwise. Now something does.
-2. **No further shape-enumeration closes O3, and none of it touches O1.** A review proposing an eighth term should propose §3.2's inversion instead, or accept the residual.
+2. **No further shape-enumeration closes O3, and none of it touches O1 or route (d).** A review proposing an eighth term should propose §3.2's inversion instead, or accept the residual.
 
 ### 5.3 Present tense
 
@@ -323,7 +430,7 @@ Until those land, §4 is a **specification and nothing enforces it**. Written in
 | **A. Name the origination set as the boundary, govern it repository-wide, refuse `[UnsafeAccessor]` in `src/`, demote the member scan, restate the guarantee** *(chosen)* | States what every mechanism actually rests on; the `[UnsafeAccessor]` rule is repository-wide and reaches every internal member, not just tenancy's; costs two structural rules over populations of five and "all methods" | The residual (§5) is permanent, and governance's last link is a reviewer. Both written at that size |
 | B. Build an eighth member-scan term and keep the guarantee unconditional | — | It cannot close erasure (§3.5) and does not touch `[UnsafeAccessor]` at all. A rule believed complete is more dangerous than one known not to be. §3.2 is adopted as a rule improvement, not as a repair of the guarantee |
 | C. Make `TenantScope` internal and publish an `ITenantScope` interface | Non-friends could not name the concrete type | Strictly worse: a module could *implement* `ITenantScope` and fabricate a proof with no attribute and no reflection; link 5's hollow-scope reading is a property of the concrete sealed class; and it contradicts ADR-0007 §4.5 |
-| D. An inaccessible parameter on the internal constructor | Executed to work (probes B and C): closes `[UnsafeAccessor]` and pushes the adversary back to reflection | §4.7. ADR-0033 §2's final paragraph forbids exactly this trade, and the marginal value over G4 is confined to a threat ADR-0033 has already accepted. **Refused with an expiry test, not on taste** |
+| D. An inaccessible parameter on the internal constructor | Executed to work for the route it addresses (probes B and C): `CS0122` on the declaration, `MissingMethodException` on a generic stand-in | §4.7. It closes **one of §5's four known routes** — not (b), not (c), not (d), and the two it misses produce a scope reading as live. ADR-0033 §2's final paragraph forbids exactly this trade. **Refused with a narrowed expiry test, not on taste** |
 | E. Strong-name the assemblies and qualify the grants with a public key | Stops an assembly *named* `Aurora.Platform.Tenancy.UnitTests` receiving internals | Defends a build-time impostor who could equally edit the `.csproj`; moot against an in-process adversary; costs signing, key custody and a key blob in every grant |
 | F. `CODEOWNERS` + branch protection as the governance | The only mechanical answer to "who may widen the list" | §4.4: neither exists and neither is agent-configurable here |
 | G. Leave it unowned (the state before this ADR) | Nothing to write | Five reviews, one question, no record. Each reviewer correctly read §3.4's guarantee as unconditional and correctly found it was not |
@@ -344,7 +451,8 @@ Until those land, §4 is a **specification and nothing enforces it**. Written in
 **Negative, and owned**
 
 - **The guarantee gets substantially weaker on paper and stays exactly as strong in fact.** ADR-0007 §3.4's sentence read better. It was false, and five people spent five rounds finding that out one door at a time.
-- **G4's rule does not exist**, and its best available signal is a metadata proxy rather than the attribute itself, because ADR-0032 §1.1's scanner cannot read custom attributes.
+- **G4's rule does not exist**, its F1 signal is a metadata proxy rather than the attribute itself (ADR-0032 §1.1), and **its F2–F6 half is specified but not executed** — I did not build it, and §4.6's chain table says so.
+- **§5's route list is open**, which is correct and is also less comfortable than the closed list it replaces. Two of the four routes were added by reviewers, one of them after this document had already been rewritten once around the first.
 - **G4 buys nothing against a Country Package** and must never be cited as though it does.
 - **§3.2's inversion is work that does not exist**; until it lands the proof scan's population is still a filter.
 - **§4.3's last link is a reviewer**, and §4.4 refuses the one mechanism that would replace it.
@@ -358,6 +466,7 @@ Until those land, §4 is a **specification and nothing enforces it**. Written in
 - **A grant is requested for an assembly that ships.** First time §4.3 condition 2 does real work.
 - **A second sanctioned door is proposed.** One factory member is a design; two is a pattern.
 - **`Aurora.TestKit` reaches B-18.5** — ADR-0034 §6.1's conditions meet §4.3's criteria there for the first time.
-- **.NET changes what `[UnsafeAccessor]` may reach**, or ships an in-process isolation mechanism. §2.1 probe A is the test that would go red and bring someone here.
+- **.NET changes what `[UnsafeAccessor]` may reach**, or ships an in-process isolation mechanism, or begins checking reference types on reinterpretation. §2.1 probes A and F are the tests that would go red and bring someone here.
+- **A fifth origination route is found.** §5's list is open by construction; what should be checked first is whether it is an F-row §4.6 already names — if it is, G4 covers it and only §5's table needs the line. If it is not, §4.6's family is what needs revisiting, not §5.
 - **An eighth member shape is found *after* §3.2's inversion has landed.** Not a trigger before then (§5.2); after, it is a serious one, because it would mean reachability is not decidable from metadata the way §3.3 assumes.
 - **Any assembly becomes strong-named** for an unrelated reason — option E becomes nearly free.

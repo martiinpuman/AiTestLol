@@ -55,7 +55,24 @@ The obvious fix is one constant in a place both assemblies see. Both `Aurora.Cou
 
 > **It is refused.** `Aurora.SharedKernel` is the domain kernel. Putting a PostgreSQL schema-naming rule in it re-couples the Country Package contract and the tenancy contract *through* the kernel — which is precisely what ADR-0035 §2 spent a decision avoiding when it made `InstalledPackages` carry the catalog's **text** rather than the Country Package contract types, *"so that a package-contract MAJOR bump is not a tenancy change"*. A shared constant in the kernel would make the schema key's rule exactly that kind of shared surface.
 >
-> **Instead: the two declarations stay, and a fitness rule asserts they are equal.** Population: the declarations found. Report **declarations found / compared / equal**, and fail if the count is not the number the rule expects — a comparison that finds one declaration and reports "no disagreement" is the shape this project has shipped once.
+> **Instead: the declarations stay where they are, and a fitness rule compares them.** §3 removes one of the two *length* declarations, so "assert the two lengths are equal" would report `found 1 / compared 0 / equal 0` and be green having measured nothing — produced by the decision immediately above it. The population is therefore stated explicitly, in two parts:
+>
+> **(i) The two character-rule declarations** — `PackageIdFormat.CharacterPattern` and `PackageKey`'s `[GeneratedRegex]` — compared **after a stated normalisation**, because they are not equal as text and not equivalent as regexes:
+>
+> ```
+> input = "nz\n"
+>   ^[a-z][a-z0-9_]*$   (PackageIdFormat.CharacterPattern) -> True
+>   ^[a-z][a-z0-9_]*\z  (PackageKey GeneratedRegex)        -> False
+>   literal string equality of the two patterns             -> False
+> ```
+>
+> In .NET `$` also matches before a trailing newline; `\z` does not. The normalisation the rule applies is therefore **`$` → `\z`**, and it is named here so that the rule is not written to "compare the strings" and quietly weakened to make the row green.
+>
+> **(ii) The one remaining length declaration** — `PackageIdFormat.MaxLength` — asserted **against `catalog.installed_package.package_id`'s column type**, not against another constant. That is the mechanism §3 chose it for, and it is the assertion that keeps §3's reasoning true rather than merely recorded.
+>
+> Report **declarations found / compared / equal**, and fail if `found` is not the number the rule expects — a comparison that finds one declaration and reports "no disagreement" is the shape this project has shipped once.
+
+**Not a live hole, and worth saying so rather than leaving the executed difference looking like a defect.** `PackageIdFormat.IsWellFormed` is a character walk (`char.IsAsciiLetterLower` / `IsAsciiDigit` / `'_'`), so it rejects `"nz\n"` whatever the pattern says; `CharacterPattern` itself is consumed by PostgreSQL's `~` in `CheckConstraintSql`, where `$` is strict. Nothing accepts a newline into a `pkg_<key>` schema name today. The `$`/`\z` difference is about what §4's rule can assert, not about a reachable defect — and that is exactly why it has to be stated before the rule is written.
 
 **Why "two copies plus a rule" is acceptable here when `FOLLOWUP-058` says it is not.** `FOLLOWUP-058`'s drift *could not fail anything* — `verify.sh`'s `--help` text is never asserted against the floor it describes, so both drifts survived every gate and were found by a human reading the file. Its recommended fix, in its own words, is *"assert it against the value in `verify-selftest.sh` so the drift is a failure rather than a reading."* That is exactly this. The distinction is not the number of copies; it is whether a machine compares them.
 
@@ -81,7 +98,8 @@ The obvious fix is one constant in a place both assemblies see. Both `Aurora.Cou
 
 **Negative, and owned**
 
-- **Two declarations remain**, and the rule that compares them does not exist yet. Until it does, this ADR is a specification and the drift is still only a reading.
+- **Two character-rule declarations remain**, and the rule that compares them does not exist yet. Until it does, this ADR is a specification and the drift is still only a reading.
+- **The comparison needs a normalisation that a future reader may not expect** (`$` → `\z`). A normalisation is a place where a rule can be weakened to make a row green, which is why §4 states it rather than leaving it to the implementer.
 - **The comparison's population is what somebody thought to compare.** §4's last paragraph is the honest limit.
 - **`PackageKey` losing its bound makes it depend on a rule stated in an assembly it cannot reference.** That is the cost of ADR-0035's decoupling and is paid deliberately; the fitness rule is what keeps it honest.
 - **`PackageIdFormat` is on an unmerged branch** (`task/B-06.1a`, in rework). Nothing here can be implemented before it merges.
