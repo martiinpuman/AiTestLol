@@ -1,4 +1,5 @@
 using System;
+using Aurora.Platform.Tenancy.Contracts;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,6 +7,10 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Aurora.Platform.Tenancy.Migrations
 {
     /// <inheritdoc />
+    [MigrationSafety(
+        MigrationCategory.Expand,
+        "The first catalog schema. Every statement creates: schemas, tables, indexes on tables "
+        + "created here, grants and one default privilege. Nothing exists yet to contract.")]
     public partial class InitialCatalog : Migration
     {
         /// <inheritdoc />

@@ -62,12 +62,15 @@ readonly FAIL_TAIL_LINES=40
 # discovery failure, all of which move the count by tens or to zero; the smallest
 # assembly is 91, so any assembly dropping out still lands below it. Re-round it
 # whenever a test project joins or leaves Aurora.sln.
-# 854 executed with B-21, B-06.1 merged (SharedKernel 231, Countries.Contracts 141,
-# Countries.Hosting 105, Platform.Tenancy 242, Architecture 135); 840 before it.
+# 1076 executed with B-09 rework 3, B-21 merged (SharedKernel 231, Countries.Contracts 141,
+# Countries.Hosting 105, Platform.Tenancy 242, Architecture 357); 854 before it.
 # Re-measured at every merge, never inherited: B-04 alone measured 342, B-05 371,
-# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854.
-MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-850}"
-readonly MIN_UNIT_TESTS
+# B-12 440, B-03.1 761, B-19 764, B-06.1 840, B-21 854, B-09 1076.
+# --help prints this one value, so the usage text and the floor cannot drift
+# apart (FOLLOWUP-058).
+DEFAULT_MIN_UNIT_TESTS=1070
+MIN_UNIT_TESTS="${AURORA_MIN_UNIT_TESTS:-${DEFAULT_MIN_UNIT_TESTS}}"
+readonly DEFAULT_MIN_UNIT_TESTS MIN_UNIT_TESTS
 
 # ---------------------------------------------------------------------------
 # The stage table (5.2). The order here is the execution order.
@@ -152,7 +155,7 @@ OPT_FILTER=""
 OPT_ONLY_STAGE=""
 
 usage() {
-  cat <<'USAGE'
+  cat <<USAGE
 Usage: scripts/verify.sh [options]
 
 The single quality gate for Aurora ERP (docs/architecture/solution-layout.md 5).
@@ -175,7 +178,7 @@ Options:
 
 Environment:
   AURORA_MIN_UNIT_TESTS   The number of tests stage 6 must see execute before
-                          it may report PASS (default 830, the greatest multiple
+                          it may report PASS (default ${DEFAULT_MIN_UNIT_TESTS}, the greatest multiple
                           of ten strictly below the suite's count). The count is always
                           printed in the summary, whatever the floor is. Set it
                           to 0 when running a deliberately narrow --filter.
