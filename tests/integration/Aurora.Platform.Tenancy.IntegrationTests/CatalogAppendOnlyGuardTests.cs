@@ -36,15 +36,19 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// lets the statement through <em>for the probe's session</em>.
 /// </para>
 /// <para>
-/// <b>The binding check.</b> What a write to one of these tables does is decided by four things
-/// PostgreSQL holds in four places — the ACL (<c>CatalogPrivilegeTests</c>' oracle), the guards
-/// (<c>pg_trigger</c>), rewrite rules (<c>pg_rewrite</c>) and row-level security
-/// (<c>pg_class.relrowsecurity</c>, <c>pg_policy</c>) — and this check reads the last three
-/// and compares them with what the migration wrote. For each guard: <c>tgtype</c> exactly,
-/// <c>tgenabled = 'A'</c>, <c>tgfoid</c> resolved to <c>catalog.refuse_append_only_change</c>
-/// <em>by schema</em>, <c>tgqual</c> null, <c>tgattr</c> empty, <c>tgnargs</c> zero. For each
-/// table: no rule of any kind, row-level security off, no policy. <em>What it sees that the
-/// probe cannot:</em> anything that was made <em>conditional on the session</em>. A guard
+/// <b>The binding check.</b> Name the chain from what is asserted to what must be true. The ACL
+/// decides who may issue a statement at all (<c>CatalogPrivilegeTests</c>' oracle);
+/// <c>pg_trigger</c> decides which guard fires, when, for which rows and with what;
+/// <c>pg_rewrite</c> can discard or redirect the statement before any guard fires;
+/// <c>pg_class.relrowsecurity</c> and <c>pg_policy</c> decide which rows the statement reaches;
+/// and <c>pg_proc</c> holds what the guard the trigger names <em>actually does</em>. This check
+/// reads every link after the ACL and compares it with what the migration wrote: for each
+/// guard <c>tgtype</c> exactly, <c>tgenabled = 'A'</c>, <c>tgfoid</c> resolved to
+/// <c>catalog.refuse_append_only_change</c> <em>by schema</em>, <c>tgqual</c> null, <c>tgattr</c>
+/// empty, <c>tgnargs</c> zero; for each table no rule of any kind, row-level security off, no
+/// policy; and for the function, <c>pg_get_functiondef</c>'s rendering — body, language,
+/// security and configuration in one string — equal to the one the migration wrote. <em>What it
+/// sees that the probe cannot:</em> anything made <em>conditional on the session</em>. A guard
 /// re-created <c>WHEN (current_setting('aurora.maintenance', true) IS DISTINCT FROM 'on')</c>
 /// fires for every session that has not set that GUC — the probe included — and for no session
 /// that has; a column list (<c>BEFORE UPDATE OF correlation_id</c>) fires for the column the
@@ -52,23 +56,34 @@ namespace Aurora.Platform.Tenancy.IntegrationTests;
 /// 'on' DO INSTEAD NOTHING</c> discards an armed session's inserts with nothing refused, so an
 /// unrecorded support-access grant or an erasure that is never replayed after a restore leaves a
 /// trail that looks intact because nothing was ever refused, only silently dropped; a forced
-/// row-level-security policy keyed the same way conceals every row from an armed session and
-/// turns its <c>UPDATE</c> and <c>DELETE</c> into silent no-ops. Each of those leaves every
-/// column the check read before it byte-identical — the <c>WHEN</c> clause shipped through the
-/// first review of this branch with every test green (PR #12, critical), the rule through the
-/// second (high) — because a check is only as good as the last link it follows, and each time
-/// the link stopped one column, then one catalog, short. <c>aurora_app</c> can <em>arm</em> any of
-/// them (<c>SET aurora.maintenance = 'on'</c> is any role's to run) but cannot plant one: planting
-/// needs the DDL role. <em>What it cannot see:</em> a hollow body, by construction; that is the
-/// probe's.
+/// row-level-security policy keyed the same way conceals every row from an armed session; and a
+/// body that returns for an armed session and raises, with the migration's own message, for
+/// every other, refuses the probe every time and empties both trails for the attacker. Each of
+/// those shipped through a review of this branch with every test green — the <c>WHEN</c> clause
+/// (first review, critical), the rule (second, high), the conditional body (third, blocker) —
+/// because a check is only as good as the last link it follows, and the link stopped one column
+/// short, then one catalog short, then at the function's <em>name</em> rather than its
+/// definition. <c>aurora_app</c> can <em>arm</em> any of them (<c>SET aurora.maintenance = 'on'</c>
+/// is any role's to run) but cannot plant one: planting needs the DDL role.
 /// </para>
 /// <para>
-/// <b>What neither sees.</b> A transient tamper — disable, act, restore — between two runs, and
-/// any shape neither the probe executes nor the binding check binds. The first is what a chain
-/// head outside the database is for (<c>FOLLOWUP-026</c>); against the second the only defence
-/// is that the binding check reads <em>every</em> place PostgreSQL decides what a write does,
-/// which is the list above. A <c>CHECK</c> constraint keyed on a GUC is the one shape that
-/// announces itself — an armed insert fails loudly rather than vanishing — and is not read here.
+/// <b>What <c>pg_get_functiondef</c> cannot see.</b> The definition is text. What an identifier
+/// in it resolves to at execution is decided by the session's <c>search_path</c>, which this
+/// definition does not pin (no <c>SET search_path</c> — it would be shown if it did). The body's
+/// one call is <c>format()</c>; a shadowing <c>format()</c> earlier on the path cannot stop the
+/// <c>RAISE</c>, it can only change the message, which the probe compares exactly and would then
+/// report as an unmatched exception rather than a refusal. Nor does the rendering show the
+/// function's owner, which matters only under <c>SECURITY DEFINER</c> (shown), or the language's
+/// handler, which is superuser territory. A run that read no definition, or an empty one, is a
+/// finding rather than a clean comparison.
+/// </para>
+/// <para>
+/// <b>What neither sees.</b> A transient tamper — plant, act, remove — between two runs, which is
+/// what a chain head outside the database is for (<c>FOLLOWUP-026</c>). And a shape nobody
+/// enumerated: the Theory requires at least one side to report every row, which is the guard
+/// that would catch this class of gap — and it can only fire for a row that exists, which is the
+/// general limit of a fault theory. A <c>CHECK</c> constraint keyed on a GUC is the one shape
+/// that announces itself — an armed insert fails loudly rather than vanishing — and is not read.
 /// </para>
 /// </remarks>
 [Collection(CatalogDatabaseSuite.Name)]
@@ -98,6 +113,45 @@ public sealed class CatalogAppendOnlyGuardTests
         ("_truncate", StatementLevelBeforeTruncate),
     ];
 
+    /// <summary>
+    /// The guard function as the <c>AppendOnlyTrails</c> migration created it, rendered the way
+    /// <c>pg_get_functiondef</c> renders a definition on PostgreSQL 17.11 — verified against the
+    /// server's own output with whitespace made visible: name, then <c>" RETURNS trigger"</c> and
+    /// <c>" LANGUAGE plpgsql"</c> each on a line with one leading space, then the body between
+    /// <c>$function$</c> quotes exactly as <c>pg_proc.prosrc</c> holds it, then a newline. Any
+    /// option the rendering would add — <c>SECURITY DEFINER</c>, a <c>SET</c>, a different
+    /// language, a different body — makes the strings differ, which closes every <c>pg_proc</c>
+    /// link at once.
+    /// </summary>
+    /// <remarks>
+    /// A separate literal on purpose, not read from the migration: the review that found the
+    /// conditional-body bypass proved it by committing three lines into the migration's source
+    /// and running this suite, and an expectation derived from that source would have moved with
+    /// them. A change to the migration's body that is not also a change here is exactly what
+    /// this check must fail on.
+    /// </remarks>
+    private const string ExpectedGuardFunctionDefinition =
+        "CREATE OR REPLACE FUNCTION catalog.refuse_append_only_change()\n"
+        + " RETURNS trigger\n"
+        + " LANGUAGE plpgsql\n"
+        + "AS $function$\n"
+        + "BEGIN\n"
+        + "    RAISE EXCEPTION USING\n"
+        + "        ERRCODE = '42501',\n"
+        + "        MESSAGE = format('%I.%I is append-only: %s refused', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP),\n"
+        + "        HINT = 'ADR-0004 rule 5: an audit trail is corrected by a new row, never by rewriting one.';\n"
+        + "END\n"
+        + "$function$\n";
+
+    /// <summary>
+    /// The third review's fault: the guard's body re-written to return for an armed session and
+    /// raise, with the migration's own message, for every other — the probe's included.
+    /// </summary>
+    private const string ConditionalGuardBody =
+        $"CREATE OR REPLACE FUNCTION catalog.{GuardFunction}() RETURNS trigger LANGUAGE plpgsql AS "
+        + $"'BEGIN IF current_setting(''{MaintenanceSwitch}'', true) = ''on'' THEN RETURN COALESCE(NEW, OLD); END IF; "
+        + "RAISE EXCEPTION USING ERRCODE = ''42501'', MESSAGE = format(''%I.%I is append-only: %s refused'', TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP); END'";
+
     /// <summary>One forbidden statement per verb; <c>@id</c> names the seeded row where a row is what is forbidden.</summary>
     private static readonly IReadOnlyList<(string Verb, string SqlFor)> Forbidden =
     [
@@ -123,7 +177,7 @@ public sealed class CatalogAppendOnlyGuardTests
             "hollowed for rows: CREATE OR REPLACE FUNCTION … RETURN COALESCE(NEW, OLD)",
             $"CREATE OR REPLACE FUNCTION catalog.{GuardFunction}() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN COALESCE(NEW, OLD); END'",
             "operator_audit_event/UPDATE, operator_audit_event/DELETE, operator_audit_event/TRUNCATE, erasure_replay_log/UPDATE, erasure_replay_log/DELETE, erasure_replay_log/TRUNCATE",
-            "",
+            $"{QualifiedGuardFunction} is not the function the migration created",
             "",
             ""
         },
@@ -131,7 +185,7 @@ public sealed class CatalogAppendOnlyGuardTests
             "hollowed for statements: CREATE OR REPLACE FUNCTION … RETURN NULL",
             $"CREATE OR REPLACE FUNCTION catalog.{GuardFunction}() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RETURN NULL; END'",
             "operator_audit_event/UPDATE, operator_audit_event/DELETE, operator_audit_event/TRUNCATE, erasure_replay_log/UPDATE, erasure_replay_log/DELETE, erasure_replay_log/TRUNCATE",
-            "",
+            $"{QualifiedGuardFunction} is not the function the migration created",
             "",
             ""
         },
@@ -235,6 +289,22 @@ public sealed class CatalogAppendOnlyGuardTests
             "SELECT NOT EXISTS (SELECT 1 FROM catalog.operator_audit_event WHERE action = 'silently.discarded')"
         },
         {
+            "conditional: the guard function's body re-written to return instead of raising for an armed session - every pg_trigger column, every rule and every policy unchanged (PR #12 third review, blocker)",
+            ConditionalGuardBody,
+            "",
+            $"{QualifiedGuardFunction} is not the function the migration created",
+            "DELETE FROM catalog.operator_audit_event WHERE id = @id",
+            "SELECT NOT EXISTS (SELECT 1 FROM catalog.operator_audit_event WHERE id = @id)"
+        },
+        {
+            "conditional: the same body, and its blast radius - one function serves both tables and all three verbs, so the other table's truncate guard falls to the same statement",
+            ConditionalGuardBody,
+            "",
+            $"{QualifiedGuardFunction} is not the function the migration created",
+            "TRUNCATE catalog.erasure_replay_log",
+            "SELECT NOT EXISTS (SELECT 1 FROM catalog.erasure_replay_log)"
+        },
+        {
             "concealed: forced row-level security with a policy that hides every row from an armed session",
             "ALTER TABLE catalog.erasure_replay_log ENABLE ROW LEVEL SECURITY; "
             + "ALTER TABLE catalog.erasure_replay_log FORCE ROW LEVEL SECURITY; "
@@ -296,6 +366,11 @@ public sealed class CatalogAppendOnlyGuardTests
         findings.ShouldBeEmpty(string.Join(Environment.NewLine, findings));
         guards.Count.ShouldBe(CatalogSchemaAllowlist.AppendOnlyTables.Count * ExpectedGuards.Count, "two guards per append-only table");
         guards.Count.ShouldBeGreaterThanOrEqualTo(4, "a binding check over fewer guards examined the wrong population");
+
+        // The definition comparison examined something: one function, read in full, and every
+        // guard resolving to it - a run that read no definition cannot report a clean comparison.
+        guards.Select(g => g.FunctionDefinition).Distinct(StringComparer.Ordinal).ShouldHaveSingleItem("one function serves every guard")
+            .Length.ShouldBeGreaterThan(0, "pg_get_functiondef returned nothing");
     }
 
     [Theory]
@@ -309,12 +384,21 @@ public sealed class CatalogAppendOnlyGuardTests
         // states both verdicts, so a tamper that neither side sees cannot hide in a row that only
         // asks one of them:
         //
-        // - The hollow bodies leave pg_trigger byte-identical, so the binding check reports
-        //   nothing and the probe reports every statement silent. One function serves both
-        //   guards, so either hollow shape silences all six; both are kept because they hollow
-        //   differently - RETURN NULL cancels a row-level UPDATE or DELETE (0 rows, no error) and
-        //   is ignored by a statement-level trigger, so the TRUNCATE lands; RETURN COALESCE(NEW,
-        //   OLD) lets the row through and, being NULL for a statement, the TRUNCATE too.
+        // - The hollow bodies leave pg_trigger byte-identical and are seen by both sides: by the
+        //   probe, whose own six statements go through, and by the binding check, whose
+        //   pg_get_functiondef comparison reports the changed definition. One function serves
+        //   both guards, so either hollow shape silences all six; both are kept because they
+        //   hollow differently - RETURN NULL cancels a row-level UPDATE or DELETE (0 rows, no
+        //   error) and is ignored by a statement-level trigger, so the TRUNCATE lands; RETURN
+        //   COALESCE(NEW, OLD) lets the row through and, being NULL for a statement, the
+        //   TRUNCATE too.
+        // - The conditional body is the case the probe cannot see: it raises, with the
+        //   migration's own message, for every session that has not armed the GUC - the probe
+        //   included - and returns for one that has. Before the definition was compared, it was
+        //   seen by nothing on this branch and shipped through the suite at 75/75/0 (PR #12 third
+        //   review, blocker); its blast radius is the whole mechanism, because one function
+        //   serves both tables and all three verbs, so the two rows bypass DELETE on one table
+        //   and TRUNCATE on the other with the same statement.
         // - Disabling and dropping are seen by both: the probe names that guard's verbs on that
         //   table, the binding check names the guard as 'D' or missing.
         // - The conditional shapes are the ones the probe cannot see. A WHEN clause keyed on a
@@ -529,7 +613,8 @@ public sealed class CatalogAppendOnlyGuardTests
     {
         await using var command = new NpgsqlCommand(
             "SELECT c.relname, t.tgname, t.tgtype, t.tgenabled, fn.nspname || '.' || p.proname, "
-            + "       t.tgqual IS NOT NULL, coalesce(array_length(t.tgattr::smallint[], 1), 0), t.tgnargs::int, pg_get_triggerdef(t.oid) "
+            + "       t.tgqual IS NOT NULL, coalesce(array_length(t.tgattr::smallint[], 1), 0), t.tgnargs::int, pg_get_triggerdef(t.oid), "
+            + "       coalesce(pg_get_functiondef(p.oid), '') "
             + "FROM pg_trigger t "
             + "JOIN pg_class c ON c.oid = t.tgrelid "
             + "JOIN pg_namespace n ON n.oid = c.relnamespace "
@@ -546,7 +631,7 @@ public sealed class CatalogAppendOnlyGuardTests
         {
             located.Add(new GuardLocation(
                 reader.GetString(0), reader.GetString(1), reader.GetInt16(2), reader.GetChar(3), reader.GetString(4),
-                reader.GetBoolean(5), reader.GetInt32(6), reader.GetInt32(7), reader.GetString(8)));
+                reader.GetBoolean(5), reader.GetInt32(6), reader.GetInt32(7), reader.GetString(8), reader.GetString(9)));
         }
 
         return located;
@@ -651,6 +736,25 @@ public sealed class CatalogAppendOnlyGuardTests
             findings.Add($"catalog.{table}.{trigger} is missing");
         }
 
+        // The last link: what the function the guards name actually does. pg_get_functiondef
+        // renders body, language, security and configuration as one string, compared with the
+        // one the migration wrote; one function serves every guard, so it is compared once. A
+        // definition that could not be read is a finding, never a silent pass.
+        foreach (string definition in guards
+                     .Where(g => string.Equals(g.Function, QualifiedGuardFunction, StringComparison.Ordinal))
+                     .Select(g => g.FunctionDefinition)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            if (definition.Length == 0)
+            {
+                findings.Add($"{QualifiedGuardFunction}'s definition could not be read from pg_proc");
+            }
+            else if (!string.Equals(definition, ExpectedGuardFunctionDefinition, StringComparison.Ordinal))
+            {
+                findings.Add($"{QualifiedGuardFunction} is not the function the migration created: {definition}");
+            }
+        }
+
         foreach (TableAttachment attachment in attachments)
         {
             findings.Add(
@@ -661,12 +765,18 @@ public sealed class CatalogAppendOnlyGuardTests
         return findings;
     }
 
-    private static string Describe(IReadOnlyList<GuardLocation> guards, IReadOnlyList<TableAttachment> attachments) =>
-        $"Located {guards.Count} guard trigger(s) on {CatalogSchemaAllowlist.AppendOnlyTables.Count} append-only tables: "
-        + string.Join("; ", guards.Select(g =>
-            $"{g.Table}.{g.Trigger} tgtype {g.Type} tgenabled {g.Enabled} -> {g.Function}() when {(g.HasWhen ? "present" : "none")} columns {g.Columns} args {g.Args}"))
-        + $". Read {attachments.Count(a => a.Kind == "rule")} rule(s), {attachments.Count(a => a.Kind == "policy")} polic(ies) and "
-        + $"row level security on {attachments.Count(a => a.Kind == "row level security")} table(s) from pg_rewrite, pg_policy and pg_class.";
+    private static string Describe(IReadOnlyList<GuardLocation> guards, IReadOnlyList<TableAttachment> attachments)
+    {
+        List<string> definitions = [.. guards.Select(g => g.FunctionDefinition).Distinct(StringComparer.Ordinal)];
+        return $"Located {guards.Count} guard trigger(s) on {CatalogSchemaAllowlist.AppendOnlyTables.Count} append-only tables: "
+            + string.Join("; ", guards.Select(g =>
+                $"{g.Table}.{g.Trigger} tgtype {g.Type} tgenabled {g.Enabled} -> {g.Function}() when {(g.HasWhen ? "present" : "none")} columns {g.Columns} args {g.Args}"))
+            + $". Read {attachments.Count(a => a.Kind == "rule")} rule(s), {attachments.Count(a => a.Kind == "policy")} polic(ies) and "
+            + $"row level security on {attachments.Count(a => a.Kind == "row level security")} table(s) from pg_rewrite, pg_policy and pg_class. "
+            + $"Read {definitions.Count} distinct function definition(s) from pg_proc via pg_get_functiondef, {definitions.Sum(d => d.Length)} chars in all, "
+            + $"against the migration's {ExpectedGuardFunctionDefinition.Length}:"
+            + string.Concat(definitions.Select(d => Environment.NewLine + d));
+    }
 
     private async Task<Guid> SeedTenantAsync()
     {
@@ -691,8 +801,13 @@ public sealed class CatalogAppendOnlyGuardTests
             + $"silent: {(Silent.Count == 0 ? "(none)" : string.Join(", ", Silent))}";
     }
 
-    /// <summary>One trigger as <c>pg_trigger</c> holds it, in the columns that decide whether and how it fires.</summary>
-    private sealed record GuardLocation(string Table, string Trigger, short Type, char Enabled, string Function, bool HasWhen, int Columns, int Args, string Definition);
+    /// <summary>
+    /// One trigger as <c>pg_trigger</c> holds it, in the columns that decide whether and how it
+    /// fires, and the definition of the function it executes as <c>pg_get_functiondef</c> renders
+    /// it from <c>pg_proc</c> — the last link, the thing that actually runs.
+    /// </summary>
+    private sealed record GuardLocation(
+        string Table, string Trigger, short Type, char Enabled, string Function, bool HasWhen, int Columns, int Args, string Definition, string FunctionDefinition);
 
     /// <summary>
     /// One thing besides a trigger attached to an append-only table that decides what a write

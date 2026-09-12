@@ -116,6 +116,15 @@ namespace Aurora.Platform.Tenancy.Migrations
             // because PostgreSQL checks EXECUTE when a trigger is created and not when it fires
             // (A_trigger_function_closed_to_the_app_role_still_fires_for_it), and it is recorded
             // as [] in CatalogSchemaAllowlist.AppRoleObjectPrivileges.
+            //
+            // CatalogAppendOnlyGuardTests.ExpectedGuardFunctionDefinition holds its own copy of
+            // this function's definition, as pg_get_functiondef renders it, and compares it with
+            // what the migrated database holds - body, language, security and configuration in
+            // one string. It is a separate literal on purpose, not derived from this one: the
+            // review that found the conditional-body bypass proved it by committing three lines
+            // into this block and running the suite, and an expectation read from this source
+            // would have moved with them. A change to this body that is not also a change to
+            // that literal is exactly what that test must fail on (PR #12, third review).
             migrationBuilder.Sql(
                 """
                 CREATE FUNCTION catalog.refuse_append_only_change() RETURNS trigger
@@ -148,36 +157,46 @@ namespace Aurora.Platform.Tenancy.Migrations
             // requires 42501 and this function's message from each, because CREATE OR REPLACE
             // FUNCTION with a hollow body - RETURN NULL, which a statement-level trigger ignores -
             // is one statement that leaves every pg_trigger column byte-identical while the
-            // TRUNCATE lands. And it reads back everything PostgreSQL consults to decide what a
-            // write to these tables does, from every catalog that holds it: for each guard, every
-            // pg_trigger column that decides whether and how it fires - tgtype exactly, tgenabled
+            // TRUNCATE lands. And it follows the chain from what it asserts to what must be true,
+            // one catalog per link, and compares each link with what this migration wrote: the
+            // ACL decides who may issue a statement (CatalogPrivilegeTests); pg_trigger decides
+            // which guard fires, when, for which rows and with what - tgtype exactly, tgenabled
             // 'A', tgfoid resolved to this function by schema, tgqual null, tgattr empty, tgnargs
-            // zero - and for each table, no rewrite rule (pg_rewrite), row-level security off and
-            // no policy (pg_class.relrowsecurity, pg_policy). Each of those is a way to make the
-            // table behave for the probe's session and not for an attacker's: a guard re-created
-            // WITH a WHEN clause keyed on a GUC fires for every session that has not set it, the
-            // probe included, while a session that has deletes or truncates freely (PR #12,
-            // critical; executed on 17.11 for the row guard and the truncate guard alike); a guard
+            // zero; pg_rewrite can discard or redirect the statement before any guard fires - no
+            // rule; pg_class.relrowsecurity and pg_policy decide which rows it reaches - off, and
+            // none; and pg_proc holds what the guard the trigger names actually does -
+            // pg_get_functiondef's rendering equal to the test's own copy of this definition,
+            // body, language, security and configuration in one string. Each link is a way to
+            // make the table behave for the
+            // probe's session and not for an attacker's, and each was found by a review of this
+            // branch with every test green because the check had stopped one link short: a guard
+            // re-created WITH a WHEN clause keyed on a GUC fires for every session that has not
+            // set it, the probe included, while a session that has deletes or truncates freely
+            // (critical; executed on 17.11 for the row guard and the truncate guard alike); a guard
             // re-created for UPDATE OF one column fires for that column and no other; a rule ON
             // INSERT … WHERE the GUC is set DO INSTEAD NOTHING discards an armed session's inserts
-            // with nothing refused (PR #12's second review, high) - a support-access grant never
-            // recorded, an erasure never replayed after a restore, a trail that looks intact
-            // because nothing was ever refused, only dropped; a forced row-level-security policy
-            // keyed the same way conceals every row from an armed session. None of those changes
-            // tgtype, tgenabled or the function's name, which is all the first version of that
-            // check read, and the rule and the policy live outside pg_trigger altogether, which
-            // is all the second version read. aurora_app can arm any of them - SET is any role's
-            // - but cannot plant one; planting is DDL.
+            // with nothing refused (high) - a support-access grant never recorded, an erasure
+            // never replayed after a restore, a trail that looks intact because nothing was ever
+            // refused, only dropped; a forced row-level-security policy keyed the same way
+            // conceals every row from an armed session; and this function's body re-written to
+            // return for an armed session and raise, with this very message, for every other
+            // (blocker) - one statement, both tables, all three verbs, refusing the probe every
+            // time. aurora_app can arm any of them - SET is any role's - but cannot plant one;
+            // planting is DDL.
             //
             // Neither table is partitioned, so Amendment 2's partition clause - a guard created on
             // every partition, because a truncate guard is never cloned to one - does not arise
             // here. What the guards leave, stated rather than implied: aurora_migrator, as the
             // DDL-path role, can still disable, drop, re-create or rebind either guard, replace
-            // this function's body, or attach a rule or a policy; a transient tamper between two
-            // runs - plant, act, remove - is seen by nothing here, and a CHECK constraint keyed on
-            // a GUC is the one shape that announces itself (an armed insert fails loudly) and is
-            // not read. That is the detection-not-prevention boundary ADR-0028 section 2 draws,
-            // whose cover is the chain head recorded in operator_audit_event by FOLLOWUP-031's job
+            // this function's body, or attach a rule or a policy, and a transient tamper between
+            // two runs - plant, act, remove - is seen by nothing here. pg_get_functiondef renders
+            // the definition as text and cannot see what an identifier in it resolves to at
+            // execution, which the session's search_path decides and this definition does not pin;
+            // the body's one call is format(), and a shadowed format() cannot stop the RAISE, only
+            // change the message, which the probe compares exactly. A CHECK constraint keyed on a
+            // GUC is the one shape that announces itself (an armed insert fails loudly) and is not
+            // read. That is the detection-not-prevention boundary ADR-0028 section 2 draws, whose
+            // cover is the chain head recorded in operator_audit_event by FOLLOWUP-031's job
             // (FOLLOWUP-026). aurora_app never reaches either guard: its UPDATE, DELETE and
             // TRUNCATE are 42501 from the privilege check, and the ACL comparison keeps it so.
             foreach (string table in new[] { "operator_audit_event", "erasure_replay_log" })

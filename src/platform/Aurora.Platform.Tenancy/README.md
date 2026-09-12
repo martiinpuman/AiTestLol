@@ -151,34 +151,44 @@ mechanisms:
    back, an `UPDATE` and a `DELETE` of a seeded row on each table and a `TRUNCATE` of it must
    return `42501` and the guard's message, and the probe reports
    `relations probed / statements refused / silent` by `table/VERB`, floored at the two tables the
-   record names. Beside it, a **binding check** reads everything PostgreSQL consults to decide
-   what a write to these tables does, from every catalog that holds it: for each guard, every
-   `pg_trigger` column that decides whether and how it fires — `tgtype` exactly, `tgenabled 'A'`,
-   `tgfoid` resolved to `catalog.refuse_append_only_change` *by schema*, `tgqual` null, `tgattr`
-   empty, `tgnargs` zero — and for each table no rewrite rule (`pg_rewrite`), row-level security
-   off and no policy (`pg_class.relrowsecurity`, `pg_policy`). Each of those is a way to make the
-   table behave for the probe's session and not for an attacker's: a
+   record names. Beside it, a **binding check** follows the chain from what it asserts to what
+   must be true, one catalog per link, and compares each link with what the migration wrote: the
+   ACL decides who may issue a statement (the oracle above); `pg_trigger` decides which guard
+   fires, when, for which rows and with what — `tgtype` exactly, `tgenabled 'A'`, `tgfoid`
+   resolved to `catalog.refuse_append_only_change` *by schema*, `tgqual` null, `tgattr` empty,
+   `tgnargs` zero; `pg_rewrite` can discard or redirect the statement before any guard fires — no
+   rule; `pg_class.relrowsecurity` and `pg_policy` decide which rows it reaches — off, and none;
+   and `pg_proc` holds what the guard the trigger names *actually does* — `pg_get_functiondef`'s
+   rendering, body, language, security and configuration in one string, equal to a literal the
+   test holds on its own, deliberately not read from the migration, because the bypass was proved
+   by committing three lines into the migration's source. Each link is a way to make the table
+   behave for the probe's session
+   and not for an attacker's, and each was found by a review of this branch with every test green
+   because the check had stopped one link short: a
    `WHEN (current_setting('aurora.maintenance', true) IS DISTINCT FROM 'on')` clause fires for
-   every session that has not set that GUC, the probe included; a `BEFORE UPDATE OF correlation_id`
-   list fires for the one column the probe updates; a rule `ON INSERT … WHERE current_setting(…) =
-   'on' DO INSTEAD NOTHING` discards an armed session's inserts with nothing refused; a forced
-   row-level-security policy keyed the same way conceals every row from an armed session. The
-   `WHEN` clause shipped through the first review of this branch with every test green (PR #12,
-   critical) because the enumeration then read `tgtype`, `tgenabled` and a schema-less `proname`;
-   the rule shipped through the second (high) because the check was complete over `pg_trigger` and
-   `pg_trigger` is not the whole mechanism. A fault theory runs thirteen tamper shapes — the
-   function body hollowed two ways (`RETURN COALESCE(NEW, OLD)`, `RETURN NULL`), each guard
-   disabled and dropped, the row guard re-created with a `WHEN` clause, the truncate guard
-   re-created with one (PostgreSQL 17.11 accepts it on a statement trigger *and evaluates it* —
-   executed: with the GUC set the `TRUNCATE` lands and the table reads back empty, so `tgqual` is
-   load-bearing on both guards), the row guard re-created for `UPDATE OF` one column, the row
-   guard rebound to a hollow `shadow_b19.refuse_append_only_change()`, the truncate guard passed an
-   argument its function ignores, the discarding rule, and the concealing policy — and for each
-   states what the probe sees and what the binding check sees, executes the bypass with the GUC set
-   for the shapes only the binding check sees and proves it by a `SELECT`, and requires that at
-   least one side reports every shape. All rolled back. Under `session_replication_role =
-   'replica'`, which suppresses an ordinary trigger with `pg_trigger` unchanged, the `ALWAYS`
-   guards still refuse.
+   every session that has not set that GUC, the probe included (first review, critical — the
+   enumeration read `tgtype`, `tgenabled` and a schema-less `proname`); a rule `ON INSERT … WHERE
+   current_setting(…) = 'on' DO INSTEAD NOTHING` discards an armed session's inserts with nothing
+   refused (second review, high — the check was complete over `pg_trigger`, which is not the whole
+   mechanism); and the body re-written to return for an armed session and raise, with the
+   migration's own message, for every other (third review, blocker — the check resolved the
+   function's name and stopped there). A fault theory runs fifteen tamper shapes — the function
+   body hollowed two ways (`RETURN COALESCE(NEW, OLD)`, `RETURN NULL`), each guard disabled and
+   dropped, the row guard re-created with a `WHEN` clause, the truncate guard re-created with one
+   (PostgreSQL 17.11 accepts it on a statement trigger *and evaluates it* — executed: with the GUC
+   set the `TRUNCATE` lands and the table reads back empty, so `tgqual` is load-bearing on both
+   guards), the row guard re-created for `UPDATE OF` one column, the row guard rebound to a
+   hollow `shadow_b19.refuse_append_only_change()`, the truncate guard passed an argument its
+   function ignores, the discarding rule, the concealing policy, and the conditional body twice —
+   bypassing `DELETE` on one table and `TRUNCATE` on the other with the same statement, because
+   one function serves both tables and all three verbs — and for each states what the probe sees
+   and what the binding check sees, executes the bypass with the GUC set for the shapes only the
+   binding check sees and proves it by a `SELECT`, and requires that at least one side reports
+   every shape. All rolled back. Under `session_replication_role = 'replica'`, which suppresses an
+   ordinary trigger with `pg_trigger` unchanged, the `ALWAYS` guards still refuse. **None of these
+   integration tests is in `verify.sh`'s merge gate today:** stage 6 filters `Category!=Integration`
+   and stage 8 is pending (owned by B-11), so a migration that re-opened any of these doors would
+   fail `dev-test.sh` on the integration project and still pass the gate.
 3. **No default privilege for the schema.** `pg_default_acl` holds zero rows scoped to `catalog`. A
    copied `ALTER DEFAULT PRIVILEGES … IN SCHEMA catalog GRANT` takes the count to one and is caught;
    the `REVOKE` form writes no row and is not — survivable, because mechanism 1 asserts the
@@ -189,24 +199,29 @@ can disable, drop, re-create or rebind either guard, replace the function's body
 or a policy, and then rewrite, remove, empty, silently discard writes to, or conceal a trail. Of
 those acts, the effect probe sees the ones that let *its own* statements through — a hollowed body,
 a disabled or dropped guard, a guard rebound to a function that does not raise; the binding check
-sees the ones that change what the table does — a guard disabled, dropped, rebound, argued, or made
-conditional by a `WHEN` clause or a column list; a rule; row-level security; a policy — which the
-probe cannot see when they are keyed on the session, because such a table behaves for the probe
-and not for the attacker. The harm of the silent shapes is specific: an ADR-0010 rule 8
-support-access grant never recorded, an ADR-0007 §11.5 erasure never replayed after a restore, a
-trail that looks intact because nothing was ever refused, only discarded. `aurora_app` can *arm*
-one (`SET aurora.maintenance = 'on'` is any role's to run) but cannot plant one; planting is DDL.
-Until the check read `tgqual` and `tgattr`, and then `pg_rewrite` and `pg_policy`, each of those
-paths was invisible to both sides and shipped through a one-line migration diff with every test
-green. What neither sees, and nothing here detects: a transient tamper between two runs — plant,
-act, remove — and any shape neither the probe executes nor the check binds; a `CHECK` constraint
-keyed on a GUC is the one shape that announces itself (an armed insert fails loudly) and is not
-read. That is the detection-not-prevention boundary ADR-0028 §2 draws; its cover is a chain head
-recorded outside the tenant database — in `operator_audit_event`, by `FOLLOWUP-031`'s job —
-carried as `FOLLOWUP-026`. Neither table is partitioned, so Amendment 2's partition clause (a guard
-created on every partition) does not arise here. And the writers, not this module, keep personal
-data and erased values out of `detail` and `affected` (ADR-0018 §4, §6 point 6): a column cannot
-enforce that, and no test here claims to.
+sees the ones that change any link of the chain — a guard disabled, dropped, rebound, argued, or
+made conditional by a `WHEN` clause or a column list; a rule; row-level security; a policy; and the
+function's definition, which is where a body made conditional on the session lives — the shapes
+the probe cannot see, because such a table behaves for the probe and not for the attacker. The harm
+of the silent shapes is specific: an ADR-0010 rule 8 support-access grant never recorded, an
+ADR-0007 §11.5 erasure never replayed after a restore, a trail that looks intact because nothing
+was ever refused, only discarded. `aurora_app` can *arm* one (`SET aurora.maintenance = 'on'` is
+any role's to run) but cannot plant one; planting is DDL. Until the check read `tgqual` and
+`tgattr`, then `pg_rewrite` and `pg_policy`, then `pg_get_functiondef`, each of those paths was
+invisible to both sides and shipped through a one-file migration diff with every test green — the
+link stopped one column short, then one catalog short, then at the function's name. What
+`pg_get_functiondef` cannot see: the definition is text, and what an identifier in it resolves to
+at execution is the session's `search_path`, which this definition does not pin; the body's one
+call is `format()`, and a shadowed `format()` cannot stop the `RAISE`, only change the message,
+which the probe compares exactly. What neither sees, and nothing here detects: a transient tamper
+between two runs — plant, act, remove — and a shape nobody enumerated, which is the general limit
+of a fault theory; a `CHECK` constraint keyed on a GUC is the one shape that announces itself (an
+armed insert fails loudly) and is not read. That is the detection-not-prevention boundary ADR-0028
+§2 draws; its cover is a chain head recorded outside the tenant database — in
+`operator_audit_event`, by `FOLLOWUP-031`'s job — carried as `FOLLOWUP-026`. Neither table is
+partitioned, so Amendment 2's partition clause (a guard created on every partition) does not arise
+here. And the writers, not this module, keep personal data and erased values out of `detail` and
+`affected` (ADR-0018 §4, §6 point 6): a column cannot enforce that, and no test here claims to.
 
 ---
 
