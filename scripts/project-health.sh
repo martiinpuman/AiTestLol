@@ -148,8 +148,15 @@ import re, sys
 import subprocess
 
 # A row with a task branch ahead of the integration branch is started, not waiting.
+# A row is started if its branch is ahead of the integration branch, OR if a worktree
+# holds that branch at all. The commits-ahead signal alone reported B-09 dispatchable
+# while an agent was actively building it: the agent had a locked worktree on
+# task/B-09 but had not committed yet, so "ahead" was 0. Dispatching a second agent
+# onto that row is exactly the collision this check exists to prevent, and the
+# earlier signal — the worktree — was sitting in `git worktree list` the whole time.
 INTEGRATION = 'claude/multi-tenant-saas-erp-pv2nap'
-in_flight = set()
+in_flight, started_by = set(), {}
+
 for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', 'refs/heads/task'],
                           capture_output=True, text=True).stdout.split():
     row = ref.split('/', 1)[1] if '/' in ref else ref
@@ -157,6 +164,15 @@ for ref in subprocess.run(['git', 'for-each-ref', '--format=%(refname:short)', '
                            capture_output=True, text=True).stdout.strip()
     if ahead.isdigit() and int(ahead) > 0:
         in_flight.add(row)
+        started_by[row] = f'{ahead} commit(s) ahead'
+
+for line in subprocess.run(['git', 'worktree', 'list', '--porcelain'],
+                           capture_output=True, text=True).stdout.split('\n'):
+    if line.startswith('branch refs/heads/task/'):
+        row = line[len('branch refs/heads/task/'):].strip()
+        if row and row not in in_flight:
+            in_flight.add(row)
+            started_by[row] = 'a worktree holds it, no commits yet'
 
 # The concurrency constraint is prose. These are the only phrases read; anything
 # worded differently is not seen, which is why the list is printed below.
@@ -197,8 +213,8 @@ dispatchable = sorted(r for r in ready
 broken = [(r, unmet(d)) for r, (d, st) in rows.items() if st == 'done' and unmet(d)]
 
 print(f"  dispatchable now: {', '.join(dispatchable) if dispatchable else '(none — every ready row is started, held or waiting on a predecessor)'}")
-if started:
-    print(f"  already started: {', '.join(started)}")
+for r in started:
+    print(f"  already started: {r} — {started_by.get(r, 'in flight')}")
 for r, b in held:
     print(f"  {r} held — its row forbids running concurrently with {', '.join(b)}, in flight")
 for r, u in broken:
