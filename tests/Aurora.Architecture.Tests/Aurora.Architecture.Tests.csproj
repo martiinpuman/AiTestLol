@@ -25,6 +25,15 @@
     BackgroundService, so the tenancy rules are proven to fire against the framework types they
     name rather than against look-alikes. FixtureFidelityTests asserts exactly that, so this
     comment is checked rather than trusted. No rule and no production code depends on either.
+
+    The Npgsql provider reference and the Aurora.Platform.Tenancy.Contracts project reference
+    exist for the migration rules (MIG1, MIG2): ADR-0007 7.2 says the safety test "generates each
+    migration's SQL", and the SQL that runs against a tenant is the SQL Npgsql's own
+    IMigrationsSqlGenerator emits from a migration's UpOperations - not the C# that produced them
+    and not only the raw strings passed to migrationBuilder.Sql(). Generating it means loading each
+    production migration assembly and running Up(); MigrationSafety/MigrationPopulation.cs says how and
+    what that cannot see. The Contracts reference is the real [MigrationSafety] attribute, so the
+    fixture migrations carry the type production migrations carry rather than a look-alike.
   -->
 
   <PropertyGroup>
@@ -38,6 +47,11 @@
     <PackageReference Include="Shouldly" />
     <PackageReference Include="coverlet.collector" />
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\platform\Aurora.Platform.Tenancy.Contracts\Aurora.Platform.Tenancy.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>
