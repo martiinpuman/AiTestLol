@@ -21,6 +21,12 @@ namespace Aurora.Platform.Tenancy.Contracts;
 /// could not be made because the database refused the read - the driver fault that said so, as
 /// the inner exception. None of that is personal data; all of it is what an operator asks first.
 /// </para>
+/// <para>
+/// The message is operator-facing - it names the other tenant and the database, which is what an
+/// incident needs and what no client may learn - and must not be rendered into a client response:
+/// an RFC 9457 body is composed by the problem-details mapper from the properties it chooses to
+/// disclose, never from <see cref="Exception.Message"/> (ADR-0038 §3).
+/// </para>
 /// </remarks>
 public sealed class TenantRoutingViolationException : Exception
 {
