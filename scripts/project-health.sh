@@ -190,19 +190,57 @@ for line in subprocess.run(['git', 'worktree', 'list', '--porcelain'],
 HOLD_PHRASES = ['never concurrently', 'must therefore be sequenced', 'no third row may',
                 'not parallel-safe', 'must be sequenced']
 
+# The id pattern reads EVERY row id, not just `B-`. It used to be `B-[0-9.]+[a-z]?`,
+# which parsed 56 rows out of 133 and reported "1 row id the parser could not read" --
+# because the blindness counter only looked at lines starting `| B-` too. So the check
+# was blind to 77 rows AND wrong about how blind it was, which is worse than either.
+# Invisible to it were every FOLLOWUP, every ARCH-*, DESIGN-001, the A11Y and GRID rows,
+# PM-SPEC-TENANT-OPS, API-01-PRE -- and B-13-PRE, which blocks the first Country Package.
+# That is the seventh failure form on CLAUDE.md's list, in the tool the orchestrator uses
+# to decide what to dispatch.
+ROW_ID = r'[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9.]+)+'
+HEADER_CELLS = {'id', 'task', 'row', 'question'}
+
 rows, notes = {}, {}
+unread = []
 for line in open('docs/BACKLOG.md'):
-    m = re.match(r'\|\s*(B-[0-9.]+[a-z]?)\s*\|', line)
-    if not m:
+    if not line.startswith('|'):
         continue
+    if set(line.replace('|', '').strip()) <= set('-: '):
+        continue                      # separator row
     cells = [c.strip() for c in line.split('|')]
     if len(cells) < 9:
         continue
-    rows[m.group(1)] = (cells[6], cells[8])
-    notes[m.group(1)] = ' '.join(cells[9:]) if len(cells) > 9 else ''
+    ident = cells[1]
+    if not ident or ident.lower() in HEADER_CELLS:
+        continue                      # header row
+    m = re.fullmatch(ROW_ID, ident.replace('**', ''))
+    if not m:
+        unread.append(ident)
+        continue
+    rid = m.group(0)
+    rows[rid] = (cells[6], cells[8])
+    notes[rid] = ' '.join(cells[9:]) if len(cells) > 9 else ''
 
 def unmet(deps):
-    return [d for d in re.findall(r'B-[0-9.]+[a-z]?', deps) if rows.get(d, ('', ''))[1] != 'done']
+    # Dependencies are resolved against the KNOWN row ids, longest first, so
+    # `B-13-PRE` is not read as `B-13` -- a different row with a different status,
+    # which is what the old `B-[0-9.]+[a-z]?` pattern did.
+    #
+    # Matching known ids rather than a generic pattern also keeps prose out: the
+    # notes and dependency cells are full of hyphenated words (`data-source`,
+    # `parallel-safe`) that any id-shaped regex would read as dependencies.
+    #
+    # An id in the task namespace that matches NO row still blocks, and says so.
+    # A typo'd dependency must not silently read as satisfied -- that is the
+    # direction this check cannot afford to be wrong in.
+    found, rest = [], deps
+    for known in sorted(rows, key=len, reverse=True):
+        if re.search(r'(?<![A-Za-z0-9.-])' + re.escape(known) + r'(?![A-Za-z0-9.-])', rest):
+            found.append(known)
+            rest = rest.replace(known, ' ')
+    unknown = [t for t in re.findall(r'B-[0-9][A-Za-z0-9.-]*', rest) if t not in rows]
+    return [d for d in found if rows[d][1] != 'done'] + [f'{t} (no such row)' for t in unknown]
 
 # An explicit marker holds a row whatever else its notes say. The phrase list below
 # can only hold a row that NAMES an in-flight B- row, so a hold waiting on an
@@ -224,7 +262,7 @@ def held_by(row):
     for sentence in re.split(r'(?<=[.;])\s+', text):
         low = sentence.lower()
         if any(p in low for p in HOLD_PHRASES):
-            blockers |= {d for d in re.findall(r'B-[0-9.]+[a-z]?', sentence)
+            blockers |= {d for d in re.findall(ROW_ID, sentence)
                          if d != row and d in in_flight}
     return sorted(blockers)
 
@@ -260,9 +298,8 @@ for r, u in broken:
     print(f"  {r} is done but depends on un-done {', '.join(sorted(set(u)))}")
 
 scanned = sum(1 for r in rows if notes.get(r))
-unread = sum(1 for l in open('docs/BACKLOG.md')
-             if re.match(r'\|\s*B-', l) and not re.match(r'\|\s*B-[0-9.]+[a-z]?\s*\|', l))
-print(f"  {len(rows)} row(s) read" + (f", {unread} row id(s) the parser could not read" if unread else ""))
+print(f"  {len(rows)} row(s) read of {len(rows) + len(unread)} data rows found"
+      + (f"; {len(unread)} id(s) the parser could not read: {', '.join(unread)}" if unread else "; none unreadable"))
 print(f"  {scanned} notes cell(s) scanned for a hold: the marker '{HOLD_MARKER}', or a sentence matching {'; '.join(HOLD_PHRASES)}")
 print(f"  a hold worded any other way is not seen here — FOLLOWUP-042 asks for a machine-readable field")
 sys.exit(1 if broken else 0)
@@ -328,21 +365,34 @@ echo
 # visible the moment you look; the wrong branch is invisible precisely because
 # every command still succeeds.
 echo "working tree"
+# Where is the integration branch checked out, and is that where you are about to commit?
+#
+# The original form of this check asserted the MAIN checkout was on the integration
+# branch. That was right about the hazard and wrong about the remedy: agents legitimately
+# check task branches out in the main checkout, so the check sat permanently red, and a
+# permanently red check is one nobody reads - which is the same failure it exists to catch.
+#
+# The invariant that actually matters is that SOME worktree holds the integration branch
+# and you know which one, because a commit made anywhere else is pushed by
+# `git push origin <integration>` with a SUCCESS message and an unchanged ref. That
+# happened twice on 2026-09-12. Nothing failed; every command returned zero.
+integration_wt="$(git worktree list --porcelain \
+  | awk -v b="refs/heads/${INTEGRATION}" '/^worktree /{wt=$2} $0=="branch "b{print wt}')"
 checked_out="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo '(detached)')"
-if [ "${checked_out}" != "${INTEGRATION}" ]; then
-  fail "the main checkout is on '${checked_out}', not the integration branch '${INTEGRATION}'"
-  say "        Anything committed here lands on '${checked_out}'. A push naming the"
-  say "        integration branch will still report success - it pushes that ref, which"
-  say "        has not moved - so the work is silently somewhere else."
-  say "        An agent working in the main checkout should have a worktree instead."
-  say "        Check where your recent commits actually went:"
-  say "            git branch --contains <sha>"
-  say "            git merge-base --is-ancestor <sha> origin/${INTEGRATION}"
+if [ -z "${integration_wt}" ]; then
+  fail "no worktree holds the integration branch '${INTEGRATION}'"
+  say "       Integration work has nowhere to land. Create one and commit there:"
+  say "           git worktree add <path> ${INTEGRATION}"
 else
-  ok "on ${INTEGRATION}"
+  ok "integration branch checked out at ${integration_wt}"
+  if [ "${checked_out}" != "${INTEGRATION}" ]; then
+    say "       this checkout is on '${checked_out}' - commit integration work in the worktree above,"
+    say "       and verify every push landed rather than trusting its output:"
+    say "           git merge-base --is-ancestor HEAD origin/${INTEGRATION}"
+  fi
 fi
 if [ -n "$(git status --porcelain)" ]; then
-  fail "uncommitted changes in the main checkout:"
+  fail "uncommitted changes in this checkout:"
   git status --porcelain | sed 's/^/            /'
 else
   ok "clean"
