@@ -2,7 +2,7 @@
 
 **Phase:** build · **Milestone:** M1 walking skeleton (B-01 … B-15)
 **Integration branch:** `claude/multi-tenant-saas-erp-pv2nap` · draft PR #1 tracks it
-**Last iteration:** 7 (2026-09-12)
+**Last iteration:** 8 (2026-09-12)
 
 ## Product in one line
 A multi-tenant SaaS ERP for SMBs with a country-agnostic core, where every jurisdiction-specific rule ships as an installable **Country Package**.
@@ -20,7 +20,7 @@ request**. Merge authority is the orchestrator's; no branch waits on a human.
 xunit 2.9.3 with runner 3.1.4 (the runner major need not match the framework major from 3.0 on).
 `source scripts/dev-env.sh` before any `dotnet`; `scripts/bootstrap-env.sh` rebuilds a fresh container.
 
-## Done and merged (eleven tasks)
+## Done and merged (twelve tasks)
 - **B-01** solution skeleton — 9 projects, Release clean at 0 warnings, lock file per project.
 - **B-02** `scripts/verify.sh` — the quality gate, plus `verify-selftest.sh`, which injects a defect,
   asserts the gate fails naming the right stage, and reverts. 21/21.
@@ -51,13 +51,14 @@ and **never inherited** — three in-flight branches each re-round it (826, 840,
 the merged result rather than trusting the incoming line. Git cannot see that conflict, which is why
 the rule exists.
 
-## In flight — four pull requests
-| PR | Branch | Tier | Where it stands |
-|---|---|---|---|
-| #13 | `task/B-06.1a` | Full | Tenancy kernel types and `TenantIdentityStamp`. Rework 1 done; **second reviewer**. The member scan was rebuilt: it now flags any public member whose signature *mentions* a `TenantAccess` anywhere, with a default arm that **throws**, over **both** shipping assemblies. |
-| #14 | `task/B-06.1` | Full | Resolver, 60 s cache, §5.2 pool settings. Rework 1 done; **second reviewer**. Redaction is now a property of the value (`ConnectionSecret`), not of one rendering. |
-| #15 | `task/ARCH-SCOPE-RUNTIME` | Full | ADR-0033/0034/0035. First review. |
-| #16 | `task/B-09` | Full | Migration categories and the SQL statement scanner (slice 1 of 3). First review. |
+## In flight — three pull requests and two fresh builds
+| What | Tier | Where it stands |
+|---|---|---|
+| PR #13 `task/B-06.1a` | Full | **Rework 2.** Second review found three majors, one of which is the eighth form *inside the fix for the seventh*: link 5's new "a throwing getter counts as fail-closed" arm passes green on B-06.3's natural lease shape, where the pre-rework version failed loudly. |
+| PR #14 `task/B-06.1` | Full | **APPROVED** by the second reviewer, no blockers or majors. Taking four cheap minors first — two are *a test that passes for the wrong reason*. Merges **before** B-20. |
+| PR #16 `task/B-09` | Full | **Rework 1.** Two blockers: a procedural body in a *single-quoted* literal is never read and reported clean (`DO '…'` versus `DO $$…$$`), and MIG1 goes red at merge because B-19's migration carries no `[MigrationSafety]`. |
+| `task/B-20` | Full | ADR-0034 §3.1's `(host, port)` unique index. Building. Warned: it reds **six** integration tests, five of them because `RoutingTestBed` builds a cluster row per bed on one endpoint. |
+| `task/B-21` | Full | ADR-0033's package admission floor, `FirstParty`-only, with D1/D2/D3. Building. |
 
 ## Routings recorded but not yet actioned (transcribe before merging, never after)
 All four of the previous entries are **answered** by ADR-0033/0034/0035 on PR #15: `TenantDatabaseHandle`
