@@ -3,10 +3,10 @@
   <!--
     Fast tests for the Tenancy platform module (docs/architecture/testing-strategy.md 2): the
     registry's value objects and entity invariants, the EF value converter, the model-to-snapshot
-    check, the ADR-0007 9.3 guard over the catalog *model*, and (Kernel/, B-06.1a) the tenancy
-    kernel types of Aurora.Platform.Tenancy.Contracts - TenantAccess, TenantScope, SchemaVersion
-    and the rest - including the construction tests that prove ADR-0007 3.4's "no module can
-    fabricate a TenantScope" link by link.
+    check, the ADR-0007 9.3 guard over the catalog *model*, the connection resolver's routing cache
+    (B-06.1), and (Kernel/, B-06.1a) the tenancy kernel types of Aurora.Platform.Tenancy.Contracts -
+    TenantAccess, TenantScope, SchemaVersion and the rest - including the construction tests that
+    prove ADR-0007 3.4's "no module can fabricate a TenantScope" link by link.
 
     This is the one test assembly the contracts project grants InternalsVisibleTo, which is what
     lets the kernel tests call TenantScope's internal constructor; the grant list is asserted as an
@@ -30,6 +30,8 @@
     <PackageReference Include="xunit.runner.visualstudio" />
     <PackageReference Include="Shouldly" />
     <PackageReference Include="FsCheck" />
+    <!-- Drives the routing cache's clock, so the 60 s expiry is proven without a sleep. -->
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
     <PackageReference Include="coverlet.collector" />
   </ItemGroup>
 
