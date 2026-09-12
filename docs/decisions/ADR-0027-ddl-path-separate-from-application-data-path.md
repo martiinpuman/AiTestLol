@@ -3,7 +3,7 @@
 - **Status:** Accepted (2026-09-11)
 - **Deciders:** architect
 - **Supersedes:** ADR-0007 §4.1 (tenant `DbContext` constructor signature) and ADR-0007 §7.5 (which access paths the schema-version skew check gates). Everything else in ADR-0007 stands unchanged.
-- **Superseded by:** —
+- **Superseded by:** **in part** by **[ADR-0035](ADR-0035-installed-packages-defined-and-the-ddl-handle-confirmed.md) §3 (2026-09-12)** — two type-level details of §1: `TenantDatabaseHandle` is declared in **`Aurora.Platform.Tenancy`**, not in `.Contracts` (a `*.Contracts` project may not reference Npgsql, so the handle could not have carried an open `NpgsqlConnection` where §1 put it); and `ITenantMigrationContextFactory<TContext>` **does not name the handle** in its signature, because §1's own T6 rule and ADR-0032 §4.1.3's `SalesSchemaMigrator` example cannot both hold if it does. **The decision of this ADR — two proof types off one `TenantAccess` base, so the §7.5 gate has no bypass branch — is reaffirmed, not weakened**, and ADR-0035 §3.4 gives the handle an owning row (B-07.1). Everything else here stands.
 - **Related:** ADR-0004 rule 2 (three database roles), ADR-0007 §3.4, §4, §7.3, §8, §10.1, ADR-0008 §5.2, ADR-0003
 
 ## Context
@@ -30,6 +30,8 @@ So the DDL path is already a different path in every respect that matters — ro
 ## Decision
 
 ### 1. Two proofs of tenant identity, one base type
+
+> **Superseded in part by [ADR-0035](ADR-0035-installed-packages-defined-and-the-ddl-handle-confirmed.md) §3 (2026-09-12).** `TenantDatabaseHandle` is declared in **`Aurora.Platform.Tenancy`**, not in `Aurora.Platform.Tenancy.Contracts`: this section gives it an open `NpgsqlConnection`, and a `*.Contracts` project references `Aurora.SharedKernel` and `Aurora.Documents.Canonical` and nothing else (fitness rule L2). It still derives from `TenantAccess`, which stays in `.Contracts`, through the `[InternalsVisibleTo]` grant this section already relies on. The move *strengthens* the confinement: modules, hosts and Country Packages may reference `Aurora.Platform.*.Contracts` only, so the handle becomes unreachable by project reference and T6 becomes the second line rather than the only one. Consequently `ITenantMigrationContextFactory<TContext>.CreateAsync(TenantDatabaseHandle, ct)` is corrected: **the factory does not name the handle**, because a module implementing `IModuleSchemaMigrator` could not call it otherwise without violating this section's own allow-list rule. ADR-0035 §3.3 states the invariant and leaves the mechanism to B-07.2; §3.4 makes B-07.1 the owning row.
 
 In `Aurora.Platform.Tenancy.Contracts`:
 
