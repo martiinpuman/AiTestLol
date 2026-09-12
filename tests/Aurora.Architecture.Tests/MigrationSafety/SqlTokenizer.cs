@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Text;
 
 namespace Aurora.Architecture.Tests.MigrationSafety;
 
@@ -28,9 +29,13 @@ internal sealed class UnscannableSqlException : Exception
 /// <remarks>
 /// <para>
 /// <b>What is discarded:</b> whitespace, <c>--</c> comments and nested <c>/* */</c> comments.
-/// <b>What is kept but never read:</b> string literals - a <c>DROP TABLE</c> inside quotes is
-/// data, not a statement. <b>What is kept and read again:</b> dollar-quoted bodies, because a
-/// function or <c>DO</c> body is code and a destructive statement inside one is real DDL.
+/// <b>What is kept and read only where PostgreSQL reads it as code:</b> string literals. A
+/// <c>DROP TABLE</c> inside quotes is data - unless the literal is the body of a <c>DO</c> or the
+/// body after <c>AS</c> of a <c>CREATE FUNCTION</c>/<c>PROCEDURE</c>, the two spellings where a
+/// quoted string <i>is</i> the code; <see cref="SqlStatementScanner"/> recognises those positions
+/// and reads the literal again through <see cref="DecodeLiteral"/>. <b>What is kept and always
+/// read again:</b> dollar-quoted bodies, because a function or <c>DO</c> body is code and a
+/// destructive statement inside one is real DDL.
 /// </para>
 /// <para>
 /// <b>What stops it:</b> an unterminated literal, identifier, comment or dollar quote, and any
@@ -63,7 +68,7 @@ internal static class SqlTokenizer
             }
             else if (c == '\'')
             {
-                i = ReadStandardLiteral(sql, i, i, tokens);
+                i = ReadQuotedLiteral(sql, i, i, SqlLiteralForm.Standard, tokens);
             }
             else if (c == '"')
             {
@@ -73,16 +78,18 @@ internal static class SqlTokenizer
             {
                 i = ReadDollar(sql, i, tokens);
             }
-            else if (IsLiteralPrefix(c) && At(sql, i + 1) == '\'')
+            else if (c is 'E' or 'e' && At(sql, i + 1) == '\'')
             {
-                i = c is 'E' or 'e'
-                    ? ReadEscapeLiteral(sql, i, i + 1, tokens)
-                    : ReadStandardLiteral(sql, i, i + 1, tokens);
+                i = ReadEscapeLiteral(sql, i, i + 1, tokens);
+            }
+            else if (c is 'B' or 'b' or 'X' or 'x' && At(sql, i + 1) == '\'')
+            {
+                i = ReadQuotedLiteral(sql, i, i + 1, SqlLiteralForm.Binary, tokens);
             }
             else if (c is 'U' or 'u' && At(sql, i + 1) == '&' && At(sql, i + 2) is '\'' or '"')
             {
                 i = At(sql, i + 2) == '\''
-                    ? ReadStandardLiteral(sql, i, i + 2, tokens)
+                    ? ReadQuotedLiteral(sql, i, i + 2, SqlLiteralForm.Unicode, tokens)
                     : ReadQuotedIdentifier(sql, i + 2, tokens);
             }
             else if (IsWordStart(c))
@@ -112,9 +119,63 @@ internal static class SqlTokenizer
         return tokens.ToImmutable();
     }
 
-    private static char At(string sql, int index) => index < sql.Length ? sql[index] : '\0';
+    /// <summary>
+    /// The text a literal stands for, when the scanner must read it as code: a standard literal
+    /// with its doubled quotes collapsed, an escape literal with its backslash escapes resolved.
+    /// <c>null</c> when the spelling is one this tokenizer does not decode - a Unicode
+    /// (<c>U&amp;'…'</c>) or bit-string (<c>B'…'</c>, <c>X'…'</c>) literal, or an escape literal
+    /// carrying a numeric escape (<c>\x</c>, <c>\u</c>, <c>\U</c>, octal) - so that the caller
+    /// reports the body as unread rather than reading a wrong one.
+    /// </summary>
+    public static string? DecodeLiteral(SqlToken literal) => literal.LiteralForm switch
+    {
+        SqlLiteralForm.Standard => literal.Text.Replace("''", "'", StringComparison.Ordinal),
+        SqlLiteralForm.Escape => DecodeEscapes(literal.Text),
+        _ => null,
+    };
 
-    private static bool IsLiteralPrefix(char c) => c is 'E' or 'e' or 'B' or 'b' or 'X' or 'x' or 'N' or 'n';
+    private static string? DecodeEscapes(string raw)
+    {
+        var text = new StringBuilder(raw.Length);
+
+        for (int i = 0; i < raw.Length; i++)
+        {
+            char c = raw[i];
+
+            if (c == '\'' && At(raw, i + 1) == '\'')
+            {
+                text.Append('\'');
+                i++;
+            }
+            else if (c != '\\')
+            {
+                text.Append(c);
+            }
+            else
+            {
+                char escaped = At(raw, ++i);
+
+                if (escaped is 'x' or 'u' or 'U' or (>= '0' and <= '7') or '\0')
+                {
+                    return null;
+                }
+
+                text.Append(escaped switch
+                {
+                    'b' => '\b',
+                    'f' => '\f',
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    _ => escaped,
+                });
+            }
+        }
+
+        return text.ToString();
+    }
+
+    private static char At(string sql, int index) => index < sql.Length ? sql[index] : '\0';
 
     private static bool IsWordStart(char c) => c == '_' || char.IsLetter(c);
 
@@ -159,8 +220,9 @@ internal static class SqlTokenizer
             FormattableString.Invariant($"block comment opened at offset {from} is never closed"));
     }
 
-    /// <summary>A <c>'…'</c> literal, where a doubled quote is an escaped quote and backslash is ordinary.</summary>
-    private static int ReadStandardLiteral(string sql, int tokenStart, int quote, ImmutableArray<SqlToken>.Builder tokens)
+    /// <summary>A quote-delimited literal where a doubled quote is an escaped quote and backslash is ordinary: <c>'…'</c>, <c>U&amp;'…'</c>, <c>B'…'</c>, <c>X'…'</c>.</summary>
+    private static int ReadQuotedLiteral(
+        string sql, int tokenStart, int quote, SqlLiteralForm form, ImmutableArray<SqlToken>.Builder tokens)
     {
         int i = quote + 1;
 
@@ -174,7 +236,7 @@ internal static class SqlTokenizer
                     continue;
                 }
 
-                tokens.Add(new SqlToken(SqlTokenKind.Literal, sql[(quote + 1)..i], tokenStart));
+                tokens.Add(new SqlToken(SqlTokenKind.Literal, sql[(quote + 1)..i], tokenStart) { LiteralForm = form });
                 return i + 1;
             }
 
@@ -204,7 +266,7 @@ internal static class SqlTokenizer
                     continue;
                 }
 
-                tokens.Add(new SqlToken(SqlTokenKind.Literal, sql[(quote + 1)..i], tokenStart));
+                tokens.Add(new SqlToken(SqlTokenKind.Literal, sql[(quote + 1)..i], tokenStart) { LiteralForm = SqlLiteralForm.Escape });
                 return i + 1;
             }
             else

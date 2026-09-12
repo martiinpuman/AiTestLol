@@ -26,7 +26,7 @@ the fixture tests red instead of passing quietly.
 | **L1-L5** | Every project reference is one `solution-layout.md` §2 permits | The `ProjectReference` elements each `.csproj` under `src/` declares, classified by the naming convention of `solution-layout.md` §1. Direct references only — a host reaching Infrastructure *through* `Aurora.Composition` is the design | Project files |
 | **M1** | Every cross-module reference is in the `modules.md` §6 matrix | Every declared `ProjectReference` between two different `Aurora.Modules.*` modules, against the matrix held as data in `ModuleMatrix`. A module with no row may reference no other module | Project files |
 | **MIG1** | Every migration declares `Expand`, `Contract` or `DataOnly` with a reason; only a `Contract` names the `Expand` it contracts, and that Expand exists (ADR-0007 §7.2 rule 1) | The `[MigrationSafety]` attribute, read back by reflection as the real type, on every non-abstract production type whose base chain reaches `Microsoft.EntityFrameworkCore.Migrations.Migration`; the `Contracts` link resolved against the population by migration id; duplicate ids | Reflection over loaded migration assemblies |
-| **MIG2** | Destructive SQL only in a `Contract`; a `DataOnly` migration is plain data statements; nothing the scanner cannot read (ADR-0007 §7.2 rule 2) | The SQL **Npgsql's own generator emits from each migration's `UpOperations`** against its target model - `DropColumn(…)` included, which has no string to scan - every command, every statement, and every dollar-quoted body, through a tokenizer that follows the PostgreSQL lexer. See §7 | Generated SQL |
+| **MIG2** | Destructive SQL only in a `Contract`; a `DataOnly` migration is plain data statements; nothing the scanner cannot read (ADR-0007 §7.2 rule 2) | The SQL **Npgsql's own generator emits from each migration's `UpOperations`** against its target model - `DropColumn(…)` included, which has no string to scan - every command, every statement, every dollar-quoted body, and every string literal standing where PostgreSQL reads a literal as code (`DO '…'`, `CREATE FUNCTION … AS '…'`), through a tokenizer that follows the PostgreSQL lexer. See §7 | Generated SQL |
 
 **L1's scope is `Aurora.SharedKernel` plus every `*.Domain`, and not the other two tier-0
 assemblies.** That is exactly the scope `testing-strategy.md` §5.1 names. `Aurora.Documents.Canonical`
@@ -56,7 +56,7 @@ both trusted. The difference is written down in `RuleInventoryTests` and **check
 | T1 | **Inert** | No tenant `DbContext` exists in production yet. B-05 brings the catalog context (exempt as the exact pair); B-06 brings the first tenant context |
 | T2 | **Live** | `Aurora.Platform.Tenancy` exists since B-05, with the one permitted `AddDbContext` call site: the catalog registration. T2 examines it on every run, floor 1 |
 | M1 | **Inert** | Fewer than two business modules exist, so there are no cross-module edges |
-| MIG1, MIG2 | **Live** | One production migration exists (B-05's `InitialCatalog`, 27 statements); both examine it on every run, floor 1 migration, and `MigrationRuleTests` holds MIG2 to a floor of 20 statements parsed |
+| MIG1, MIG2 | **Live** | Two production migrations exist (B-05's `InitialCatalog`, 31 statements; B-19's `AppendOnlyTrails`, 18); both rules examine both on every run, floor 1 migration in the inventory, and `MigrationRuleTests` holds MIG2 to a floor **per migration** (30 and 10, the round-down of each measurement) so that one migration generating nothing cannot hide behind the other's count |
 
 `RuleInventoryTests` asserts the absence of each awaited type **by name**. The day B-06 adds one,
 those tests fail with an instruction saying what to change. Inertness expires loudly - T2's did,
@@ -227,28 +227,49 @@ saying `DROP COLUMN`; the generated SQL does. `MigrationRuleTests` asserts the g
 
 **Link 2 - the text is tokenized the way PostgreSQL's lexer tokenizes it.** `SqlTokenizer` follows
 the lexical rules for the things that can hide a keyword: `--` and nested `/* */` comments are
-dropped; `'…'`, `E'…'`, `U&'…'`, `B'…'` and `X'…'` literals are kept but never read; `"…"` is a
-name; `$$…$$` and `$tag$…$tag$` bodies are **code, and are tokenized again** - a `DROP TABLE` inside
-a `DO` or function body is real DDL, and the fixture `ExpandHidingADropInADollarQuotedBody` proves
-it is found, two tags deep. Case, whitespace and newlines between keywords change nothing, because
-matching is on tokens. Anything the tokenizer cannot finish - an unterminated literal, identifier,
-comment or dollar quote, a character with no rule - throws, and the migration is reported as
+dropped; `'…'`, `E'…'`, `U&'…'`, `B'…'` and `X'…'` literals are kept and read only where PostgreSQL
+reads a literal as code; `"…"` is a name; `$$…$$` and `$tag$…$tag$` bodies are **code, and are
+tokenized again** - a `DROP TABLE` inside a `DO` or function body is real DDL, and the fixture
+`ExpandHidingADropInADollarQuotedBody` proves it is found, two tags deep. **A quoted body is the
+same body.** `DO $$…$$` and `DO '…'` are one statement, and `CREATE FUNCTION … AS '…'` is the
+original spelling; the first review of this branch showed the scanner reading only the dollar-quoted
+form and reporting `DO 'BEGIN DROP TABLE …; END'` as *clean* (B-1). A literal that is the body of a
+`DO` (its `LANGUAGE` name excepted) or follows `AS` in a `CREATE [OR REPLACE] FUNCTION|PROCEDURE` is
+now decoded - doubled quotes collapsed, `E'…'` backslash escapes resolved - and read exactly as a
+dollar-quoted body is; `ExpandHidingADropInAQuotedBody` proves it, beside
+`ExpandWithAProceduralLookAlikeInData`, the same text as data, which stays clean. A body in a literal
+the tokenizer does not decode (`U&'…'`, a bit string, an `E'…'` with a numeric escape) is reported
+as **unscannable**. Case, whitespace and newlines between keywords change nothing, because matching
+is on tokens. Anything the tokenizer cannot finish - an unterminated literal, identifier, comment
+or dollar quote, a character with no rule - throws, and the migration is reported as
 **unscannable**, never as clean.
 
 **Link 3 - what counts as destructive is matched on the token stream, anywhere in a statement.**
-`DROP` of anything but a constraint, default, `NOT NULL`, identity or expression; `TRUNCATE` of a
-table; `DELETE FROM` and `MERGE … THEN DELETE`; any `RENAME`; `ALTER [COLUMN] … TYPE`;
-`ALTER [COLUMN] … SET NOT NULL`; `SET SCHEMA`; `ADD [COLUMN] … NOT NULL` with neither `DEFAULT` nor
-`GENERATED`. A finding is a violation unless the migration is a `Contract`. `SqlScannerTests` pins
-each shape from both sides: the destructive spelling is named, and the look-alike beside it - a
-trigger on `DELETE OR TRUNCATE`, a `GRANT … DELETE`, an `ON DELETE RESTRICT`, a `DROP NOT NULL`, a
-`DROP CONSTRAINT`, `DROP TABLE` in a literal or a comment - is let through *and counted*.
+`DROP` of anything but a default, `NOT NULL`, identity or expression, and `DROP CONSTRAINT` when it
+says `CASCADE` (a cascade reaches foreign keys in tables the migration never names, and is never a
+widening); `TRUNCATE` of a table; `DELETE FROM` and `MERGE … THEN DELETE`; any `RENAME`;
+`ALTER [COLUMN] … TYPE`; `ALTER [COLUMN] … SET NOT NULL`; `SET SCHEMA`; `ADD [COLUMN] … NOT NULL`
+with neither `DEFAULT` nor `GENERATED`; and the statements that switch an enforced invariant off in
+one step - `DISABLE TRIGGER`, `DISABLE RULE`, `DISABLE ROW LEVEL SECURITY`,
+`NO FORCE ROW LEVEL SECURITY`, `DETACH PARTITION` - because B-19's append-only guards are triggers,
+and one `DISABLE TRIGGER` in a migration removes both. A finding is a violation unless the migration
+is a `Contract`. `SqlScannerTests` pins each shape from both sides: the destructive spelling is
+named, and the look-alike beside it - a trigger on `DELETE OR TRUNCATE`, a `GRANT … DELETE`, an
+`ON DELETE RESTRICT`, a `DROP NOT NULL`, an `ENABLE ALWAYS TRIGGER`, an `ATTACH PARTITION`, a
+`DROP CONSTRAINT … RESTRICT`, `DROP TABLE` in a literal or a comment - is let through *and counted*.
 
 **Link 4 - what it refuses to read is reported, not skipped.** Dynamic SQL (`EXECUTE` of anything
 but a trigger's `FUNCTION`/`PROCEDURE` binding or the `EXECUTE` privilege of a `GRANT`/`REVOKE`); a
 call to a schema-qualified function or procedure outside `pg_catalog`, whose body was written
-somewhere else; a migration whose `Up()` throws or whose operations the generator refuses. Each has
-a fixture and a test asserting the violation, and each is a violation for every category.
+somewhere else - after `ON` too, unless the nearest statement verb before it is `CREATE`, `ALTER` or
+`DROP`, because after a `SELECT`, `JOIN` or a DML verb `ON` introduces a join condition and a call
+in it runs (the first review's n-1); a migration whose `Up()` throws or whose operations the
+generator refuses. Each has a fixture and a test asserting the violation, and each is a violation
+**for every category**: `ContractThatRunsDynamicSql` and `DataOnlyThatCallsAUserFunction` are the
+witnesses, and the Contract's `EXECUTE` is asserted not to be counted as a permitted destructive
+statement - the first review's M-2 showed that exempting `Contract` from the unscannable branch left
+every test green, and an unreadable Contract is exactly the case that must not pass as a permitted
+one.
 
 **Where the chain stops - stated, with the assumption it rests on.**
 
@@ -258,6 +279,12 @@ a fixture and a test asserting the violation, and each is a violation for every 
   nothing here refuses one yet.
 - A function *referenced* rather than called - defined, dropped, bound to a trigger, named as a
   column default - is not followed into. The function runs at insert time, not migration time.
+- **A bare `DROP CONSTRAINT` is not judged.** Replacing a `CHECK` is a widening with no Expand to
+  name, so it must not need a `Contract`; but by name alone the scanner cannot tell a `CHECK` from a
+  `PRIMARY KEY`, `UNIQUE` or `EXCLUDE`, whose removal takes an enforced invariant and its backing
+  index away in one step. Only the `CASCADE` form is destructive today. Whether the `ck_`/`pk_`/
+  `uq_`/`ex_` naming convention is a link this scanner may read is the architect's question, routed
+  from the first review (M-3).
 - `Down()` is not read (§6).
 - Whether an `ALTER COLUMN … TYPE` widens or narrows is not judged: ADR-0007 §7.2 lists every type
   change, so every one needs a `Contract`. A `varchar(10)` to `varchar(20)` widening is metadata-only
@@ -267,10 +294,16 @@ a fixture and a test asserting the violation, and each is a violation for every 
 
 **The population cannot quietly shrink.** MIG1 and MIG2 examine the migrations `SolutionLayout`
 finds - the same throw-on-missing, throw-on-stale population as every other rule - and
-`RuleInventoryTests` holds both to a floor of 1 migration, `MigrationRuleTests` holds MIG2 to a
-floor of 20 statements parsed over production, both measured on the branch that added them (one
-migration, 27 statements). The fixture population is held to its exact count (22), so a fixture
-that fails to load fails a test instead of vanishing from the ones that assert on it.
+`RuleInventoryTests` holds both to a floor of 1 migration. `MigrationRuleTests` holds MIG2 to a
+statement floor **per production migration**, each the round-down of a count measured on the
+branch that set it: `InitialCatalog` 31 (floor 30), `AppendOnlyTrails` 18 (floor 10). Per migration
+and not in aggregate, because with two migrations one that generated nothing would hide behind the
+other's count; a migration with no floor fails the test, which prints the live count to write. The
+first review's M-1 found the previous single floor (20) derived from a count (27) measured against
+an earlier scanner inside the same commit, so that the catalog could lose its whole privilege block
+and stay green; the numbers here are re-measured whenever the scanner changes. The fixture
+population is held to its exact count (26), so a fixture that fails to load fails a test instead of
+vanishing from the ones that assert on it.
 
 **Categories, as the rules hold them.** `Expand`: no destructive finding. `Contract`: destructive
 findings permitted (and counted as permitted, so silence on a compliant Contract is shown to mean

@@ -63,6 +63,58 @@ internal sealed class ExpandWithACamouflagedDropTable : Migration
             + "drop\n  /* DROP TABLE sales.invoice */ table\n  sales.invoice;");
 }
 
+/// <summary>The same <c>DROP TABLE</c> in a <c>DO</c> body spelled as a single-quoted literal, which is the same statement to PostgreSQL.</summary>
+/// <remarks><b>Deliberately violating fixture (MIG2).</b> The first review's B-1: this spelling was reported clean.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: hides a DROP TABLE inside a quoted DO body.")]
+internal sealed class ExpandHidingADropInAQuotedBody : Migration
+{
+    public const string Id = "20990101000023_ExpandHidingADropInAQuotedBody";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("DO 'BEGIN DROP TABLE sales.invoice; END';");
+}
+
+/// <summary>The look-alike beside it: the same text as data, in a position where a literal is only data.</summary>
+/// <remarks><b>Deliberately compliant fixture (MIG2).</b> Reading literals as code only where PostgreSQL does is what keeps this clean.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Expand, "Fixture: procedural-looking text stored as data.")]
+internal sealed class ExpandWithAProceduralLookAlikeInData : Migration
+{
+    public const string Id = "20990101000024_ExpandWithAProceduralLookAlikeInData";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("INSERT INTO sales.note (text) VALUES ('BEGIN DROP TABLE sales.invoice; END');");
+}
+
+/// <summary>A Contract that runs dynamic SQL: the one category allowed to be destructive, made unreadable.</summary>
+/// <remarks>
+/// <b>Deliberately unscannable fixture (MIG2).</b> The first review's M-2: an unreadable Contract
+/// must be a violation and must not be counted as a permitted destructive statement, or it is
+/// indistinguishable from a permitted one.
+/// </remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.Contract, "Fixture: a Contract whose drop is built at run time.", Contracts = CompliantExpand.Id)]
+internal sealed class ContractThatRunsDynamicSql : Migration
+{
+    public const string Id = "20990101000025_ContractThatRunsDynamicSql";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("DO $$ BEGIN EXECUTE 'DROP TABLE sales.stage'; END $$;");
+}
+
+/// <summary>A DataOnly migration that calls a function whose body is not here to read.</summary>
+/// <remarks><b>Deliberately unscannable fixture (MIG2).</b> Unscannable is a violation for every category, DataOnly included.</remarks>
+[Migration(Id)]
+[MigrationSafety(MigrationCategory.DataOnly, "Fixture: a DataOnly migration calling a user function.")]
+internal sealed class DataOnlyThatCallsAUserFunction : Migration
+{
+    public const string Id = "20990101000026_DataOnlyThatCallsAUserFunction";
+
+    protected override void Up(MigrationBuilder migrationBuilder) =>
+        migrationBuilder.Sql("SELECT sales.rebuild_everything();");
+}
+
 /// <summary>A harmless statement and a <c>TRUNCATE</c> on one line, in one <c>Sql()</c> call.</summary>
 /// <remarks><b>Deliberately violating fixture (MIG2).</b></remarks>
 [Migration(Id)]

@@ -15,6 +15,13 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Aurora.Architecture.Tests.MigrationSafety;
 
 /// <summary>One command of a migration's generated <c>Up</c> script, as EF Core would send it to PostgreSQL.</summary>
+/// <param name="CommandText">What MIG2 scans.</param>
+/// <param name="TransactionSuppressed">
+/// Captured for MIG4 (B-09.2), which nothing reads yet: ADR-0007 §7.2 rule 4 requires a
+/// <c>CREATE INDEX CONCURRENTLY</c> to run outside the migration's transaction, and this flag is
+/// how the runner knows to - Npgsql sets it from the <c>Npgsql:CreatedConcurrently</c> annotation,
+/// and <c>Sql(…, suppressTransaction: true)</c> sets it for raw SQL.
+/// </param>
 internal sealed record GeneratedCommand(string CommandText, bool TransactionSuppressed);
 
 /// <summary>

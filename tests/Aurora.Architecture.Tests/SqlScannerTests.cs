@@ -56,6 +56,22 @@ public sealed class SqlScannerTests
     [InlineData("ALTER TABLE sales.invoice ADD region text NOT NULL;", "ADD COLUMN … NOT NULL without a DEFAULT")]
     [InlineData("ALTER TABLE sales.invoice ADD COLUMN IF NOT EXISTS region text NOT NULL;", "ADD COLUMN … NOT NULL without a DEFAULT")]
     [InlineData("ALTER TABLE sales.invoice SET SCHEMA archive;", "SET SCHEMA")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT uq_invoice_number CASCADE;", "DROP CONSTRAINT … CASCADE")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT IF EXISTS uq_invoice_number CASCADE;", "DROP CONSTRAINT … CASCADE")]
+    [InlineData("ALTER TABLE catalog.operator_audit_event DISABLE TRIGGER trg_append_only;", "DISABLE TRIGGER")]
+    [InlineData("ALTER TABLE sales.invoice DISABLE RULE r_guard;", "DISABLE RULE")]
+    [InlineData("ALTER TABLE sales.invoice DISABLE ROW LEVEL SECURITY;", "DISABLE ROW LEVEL SECURITY")]
+    [InlineData("ALTER TABLE sales.invoice NO FORCE ROW LEVEL SECURITY;", "NO FORCE ROW LEVEL SECURITY")]
+    [InlineData("ALTER TABLE sales.invoice DETACH PARTITION sales.invoice_2024;", "DETACH PARTITION")]
+    [InlineData("DO 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("DO LANGUAGE plpgsql 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("DO 'BEGIN DROP TABLE sales.invoice; END' LANGUAGE plpgsql;", "DROP TABLE")]
+    [InlineData("DO E'BEGIN TRUNCATE sales.invoice; END';", "TRUNCATE")]
+    [InlineData("DO 'BEGIN RAISE NOTICE ''quoted''; DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("DO E'BEGIN RAISE NOTICE \\'quoted\\'; DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("CREATE FUNCTION sales.purge() RETURNS void LANGUAGE sql AS 'DELETE FROM sales.invoice';", "DELETE FROM")]
+    [InlineData("CREATE OR REPLACE PROCEDURE sales.purge() LANGUAGE plpgsql AS 'BEGIN DROP TABLE sales.invoice; END';", "DROP TABLE")]
+    [InlineData("CREATE FUNCTION sales.purge() RETURNS void AS 'BEGIN DROP TABLE sales.invoice; END' LANGUAGE plpgsql;", "DROP TABLE")]
     public void Names_a_destructive_statement(string sql, string expected)
     {
         SqlScanReport report = SqlStatementScanner.Scan(sql);
@@ -112,6 +128,24 @@ public sealed class SqlScannerTests
     }
 
     [Fact]
+    public void A_quoted_body_and_a_dollar_quoted_body_are_the_same_statement_and_are_read_the_same_way()
+    {
+        // The first review's B-1: DO $$…$$ and DO '…' are one statement in PostgreSQL, and the
+        // scanner read only the first. Both spellings must produce the same finding at the same
+        // location, and the statement must know it carries a body.
+        SqlScanReport dollar = SqlStatementScanner.Scan("DO $$ BEGIN DROP TABLE sales.invoice; END $$;");
+        SqlScanReport quoted = SqlStatementScanner.Scan("DO 'BEGIN DROP TABLE sales.invoice; END';");
+
+        foreach (SqlScanReport report in new[] { dollar, quoted })
+        {
+            SqlStatement inner = report.Statements.Single(static s => s.Findings.Length > 0);
+            inner.Findings.Single().What.ShouldBe("DROP TABLE");
+            inner.Location.ShouldBe("statement 1 › body › statement 1");
+            report.Statements.Single(static s => s.IsTopLevel).HasProceduralBody.ShouldBeTrue();
+        }
+    }
+
+    [Fact]
     public void Names_a_TRUNCATE_inside_a_conditional_branch_of_a_body()
     {
         SqlScanReport report = SqlStatementScanner.Scan(
@@ -124,6 +158,15 @@ public sealed class SqlScannerTests
 
     [Theory]
     [InlineData("SELECT 'DROP TABLE sales.invoice';")]
+    [InlineData("INSERT INTO sales.note (text) VALUES ('BEGIN DROP TABLE sales.invoice; END');")]
+    [InlineData("COMMENT ON TABLE sales.invoice IS 'BEGIN DROP TABLE sales.invoice; END';")]
+    [InlineData("CREATE FUNCTION sales.f() RETURNS void LANGUAGE 'sql' AS $$ SELECT 1 $$;")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE ALWAYS TRIGGER trg_append_only, ENABLE REPLICA TRIGGER trg_other;")]
+    [InlineData("ALTER TABLE sales.invoice ENABLE ROW LEVEL SECURITY, FORCE ROW LEVEL SECURITY;")]
+    [InlineData("ALTER TABLE sales.invoice ATTACH PARTITION sales.invoice_2025 FOR VALUES FROM ('2025-01-01') TO ('2026-01-01');")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT uq_invoice_number RESTRICT;")]
+    [InlineData("ALTER TABLE sales.invoice DROP CONSTRAINT ck_invoice_total, ADD CONSTRAINT fk FOREIGN KEY (party_id) REFERENCES parties.party (id) ON DELETE CASCADE;")]
+    [InlineData("SELECT N'not a prefix in PostgreSQL';")]
     [InlineData("INSERT INTO sales.note VALUES ('it''s not a DROP TABLE');")]
     [InlineData("INSERT INTO sales.note VALUES (E'a backslash-escaped \\' quote, then DROP TABLE x');")]
     [InlineData("INSERT INTO sales.note VALUES (U&'unicode DROP TABLE');")]
@@ -169,6 +212,13 @@ public sealed class SqlScannerTests
     [Theory]
     [InlineData("DO $$ BEGIN EXECUTE 'DROP TABLE sales.invoice'; END $$;", "EXECUTE")]
     [InlineData("DO $$ BEGIN EXECUTE format('DROP TABLE %I', 'invoice'); END $$;", "EXECUTE")]
+    [InlineData("DO 'BEGIN EXECUTE ''DROP TABLE sales.invoice''; END';", "EXECUTE")]
+    [InlineData("CREATE FUNCTION sales.purge() RETURNS void LANGUAGE plpgsql AS 'BEGIN EXECUTE ''DROP TABLE x''; END';", "EXECUTE")]
+    [InlineData("DO U&'BEGIN DROP TABLE sales.invoice; END';", "does not decode")]
+    [InlineData("DO E'BEGIN DROP TABLE sales.invoice; \\x41 END';", "does not decode")]
+    [InlineData("DO 'BEGIN SELECT ''never closed; END';", "never closed")]
+    [InlineData("INSERT INTO sales.a SELECT b.x FROM sales.b JOIN sales.c ON sales.rebuild(b.id) = c.id;", "calls sales.rebuild(…)")]
+    [InlineData("CREATE VIEW sales.v AS SELECT b.x FROM sales.b JOIN sales.c ON sales.rebuild(b.id) = c.id;", "calls sales.rebuild(…)")]
     [InlineData("SELECT sales.rebuild_everything();", "calls sales.rebuild_everything(…)")]
     [InlineData("DO $$ BEGIN PERFORM sales.rebuild_everything(); END $$;", "calls sales.rebuild_everything(…)")]
     [InlineData("CALL sales.rebuild_everything();", "calls sales.rebuild_everything(…)")]
@@ -189,6 +239,16 @@ public sealed class SqlScannerTests
     }
 
     [Fact]
+    public void N_is_a_name_and_not_a_literal_prefix()
+    {
+        // n-4 of the first review: E, B, X and U& are the prefixes PostgreSQL defines. N'x' is the
+        // identifier n followed by a literal, and a scanner that swallowed the n would have lost a
+        // name token that a later rule may read.
+        SqlTokenizer.Tokenize("SELECT N'x'").Select(static token => token.Kind)
+            .ShouldBe([SqlTokenKind.Word, SqlTokenKind.Word, SqlTokenKind.Literal]);
+    }
+
+    [Fact]
     public void A_lexical_failure_inside_a_body_is_reported_at_the_body()
     {
         SqlScanReport report = SqlStatementScanner.Scan("DO $$ BEGIN SELECT 'never closed; END $$;");
@@ -204,10 +264,10 @@ public sealed class SqlScannerTests
     public void Reports_the_head_of_each_top_level_statement()
     {
         SqlScanReport report = SqlStatementScanner.Scan(
-            "update sales.invoice set total = 0; INSERT INTO sales.note VALUES (1); DO $$ BEGIN NULL; END $$;");
+            "update sales.invoice set total = 0; INSERT INTO sales.note VALUES (1); DO $$ BEGIN NULL; END $$; DO 'BEGIN NULL; END';");
 
-        report.Statements.Where(static s => s.IsTopLevel).Select(static s => s.Head).ShouldBe(["UPDATE", "INSERT", "DO"]);
-        report.Statements.Where(static s => s.IsTopLevel).Select(static s => s.HasProceduralBody).ShouldBe([false, false, true]);
+        report.Statements.Where(static s => s.IsTopLevel).Select(static s => s.Head).ShouldBe(["UPDATE", "INSERT", "DO", "DO"]);
+        report.Statements.Where(static s => s.IsTopLevel).Select(static s => s.HasProceduralBody).ShouldBe([false, false, true, true]);
     }
 
     [Fact]

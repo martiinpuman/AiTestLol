@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Text;
 
 namespace Aurora.Architecture.Tests.MigrationSafety;
 
@@ -21,11 +22,11 @@ internal sealed record SqlFinding(SqlFindingKind Kind, string What);
 /// <summary>
 /// One SQL statement as the scanner saw it: where it is, how it starts, and what was found in it.
 /// </summary>
-/// <param name="Location">"statement 3", or "statement 3 › body › statement 1" inside a dollar quote.</param>
+/// <param name="Location">"statement 3", or "statement 3 › body › statement 1" inside a body.</param>
 /// <param name="Head">The first word, upper-cased; empty when the statement starts with something else.</param>
 /// <param name="Excerpt">The first few tokens, for a message.</param>
-/// <param name="IsTopLevel">False inside a dollar-quoted body.</param>
-/// <param name="HasProceduralBody">The statement carries a dollar-quoted body.</param>
+/// <param name="IsTopLevel">False inside a body.</param>
+/// <param name="HasProceduralBody">The statement carries a body: a dollar quote, or a literal where PostgreSQL reads one as code.</param>
 /// <param name="Findings">What was matched in this statement, in token order.</param>
 internal sealed record SqlStatement(
     string Location,
@@ -46,38 +47,54 @@ internal sealed record SqlScanReport(ImmutableArray<SqlStatement> Statements)
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>What it matches, on tokens, anywhere in a statement and inside every dollar-quoted body:</b>
-/// <c>DROP</c> of anything but a constraint, default, <c>NOT NULL</c>, identity or expression;
-/// <c>TRUNCATE</c> of a table; <c>DELETE FROM</c> and <c>MERGE … THEN DELETE</c>; any
-/// <c>RENAME</c>; <c>ALTER [COLUMN] … TYPE</c>; <c>ALTER [COLUMN] … SET NOT NULL</c>;
-/// <c>SET SCHEMA</c>; and <c>ADD [COLUMN] … NOT NULL</c> with no <c>DEFAULT</c> and no
-/// <c>GENERATED</c>. Matching on tokens is what makes case, whitespace, newlines, comments and
-/// string literals irrelevant: <c>drop /* x */ table</c> and <c>DROP TABLE</c> are the same
-/// three tokens, and <c>'DROP TABLE'</c> is one literal.
+/// <b>What it matches, on tokens, anywhere in a statement and inside every body:</b> <c>DROP</c> of
+/// anything but a default, <c>NOT NULL</c>, identity or expression, and <c>DROP CONSTRAINT</c>
+/// only with <c>CASCADE</c>; <c>TRUNCATE</c> of a table; <c>DELETE FROM</c> and
+/// <c>MERGE … THEN DELETE</c>; any <c>RENAME</c>; <c>ALTER [COLUMN] … TYPE</c>;
+/// <c>ALTER [COLUMN] … SET NOT NULL</c>; <c>SET SCHEMA</c>; <c>ADD [COLUMN] … NOT NULL</c> with no
+/// <c>DEFAULT</c> and no <c>GENERATED</c>; and the statements that switch an enforced invariant
+/// off in one step - <c>DISABLE TRIGGER</c>, <c>DISABLE RULE</c>,
+/// <c>DISABLE ROW LEVEL SECURITY</c>, <c>NO FORCE ROW LEVEL SECURITY</c>, <c>DETACH PARTITION</c>.
+/// Matching on tokens is what makes case, whitespace, newlines, comments and string literals
+/// irrelevant: <c>drop /* x */ table</c> and <c>DROP TABLE</c> are the same three tokens, and
+/// <c>'DROP TABLE'</c> is one literal.
+/// </para>
+/// <para>
+/// <b>What it reads again as code:</b> every dollar-quoted body, and a string literal in the two
+/// positions where PostgreSQL reads a literal as code - the body of a <c>DO</c> and the body after
+/// <c>AS</c> of a <c>CREATE [OR REPLACE] FUNCTION</c>/<c>PROCEDURE</c>. <c>DO $$…$$</c> and
+/// <c>DO '…'</c> are the same statement; a quoted function body is the original spelling. A body
+/// in a literal the tokenizer cannot decode (<c>U&amp;'…'</c>, a bit string, an <c>E'…'</c> with a
+/// numeric escape) is reported as unscannable.
 /// </para>
 /// <para>
 /// <b>What it refuses to read, and reports as unscannable rather than clean:</b> dynamic SQL
 /// (<c>EXECUTE</c> of anything but a trigger's <c>FUNCTION</c>/<c>PROCEDURE</c> binding or the
-/// <c>EXECUTE</c> privilege of a <c>GRANT</c>/<c>REVOKE</c>); a call
-/// to a schema-qualified function or procedure outside <c>pg_catalog</c>, whose body was written
-/// elsewhere; and any text the tokenizer cannot finish. A function <i>defined</i>, <i>dropped</i>,
-/// bound to a trigger or named as a column default is a reference, not a call, and is not one of
-/// these.
+/// <c>EXECUTE</c> privilege of a <c>GRANT</c>/<c>REVOKE</c>); a call to a schema-qualified
+/// function or procedure outside <c>pg_catalog</c>, whose body was written elsewhere; and any text
+/// the tokenizer cannot finish. A function <i>defined</i>, <i>dropped</i>, bound to a trigger or
+/// named as a column default is a reference, not a call, and is not one of these; a
+/// schema-qualified name before a parenthesis after <c>ON</c> is a table only when the nearest
+/// statement verb before it is <c>CREATE</c>, <c>ALTER</c> or <c>DROP</c> - after a
+/// <c>SELECT</c>, <c>JOIN</c> or a DML verb it is a join condition and the call is reported.
 /// </para>
 /// <para>
 /// <b>What it cannot see, stated:</b> a call to an <i>unqualified</i> user function is read as a
 /// built-in. That holds only while every function a migration creates is schema-qualified, which
 /// every migration on this project is (schemas own their objects, ADR-0007 §7.1); a migration
-/// creating an unqualified function is the case that would break it. And it reads the SQL of a
-/// migration's <c>Up</c>: <c>Down</c> is never run in production (ADR-0007 §7.4, "rollback is not
-/// a database operation") and is where an Expand's own drops legitimately live.
+/// creating an unqualified function is the case that would break it. A bare
+/// <c>DROP CONSTRAINT</c> is not judged: by name alone the scanner cannot tell a <c>CHECK</c>,
+/// whose replacement is a widening, from a <c>PRIMARY KEY</c>, <c>UNIQUE</c> or <c>EXCLUDE</c>,
+/// whose removal is not. And it reads the SQL of a migration's <c>Up</c>: <c>Down</c> is never run
+/// in production (ADR-0007 §7.4, "rollback is not a database operation") and is where an Expand's
+/// own drops legitimately live.
 /// </para>
 /// </remarks>
 internal static class SqlStatementScanner
 {
-    /// <summary>The <c>DROP</c> targets that widen or tidy rather than remove: not destructive.</summary>
+    /// <summary>The <c>DROP</c> targets that widen or tidy rather than remove: not destructive. <c>CONSTRAINT</c> is judged separately, on <c>CASCADE</c>.</summary>
     private static readonly ImmutableHashSet<string> NonDestructiveDropTargets =
-        Keywords("CONSTRAINT", "DEFAULT", "NOT", "IDENTITY", "EXPRESSION");
+        Keywords("DEFAULT", "NOT", "IDENTITY", "EXPRESSION");
 
     /// <summary>After <c>ADD</c>, these begin something that is not a column definition.</summary>
     private static readonly ImmutableHashSet<string> NonColumnAddTargets =
@@ -86,11 +103,18 @@ internal static class SqlStatementScanner
     /// <summary>
     /// A schema-qualified name followed by <c>(</c> is a reference and not a call when the word
     /// before it is one of these. The list is an exemption, so a word missing from it produces a
-    /// false positive - the loud direction.
+    /// false positive - the loud direction. <c>ON</c> is not here: it is judged by the nearest
+    /// statement verb, because it also introduces a join condition.
     /// </summary>
     private static readonly ImmutableHashSet<string> QualifiedNameIsAReferenceAfter = Keywords(
-        "TABLE", "INTO", "ON", "ONLY", "REFERENCES", "FUNCTION", "PROCEDURE", "ROUTINE", "AGGREGATE",
+        "TABLE", "INTO", "ONLY", "REFERENCES", "FUNCTION", "PROCEDURE", "ROUTINE", "AGGREGATE",
         "DEFAULT", "EXISTS", "VIEW", "TYPE", "COPY");
+
+    /// <summary>The verbs that decide what an <c>ON</c> introduces: a target for DDL, a condition for a query.</summary>
+    private static readonly ImmutableHashSet<string> StatementVerbs = Keywords(
+        "CREATE", "ALTER", "DROP", "SELECT", "INSERT", "UPDATE", "DELETE", "MERGE", "WITH", "JOIN");
+
+    private static readonly ImmutableHashSet<string> DdlVerbs = Keywords("CREATE", "ALTER", "DROP");
 
     public static SqlScanReport Scan(string sql)
     {
@@ -123,22 +147,73 @@ internal static class SqlStatementScanner
         {
             ordinal++;
             string location = FormattableString.Invariant($"{locationPrefix} {ordinal}");
-            ImmutableArray<SqlFinding> findings = [.. Findings(statement)];
-            bool hasBody = statement.Any(static token => token.Kind == SqlTokenKind.DollarBody);
+            ImmutableArray<SqlToken> bodies = Bodies(statement);
 
             into.Add(new SqlStatement(
                 location,
                 Head: statement[0].Kind == SqlTokenKind.Word ? statement[0].Text.ToUpperInvariant() : string.Empty,
                 Excerpt: Excerpt(statement),
                 isTopLevel,
-                hasBody,
-                findings));
+                HasProceduralBody: !bodies.IsEmpty,
+                [.. Findings(statement)]));
 
-            foreach (SqlToken body in statement.Where(static token => token.Kind == SqlTokenKind.DollarBody))
+            foreach (SqlToken body in bodies)
             {
-                ScanText(body.Text, location + " › body › statement", isTopLevel: false, into);
+                string? code = body.Kind == SqlTokenKind.DollarBody ? body.Text : SqlTokenizer.DecodeLiteral(body);
+
+                if (code is null)
+                {
+                    into.Add(new SqlStatement(
+                        location + " › body",
+                        Head: string.Empty,
+                        Excerpt: body.Display,
+                        IsTopLevel: false,
+                        HasProceduralBody: false,
+                        [Unscannable("a body written as a literal the scanner does not decode (U&'…', B'…', X'…', or an E'…' with a numeric escape)")]));
+                }
+                else
+                {
+                    ScanText(code, location + " › body › statement", isTopLevel: false, into);
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// The tokens PostgreSQL reads as code: every dollar-quoted body, and a string literal where a
+    /// literal is a body - after a statement-leading <c>DO</c> (its <c>LANGUAGE</c> name excepted),
+    /// and after <c>AS</c> in a <c>CREATE [OR REPLACE] FUNCTION</c>/<c>PROCEDURE</c>, a second
+    /// literal after a comma there being the link symbol of a C function.
+    /// </summary>
+    private static ImmutableArray<SqlToken> Bodies(ImmutableArray<SqlToken> t)
+    {
+        ImmutableArray<SqlToken>.Builder bodies = ImmutableArray.CreateBuilder<SqlToken>();
+        bool isDo = t[0].Is("DO");
+        bool isRoutineDefinition = t[0].Is("CREATE")
+            && t.Take(4).Any(static token => token.Is("FUNCTION") || token.Is("PROCEDURE"));
+
+        for (int i = 0; i < t.Length; i++)
+        {
+            SqlToken token = t[i];
+
+            if (token.Kind == SqlTokenKind.DollarBody)
+            {
+                bodies.Add(token);
+            }
+            else if (token.Kind == SqlTokenKind.Literal)
+            {
+                SqlToken before = At(t, i - 1);
+                bool afterAs = before.Is("AS")
+                    || (before.IsPunctuation(",") && At(t, i - 2).Kind == SqlTokenKind.Literal && At(t, i - 3).Is("AS"));
+
+                if ((isDo && !before.Is("LANGUAGE")) || (isRoutineDefinition && afterAs))
+                {
+                    bodies.Add(token);
+                }
+            }
+        }
+
+        return bodies.ToImmutable();
     }
 
     private static IEnumerable<ImmutableArray<SqlToken>> Split(ImmutableArray<SqlToken> tokens)
@@ -177,7 +252,15 @@ internal static class SqlStatementScanner
             if (token.Is("DROP") && next is { IsName: true })
             {
                 SqlToken target = next.Is("IF") && At(t, i + 2).Is("EXISTS") && At(t, i + 3).IsName ? t[i + 3] : next;
-                if (!(target.Kind == SqlTokenKind.Word && NonDestructiveDropTargets.Contains(target.Text)))
+
+                if (target.Is("CONSTRAINT"))
+                {
+                    if (HasCascadeBeforeNextAction(t, i + 1))
+                    {
+                        yield return Destructive("DROP CONSTRAINT … CASCADE");
+                    }
+                }
+                else if (!(target.Kind == SqlTokenKind.Word && NonDestructiveDropTargets.Contains(target.Text)))
                 {
                     yield return Destructive("DROP " + (target.Kind == SqlTokenKind.Word ? target.Text.ToUpperInvariant() : target.Display));
                 }
@@ -206,6 +289,26 @@ internal static class SqlStatementScanner
             if (token.Is("SET") && next is not null && next.Is("SCHEMA"))
             {
                 yield return Destructive("SET SCHEMA");
+            }
+
+            if (token.Is("DISABLE") && next is not null && (next.Is("TRIGGER") || next.Is("RULE")))
+            {
+                yield return Destructive("DISABLE " + next.Text.ToUpperInvariant());
+            }
+
+            if (token.Is("DISABLE") && next is not null && next.Is("ROW"))
+            {
+                yield return Destructive("DISABLE ROW LEVEL SECURITY");
+            }
+
+            if (token.Is("NO") && next is not null && next.Is("FORCE"))
+            {
+                yield return Destructive("NO FORCE ROW LEVEL SECURITY");
+            }
+
+            if (token.Is("DETACH") && next is not null && next.Is("PARTITION"))
+            {
+                yield return Destructive("DETACH PARTITION");
             }
 
             if (token.Is("ALTER"))
@@ -289,9 +392,26 @@ internal static class SqlStatementScanner
 
         bool notNull = false;
         bool hasDefault = false;
+
+        foreach (SqlToken token in ActionTokens(t, j + 1))
+        {
+            notNull |= token.Is("NOT") && At(t, IndexOf(t, token) + 1).Is("NULL");
+            hasDefault |= token.Is("DEFAULT") || token.Is("GENERATED");
+        }
+
+        return notNull && !hasDefault;
+    }
+
+    /// <summary><c>CASCADE</c> at the action's own nesting level, before the next top-level comma or the end.</summary>
+    private static bool HasCascadeBeforeNextAction(ImmutableArray<SqlToken> t, int from) =>
+        ActionTokens(t, from).Any(static token => token.Is("CASCADE"));
+
+    /// <summary>The tokens of one <c>ALTER TABLE</c> action from <paramref name="from"/>: depth-0 tokens up to the next top-level comma.</summary>
+    private static IEnumerable<SqlToken> ActionTokens(ImmutableArray<SqlToken> t, int from)
+    {
         int depth = 0;
 
-        for (int k = j + 1; k < t.Length; k++)
+        for (int k = from; k < t.Length; k++)
         {
             SqlToken token = t[k];
 
@@ -307,16 +427,15 @@ internal static class SqlStatementScanner
             {
                 if (token.IsPunctuation(","))
                 {
-                    break;
+                    yield break;
                 }
 
-                notNull |= token.Is("NOT") && At(t, k + 1).Is("NULL");
-                hasDefault |= token.Is("DEFAULT") || token.Is("GENERATED");
+                yield return token;
             }
         }
-
-        return notNull && !hasDefault;
     }
+
+    private static int IndexOf(ImmutableArray<SqlToken> t, SqlToken token) => t.IndexOf(token);
 
     /// <summary>
     /// <c>EXECUTE FUNCTION</c>/<c>EXECUTE PROCEDURE</c> binds a trigger, and <c>EXECUTE ON</c> or
@@ -326,7 +445,11 @@ internal static class SqlStatementScanner
     private static bool IsStaticExecute(SqlToken? next) =>
         next is not null && (next.Is("FUNCTION") || next.Is("PROCEDURE") || next.Is("ON") || next.IsPunctuation(","));
 
-    /// <summary><c>schema.name(</c> where the schema is not <c>pg_catalog</c> and the word before is not a reference context.</summary>
+    /// <summary>
+    /// <c>schema.name(</c> where the schema is not <c>pg_catalog</c> and the word before is not a
+    /// reference context. After <c>ON</c> the name is a table only when the nearest statement verb
+    /// before it is DDL; after a query verb, <c>ON</c> introduces a condition and the call counts.
+    /// </summary>
     private static bool IsCallOfAQualifiedFunction(ImmutableArray<SqlToken> t, int i)
     {
         if (!(t[i].IsName && At(t, i + 1).IsPunctuation(".") && At(t, i + 2).IsName && At(t, i + 3).IsPunctuation("(")))
@@ -340,7 +463,32 @@ internal static class SqlStatementScanner
         }
 
         SqlToken before = At(t, i - 1);
-        return !(before.Kind == SqlTokenKind.Word && QualifiedNameIsAReferenceAfter.Contains(before.Text));
+
+        if (before.Kind != SqlTokenKind.Word)
+        {
+            return true;
+        }
+
+        if (before.Is("ON"))
+        {
+            SqlToken? verb = NearestStatementVerbBefore(t, i - 1);
+            return !(verb is not null && DdlVerbs.Contains(verb.Text));
+        }
+
+        return !QualifiedNameIsAReferenceAfter.Contains(before.Text);
+    }
+
+    private static SqlToken? NearestStatementVerbBefore(ImmutableArray<SqlToken> t, int index)
+    {
+        for (int k = index - 1; k >= 0; k--)
+        {
+            if (t[k].Kind == SqlTokenKind.Word && StatementVerbs.Contains(t[k].Text))
+            {
+                return t[k];
+            }
+        }
+
+        return null;
     }
 
     private static readonly SqlToken None = new(SqlTokenKind.Punctuation, string.Empty, -1);
@@ -358,7 +506,7 @@ internal static class SqlStatementScanner
     /// <summary>The first few tokens, with punctuation attached the way it was written.</summary>
     private static string Excerpt(ImmutableArray<SqlToken> statement)
     {
-        var text = new System.Text.StringBuilder();
+        var text = new StringBuilder();
 
         foreach (SqlToken token in statement.Take(8))
         {

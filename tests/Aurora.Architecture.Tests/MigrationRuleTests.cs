@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Aurora.Architecture.Tests.Fixtures;
@@ -33,13 +34,29 @@ public sealed class MigrationRuleTests
 {
     private const string CatalogMigrationId = "20260911172124_InitialCatalog";
 
+    private const string AppendOnlyTrailsMigrationId = "20260912020620_AppendOnlyTrails";
+
     /// <summary>
-    /// The number of SQL statements MIG2 parsed over production on the branch that added it:
-    /// 27 for InitialCatalog (one schema, one extension, five tables, eight indexes, one exclusion
-    /// constraint, eight grants and one default privilege; two of them inside no body). Rounded
-    /// down to the nearest ten, the same convention as verify.sh's stage-6 floor.
+    /// The number of SQL statements MIG2 parses from each production migration - top level and
+    /// inside bodies - measured on the branch that set the entry and rounded down to the nearest
+    /// ten, verify.sh's stage-6 convention. Per migration and not in aggregate: with two
+    /// migrations, one that generated nothing would hide behind the other's count. A production
+    /// migration with no entry fails the test that reads this, printing the number to write.
     /// </summary>
-    private const int ProductionStatementFloor = 20;
+    /// <remarks>
+    /// Measured by <c>MIG2_parsed_at_least_the_measured_number_of_statements_from_each_production_migration</c>
+    /// on B-09 rework 1, against the scanner as it stands in that commit:
+    /// InitialCatalog 31, AppendOnlyTrails 18. The first review's M-1
+    /// found the previous claim (27) measured against an earlier scanner; the number here is
+    /// re-measured whenever the scanner changes, and the test prints the live count on failure.
+    /// </remarks>
+    private static readonly ImmutableDictionary<string, int> ProductionStatementFloors =
+        ImmutableDictionary.CreateRange(
+            StringComparer.Ordinal,
+            [
+                KeyValuePair.Create(CatalogMigrationId, 30),
+                KeyValuePair.Create(AppendOnlyTrailsMigrationId, 10),
+            ]);
 
     private static readonly Lazy<ImmutableArray<ScannedMigration>> LazyFixtures = new(() =>
         MigrationPopulation.Of(
@@ -55,16 +72,21 @@ public sealed class MigrationRuleTests
     // ---- The population -----------------------------------------------------------------------
 
     [Fact]
-    public void The_production_population_holds_the_catalog_migration_with_its_SQL_generated()
+    public void The_production_population_holds_both_catalog_migrations_with_their_SQL_generated()
     {
-        ScannedMigration catalog = Production.ShouldHaveSingleItem(
-            "one production migration exists on this branch; when a second lands, raise the floors in "
-            + "RuleInventoryTests and here deliberately");
+        Production.Length.ShouldBe(
+            2,
+            "two production migrations exist on this branch (InitialCatalog, AppendOnlyTrails); when a "
+            + "third lands, add its statement floor here and raise the floors in RuleInventoryTests deliberately: "
+            + string.Join(", ", Production.Select(static migration => migration.Id)));
 
-        catalog.Id.ShouldBe(CatalogMigrationId);
-        catalog.AssemblyName.ShouldBe("Aurora.Platform.Tenancy");
-        catalog.GenerationFailure.ShouldBeNull();
-        catalog.Commands.ShouldNotBeEmpty();
+        foreach (string id in new[] { CatalogMigrationId, AppendOnlyTrailsMigrationId })
+        {
+            ScannedMigration migration = Production.Single(candidate => candidate.Id == id);
+            migration.AssemblyName.ShouldBe("Aurora.Platform.Tenancy");
+            migration.GenerationFailure.ShouldBeNull();
+            migration.Commands.ShouldNotBeEmpty();
+        }
     }
 
     [Fact]
@@ -73,7 +95,8 @@ public sealed class MigrationRuleTests
         // InitialCatalog creates its tables through CreateTable(); no string in the migration says
         // CREATE TABLE. If this text is in the commands, the scan reads generated SQL and not only
         // Sql() arguments - the link a raw-string scan would have stopped short of.
-        string script = string.Join(Environment.NewLine, Production.Single().Commands.Select(static command => command.CommandText));
+        ScannedMigration catalog = Production.Single(static migration => migration.Id == CatalogMigrationId);
+        string script = string.Join(Environment.NewLine, catalog.Commands.Select(static command => command.CommandText));
 
         script.ShouldContain("CREATE TABLE catalog.tenant (");
         script.ShouldContain("CREATE INDEX ix_tenant_state_last_activity_at ON catalog.tenant (state, last_activity_at)");
@@ -81,14 +104,25 @@ public sealed class MigrationRuleTests
     }
 
     [Fact]
-    public void MIG2_parsed_at_least_the_measured_number_of_production_statements()
+    public void MIG2_parsed_at_least_the_measured_number_of_statements_from_each_production_migration()
     {
-        MigrationScan scan = MigrationSafetyRule.Scan(Production);
+        foreach (ScannedMigration migration in Production)
+        {
+            MigrationScan scan = MigrationSafetyRule.Scan([migration]);
 
-        scan.StatementsParsed.ShouldBeGreaterThanOrEqualTo(
-            ProductionStatementFloor,
-            $"MIG2 parsed {scan.StatementsParsed} statements over {scan.Migrations} production migration(s). It "
-            + "reports no violations because it read almost nothing, not because the SQL is clean.");
+            ProductionStatementFloors.TryGetValue(migration.Id, out int floor).ShouldBeTrue(
+                $"{migration.Id} has no statement floor; MIG2 parsed {scan.StatementsParsed} statements from it. "
+                + "Add an entry with that number rounded down to the nearest ten.");
+            scan.StatementsParsed.ShouldBeGreaterThanOrEqualTo(
+                floor,
+                $"MIG2 parsed {scan.StatementsParsed} statements from {migration.Id}, below its floor of {floor}. "
+                + "It reports no violations because it read almost nothing, not because the SQL is clean.");
+        }
+
+        ProductionStatementFloors.Keys.ShouldBe(
+            Production.Select(static migration => migration.Id),
+            ignoreOrder: true,
+            "a floor names a migration that is not in production");
     }
 
     [Fact]
@@ -96,7 +130,7 @@ public sealed class MigrationRuleTests
     {
         // A fixture that fails to load would vanish from the population and its test would assert
         // over its absence; the count is what stops that.
-        Fixtures.Length.ShouldBe(22, string.Join(Environment.NewLine, Fixtures.Select(static migration => migration.Id)));
+        Fixtures.Length.ShouldBe(26, string.Join(Environment.NewLine, Fixtures.Select(static migration => migration.Id)));
         Fixtures.Select(static migration => migration.Id).ShouldBeUnique();
     }
 
@@ -164,6 +198,17 @@ public sealed class MigrationRuleTests
     }
 
     [Fact]
+    public void MIG2_fires_on_a_DROP_TABLE_inside_a_single_quoted_DO_body_exactly_as_inside_a_dollar_quoted_one()
+    {
+        // The first review's B-1: DO '…' and DO $$…$$ are one statement, and only the second was read.
+        RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
+
+        RuleViolation violation = RuleAssert.Reports(outcome, nameof(ExpandHidingADropInAQuotedBody), ViolationSite.Statement);
+        violation.Detail.ShouldContain("DROP TABLE");
+        violation.Detail.ShouldContain("› body ›");
+    }
+
+    [Fact]
     public void MIG2_fires_exactly_once_on_a_camouflaged_DROP_TABLE_and_not_on_the_literal_or_the_comment()
     {
         RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
@@ -197,12 +242,28 @@ public sealed class MigrationRuleTests
     [InlineData(nameof(ExpandThatCallsAUserFunction), "calls sales.rebuild_everything(…)")]
     [InlineData(nameof(ExpandWithAnUnterminatedLiteral), "never closed")]
     [InlineData(nameof(ExpandWhoseUpThrows), "could not be generated")]
-    public void MIG2_reports_what_it_cannot_read_as_a_violation_never_as_clean(string fixture, string expectedDetail)
+    [InlineData(nameof(ContractThatRunsDynamicSql), "EXECUTE runs SQL built at run time")]
+    [InlineData(nameof(DataOnlyThatCallsAUserFunction), "calls sales.rebuild_everything(…)")]
+    public void MIG2_reports_what_it_cannot_read_as_a_violation_never_as_clean_whatever_the_category(
+        string fixture, string expectedDetail)
     {
         RuleOutcome outcome = MigrationSafetyRule.Check(Fixtures);
 
         RuleViolation violation = RuleAssert.Reports(outcome, fixture, ViolationSite.Statement);
         violation.Detail.ShouldContain(expectedDetail);
+    }
+
+    [Fact]
+    public void MIG2_does_not_count_an_unreadable_Contract_as_a_permitted_one()
+    {
+        // The first review's M-2: exempting Contract from the unscannable branch left every test
+        // green. An unreadable Contract is a violation, and its EXECUTE is not a permitted
+        // destructive statement - otherwise it is indistinguishable from a permitted one.
+        MigrationScan scan = MigrationSafetyRule.Scan(
+            [.. Fixtures.Where(static migration => migration.Id == ContractThatRunsDynamicSql.Id)]);
+
+        scan.Violations.ShouldHaveSingleItem().Detail.ShouldContain("EXECUTE runs SQL built at run time");
+        scan.DestructiveStatementsPermittedInContracts.ShouldBe(0);
     }
 
     [Theory]
@@ -225,7 +286,8 @@ public sealed class MigrationRuleTests
 
         outcome.SubjectsExamined.ShouldBe(Fixtures.Length);
         outcome.Violations
-            .Where(static v => IsOneOf(v, nameof(CompliantExpand), nameof(CompliantContract), nameof(DataOnlyBackfill)))
+            .Where(static v => IsOneOf(
+                v, nameof(CompliantExpand), nameof(CompliantContract), nameof(DataOnlyBackfill), nameof(ExpandWithAProceduralLookAlikeInData)))
             .ShouldBeEmpty(outcome.Describe());
 
         // Silence is only meaningful if the SQL was read. The compliant Expand alone is twelve

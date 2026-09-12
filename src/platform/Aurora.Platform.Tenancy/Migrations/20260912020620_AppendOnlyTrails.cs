@@ -1,3 +1,4 @@
+using Aurora.Platform.Tenancy.Contracts;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -12,6 +13,11 @@ namespace Aurora.Platform.Tenancy.Migrations
     /// writer. The provisioning saga (B-07.1, B-07.4), ADR-0010 rule 8's support-access path and
     /// ADR-0007 §11.5's erasure path write to what this creates.
     /// </summary>
+    [MigrationSafety(
+        MigrationCategory.Expand,
+        "Two new append-only tables with their indexes and grants, one trigger function and the four "
+        + "triggers that refuse UPDATE, DELETE and TRUNCATE on them. Everything is added; nothing that "
+        + "exists is dropped, renamed, narrowed or switched off.")]
     public partial class AppendOnlyTrails : Migration
     {
         /// <inheritdoc />
